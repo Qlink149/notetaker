@@ -128,6 +128,9 @@ export const ChunkRecord = z.object({
   index: z.number(),
   startSec: z.number(),
   endSec: z.number(),
+  /** 16 kHz mono FLAC of just this chunk, stored as a raw Cloudinary asset. */
+  audioUrl: z.string().nullable(),
+  audioPublicId: z.string().nullable(),
   geminiFileUri: z.string().nullable(),
   geminiFileName: z.string().nullable(),
   uploadedAt: z.string().nullable(),
