@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { Mic, Users, List, Gauge } from "lucide-react";
+import { Mic, Users, List, Gauge, Settings } from "lucide-react";
 
 export default function Layout() {
   const navItems = [
@@ -7,6 +7,7 @@ export default function Layout() {
     { to: "/record", label: "Record", icon: Mic, end: false },
     { to: "/speakers", label: "Speakers", icon: Users, end: false },
     { to: "/benchmark", label: "Benchmark", icon: Gauge, end: false },
+    { to: "/settings", label: "Settings", icon: Settings, end: false },
   ];
 
   return (

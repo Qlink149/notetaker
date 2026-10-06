@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { api } from "@/api/client";
 import EnrollmentRecorder from "@/components/EnrollmentRecorder";
 import { Trash2, Loader2, Users, X, Volume2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ export default function Speakers() {
 
   const load = async () => {
     try {
-      setSpeakers(await base44.entities.Speaker.list("-created_date", 100));
+      setSpeakers(await api.speakers.list());
     } catch (e) {
       setSpeakers([]);
     }
@@ -37,16 +37,13 @@ export default function Speakers() {
       setError("Enter a name.");
       return;
     }
-    if (!audioUrl) {
+    if (!file) {
       setError("Record a voice clip first.");
       return;
     }
     setEnrolling(true);
     try {
-      const payload = file
-        ? { name: name.trim(), audio: file }
-        : { name: name.trim(), audio_file_url: audioUrl };
-      await base44.functions.invoke("enrollSpeaker", payload);
+      await api.speakers.enrol(name.trim(), file);
       setName("");
       setAudioUrl("");
       setFile(null);
@@ -54,7 +51,7 @@ export default function Speakers() {
       await load();
     } catch (e) {
       setError(
-        e?.response?.data?.error || "Enrollment failed. Check your API keys and credits."
+        e?.message || "Enrollment failed. Check your API keys and credits."
       );
     } finally {
       setEnrolling(false);
@@ -62,7 +59,7 @@ export default function Speakers() {
   };
 
   const remove = async (id) => {
-    await base44.entities.Speaker.delete(id);
+    await api.speakers.remove(id);
     setDeleteTarget(null);
     load();
   };
@@ -165,7 +162,7 @@ export default function Speakers() {
             >
               <div>
                 <p className="font-medium">{s.name}</p>
-                {s.voiceprint_id ? (
+                {s.hasVoiceprint ? (
                   <p className="text-xs text-muted-foreground">Voiceprint enrolled</p>
                 ) : (
                   <p className="text-xs text-amber-600">
@@ -174,7 +171,7 @@ export default function Speakers() {
                 )}
               </div>
               <div className="flex items-center gap-1">
-                {s.enrollment_audio_url && (
+                {s.enrollmentAudioUrl && (
                   <Button size="icon" variant="ghost" onClick={() => setPlayingId(playingId === s.id ? null : s.id)}>
                     <Volume2 className="w-4 h-4 text-muted-foreground" />
                   </Button>
@@ -187,11 +184,11 @@ export default function Speakers() {
           ))}
           {playingId && (() => {
             const sp = speakers.find((s) => s.id === playingId);
-            if (!sp?.enrollment_audio_url) return null;
+            if (!sp?.enrollmentAudioUrl) return null;
             return (
               <div className="rounded-xl border border-border bg-card p-3">
                 <p className="text-xs text-muted-foreground mb-2">Enrollment sample for {sp.name}</p>
-                <audio src={sp.enrollment_audio_url} controls autoPlay className="w-full" />
+                <audio src={sp.enrollmentAudioUrl} controls autoPlay className="w-full" />
               </div>
             );
           })()}
@@ -203,7 +200,7 @@ export default function Speakers() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the voiceprint. Future meetings won't auto-recognize this person. This can't be undone.
+              This removes the voiceprint. Phase 2 will use voiceprints to name speakers automatically. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

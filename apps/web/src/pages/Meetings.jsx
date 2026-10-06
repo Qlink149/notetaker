@@ -1,17 +1,25 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { Loader2, Mic } from "lucide-react";
+import { api } from "@/api/client";
+import { fmtDuration } from "@/lib/format";
+
+const BADGES = {
+  processing: { label: "Processing", className: "text-muted-foreground", spin: true },
+  uploaded: { label: "Queued", className: "text-muted-foreground", spin: true },
+  partial: { label: "Partial", className: "text-amber-600" },
+  failed: { label: "Failed", className: "text-destructive" },
+  completed: { label: "Ready", className: "text-emerald-600" },
+};
 
 export default function Meetings() {
   const [meetings, setMeetings] = useState(null);
 
   const load = async () => {
     try {
-      const list = await base44.entities.Meeting.list("-created_date", 50);
-      setMeetings(list);
-    } catch (e) {
-      setMeetings([]);
+      setMeetings(await api.meetings.list(50));
+    } catch {
+      setMeetings((m) => m ?? []);
     }
   };
 
@@ -54,36 +62,31 @@ export default function Meetings() {
         </div>
       ) : (
         <div className="space-y-3">
-          {meetings.map((m) => (
-            <Link
-              key={m.id}
-              to={`/meetings/${m.id}`}
-              className="block rounded-2xl border border-border bg-card p-4 active:bg-secondary transition-colors"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-semibold truncate">{m.title}</h3>
-                {m.status === "processing" && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-                    <Loader2 className="w-3 h-3 animate-spin" /> Processing
-                  </span>
-                )}
-                {m.status === "failed" && (
-                  <span className="text-xs text-destructive shrink-0">Failed</span>
-                )}
-                {m.status === "completed" && (
-                  <span className="text-xs text-emerald-600 shrink-0">Ready</span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {new Date(m.date || m.created_date).toLocaleString()}
-              </p>
-              {m.participants && m.participants.length > 0 && (
-                <p className="text-xs text-muted-foreground mt-1 truncate">
-                  {m.participants.join(", ")}
+          {meetings.map((m) => {
+            const badge = BADGES[m.status];
+            return (
+              <Link
+                key={m.id}
+                to={`/meetings/${m.id}`}
+                className="block rounded-2xl border border-border bg-card p-4 active:bg-secondary transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-semibold truncate">{m.title}</h3>
+                  {badge && (
+                    <span className={`flex items-center gap-1 text-xs shrink-0 ${badge.className}`}>
+                      {badge.spin && <Loader2 className="w-3 h-3 animate-spin" />}
+                      {badge.label}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {new Date(m.date).toLocaleString()}
+                  {m.durationSec ? ` · ${fmtDuration(m.durationSec)}` : ""}
+                  {m.coverage ? ` · ${Math.round(m.coverage.ratio * 100)}% transcribed` : ""}
                 </p>
-              )}
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

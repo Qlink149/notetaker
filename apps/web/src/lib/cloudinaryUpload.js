@@ -1,8 +1,9 @@
-// Direct Cloudinary upload with real progress — no bytes through a Base44 function.
-export async function getUploadSignature() {
-  const { base44 } = await import("@/api/base44Client");
-  const res = await base44.functions.invoke("getUploadSignature", {});
-  return res?.data || res;
+// Direct browser → Cloudinary upload with real progress, signed by the API for one meeting folder.
+import { api } from "@/api/client";
+
+/** Returns { meetingId, cloudName, apiKey, folder, timestamp, signature, uploadUrl }. */
+export function getUploadSignature() {
+  return api.uploads.sign();
 }
 
 export function uploadToCloudinary(file, signature, onProgress) {
@@ -24,12 +25,9 @@ export function uploadToCloudinary(file, signature, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           const res = JSON.parse(xhr.responseText);
-          if (res.secure_url) {
-            resolve({ url: res.secure_url, publicId: res.public_id, duration: res.duration });
-          } else {
-            reject(new Error("Cloudinary returned no URL"));
-          }
-        } catch (e) {
+          if (res.secure_url) resolve({ url: res.secure_url, publicId: res.public_id });
+          else reject(new Error("Cloudinary returned no URL"));
+        } catch {
           reject(new Error("Could not parse upload response"));
         }
       } else {
@@ -42,25 +40,6 @@ export function uploadToCloudinary(file, signature, onProgress) {
   });
 }
 
-// Read audio/video duration via a media element. Returns seconds or null.
-export function readMediaDuration(file) {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
-    const el = document.createElement(file.type?.startsWith("video/") ? "video" : "audio");
-    el.preload = "metadata";
-    el.onloadedmetadata = () => {
-      const d = el.duration;
-      URL.revokeObjectURL(url);
-      resolve(isFinite(d) && d > 0 ? d : null);
-    };
-    el.onerror = () => {
-      URL.revokeObjectURL(url);
-      resolve(null);
-    };
-    el.src = url;
-  });
-}
-
 const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
 
 export function validateAudioFile(file) {
@@ -68,8 +47,7 @@ export function validateAudioFile(file) {
   if (!file.type?.startsWith("audio/") && !file.type?.startsWith("video/")) {
     return "Please select an audio or video file.";
   }
-  if (file.size > MAX_SIZE) {
-    return "File is too large (max 500 MB).";
-  }
+  if (file.size > MAX_SIZE) return "File is too large (max 500 MB).";
+  if (file.size < 1024) return "This file is empty.";
   return null;
 }

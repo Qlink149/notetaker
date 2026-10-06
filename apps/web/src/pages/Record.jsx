@@ -1,111 +1,77 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { Loader2, Check, ChevronDown } from "lucide-react";
+import { api } from "@/api/client";
 import AudioRecorder from "@/components/AudioRecorder";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Check } from "lucide-react";
-import { getUploadSignature, uploadToCloudinary, readMediaDuration, validateAudioFile } from "@/lib/cloudinaryUpload";
-
-function fmtDuration(s) {
-  if (!s || s < 0) return "";
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  if (m > 60) return `${Math.floor(m / 60)}h ${m % 60}m`;
-  return `${m}m ${sec}s`;
-}
+import { getUploadSignature, uploadToCloudinary, validateAudioFile } from "@/lib/cloudinaryUpload";
+import { LANGUAGES } from "@/lib/format";
 
 export default function Record() {
   const [title, setTitle] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [file, setFile] = useState(null);
-  const [duration, setDuration] = useState(null);
+  const [languages, setLanguages] = useState(["hi", "gu", "en"]);
+  const [participants, setParticipants] = useState("");
+  const [engine, setEngine] = useState("");
+  const [defaultEngine, setDefaultEngine] = useState("gemini");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadPct, setUploadPct] = useState(0);
   const [uploadMb, setUploadMb] = useState(0);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
-  const [keyTerms, setKeyTerms] = useState("");
-  const [speakers, setSpeakers] = useState([]);
-  const [expectedSpeakers, setExpectedSpeakers] = useState([]);
-  const [durationWarning, setDurationWarning] = useState("");
   const navigate = useNavigate();
 
   useEffect(() => {
-    base44.entities.Speaker.list("-created_date", 100).then((list) => {
-      setSpeakers(list.filter((s) => s.voiceprint_id));
-    }).catch(() => {});
+    api.workspace
+      .settings()
+      .then((s) => {
+        setLanguages(s.languages);
+        setDefaultEngine(s.engine);
+      })
+      .catch(() => {});
   }, []);
 
-  // When a file is selected (from recorder or upload), validate and read duration.
-  const handleAudioReady = async (f) => {
+  // Duration is measured by the server after upload; nothing here depends on the browser's guess.
+  const handleAudioReady = (f) => {
     const verr = validateAudioFile(f);
-    if (verr) { setError(verr); return; }
+    if (verr) {
+      setError(verr);
+      return;
+    }
     setError("");
     setFile(f);
     setAudioUrl(URL.createObjectURL(f));
-    const d = await readMediaDuration(f);
-    setDuration(d);
-    if (d === null) {
-      setError("This file has no playable audio.");
-    } else if (d < 1) {
-      setError("This file has no playable audio.");
-    } else if (d > 3 * 3600) {
-      setDurationWarning("This recording is very long — processing may take several minutes.");
-    } else {
-      setDurationWarning("");
-    }
   };
 
-  const toggleSpeaker = (id) => {
-    setExpectedSpeakers((prev) => {
-      if (prev.includes(id)) return prev.filter((s) => s !== id);
-      if (prev.length >= 10) return prev; // max 10
-      return [...prev, id];
-    });
-  };
+  const toggleLanguage = (code) =>
+    setLanguages((prev) => (prev.includes(code) ? prev.filter((l) => l !== code) : [...prev, code]));
 
   const handleCreate = async () => {
     setError("");
-    if (!file) { setError("Record or upload audio first."); return; }
+    if (!file) return setError("Record or upload audio first.");
+    if (!languages.length) return setError("Pick at least one language.");
     setCreating(true);
     try {
-      // 1. Get upload signature
       const sig = await getUploadSignature();
-      // 2. Upload directly to Cloudinary with progress
       setUploading(true);
       const uploaded = await uploadToCloudinary(file, sig, (pct, loaded) => {
         setUploadPct(pct);
         setUploadMb(loaded / (1024 * 1024));
       });
       setUploading(false);
-
-      // 3. Create the meeting record
-      const meeting = await base44.entities.Meeting.create({
+      const count = parseInt(participants, 10);
+      const meeting = await api.meetings.create({
+        meetingId: sig.meetingId,
         title: title.trim() || `Meeting ${new Date().toLocaleDateString()}`,
-        date: new Date().toISOString(),
-        audio_file_url: uploaded.url,
-        cloudinary_public_id: uploaded.publicId,
-        duration_seconds: duration || (uploaded.duration ? uploaded.duration : 0),
-        status: "processing",
-        stage: "uploaded",
-        stage_detail: null,
-        language_mode: [],
-        engine: "deepgram",
-        key_terms: keyTerms.split(",").map((t) => t.trim()).filter(Boolean),
-        expected_speaker_ids: expectedSpeakers,
-        processing_started_at: new Date().toISOString(),
-        summary_status: "pending",
-        transcript: [],
-        action_items: [],
-        unknown_segment_count: 0,
-        participants: [],
-        raw_utterances: [],
-        error_message: "",
+        publicId: uploaded.publicId,
+        url: uploaded.url,
+        languages,
+        expectedParticipants: Number.isFinite(count) && count > 0 ? count : null,
+        ...(engine ? { engine } : {}),
       });
-
-      // 4. Fire the first stage of the staged pipeline
-      base44.functions.invoke("processMeeting", { meeting_id: meeting.id }).catch(() => {});
       navigate(`/meetings/${meeting.id}`);
     } catch (e) {
       setError(e?.message || "Could not create meeting. Try again.");
@@ -124,54 +90,88 @@ export default function Record() {
         </div>
 
         <div>
-          <label className="text-sm font-medium mb-1.5 block">Names &amp; terms (optional)</label>
-          <Input
-            value={keyTerms}
-            onChange={(e) => setKeyTerms(e.target.value)}
-            placeholder="e.g. Q4 targets, Tempsens, KOC"
-          />
-          <p className="text-xs text-muted-foreground mt-1">Comma-separated. Helps the engine spell names correctly.</p>
+          <label className="text-sm font-medium mb-2 block">Languages spoken</label>
+          <div className="flex flex-wrap gap-2">
+            {LANGUAGES.map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                onClick={() => toggleLanguage(l.code)}
+                aria-pressed={languages.includes(l.code)}
+                className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
+                  languages.includes(l.code)
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                }`}
+              >
+                {languages.includes(l.code) && <Check className="w-3 h-3 inline mr-1" />}
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Names and company terms come from the glossary in Settings.
+          </p>
         </div>
 
-        {speakers.length > 0 && (
-          <div>
-            <label className="text-sm font-medium mb-2 block">Expected participants (optional, max 10)</label>
-            <div className="flex flex-wrap gap-2">
-              {speakers.slice(0, 15).map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => toggleSpeaker(s.id)}
-                  className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
-                    expectedSpeakers.includes(s.id)
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                  }`}
-                >
-                  {expectedSpeakers.includes(s.id) && <Check className="w-3 h-3 inline mr-1" />}
-                  {s.name}
-                </button>
-              ))}
+        <div>
+          <label className="text-sm font-medium mb-1.5 block">Expected participants (optional)</label>
+          <Input
+            type="number"
+            min={1}
+            max={50}
+            inputMode="numeric"
+            value={participants}
+            onChange={(e) => setParticipants(e.target.value)}
+            placeholder="e.g. 4"
+            className="max-w-[8rem]"
+          />
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((s) => !s)}
+            className="text-sm text-muted-foreground inline-flex items-center gap-1"
+            aria-expanded={showAdvanced}
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+            Advanced
+          </button>
+          {showAdvanced && (
+            <div className="mt-2 rounded-xl border border-border p-3">
+              <label className="text-sm font-medium mb-1.5 block" htmlFor="engine">
+                Transcription engine
+              </label>
+              <select
+                id="engine"
+                value={engine}
+                onChange={(e) => setEngine(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">Workspace default ({defaultEngine})</option>
+                <option value="gemini">Gemini</option>
+                <option value="deepgram">Deepgram</option>
+              </select>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Most recently enrolled first. Speeds up speaker identification.</p>
-          </div>
-        )}
+          )}
+        </div>
 
         <div>
           <label className="text-sm font-medium mb-2 block">Audio</label>
           {audioUrl ? (
             <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
               <audio src={audioUrl} controls className="w-full" />
-              {duration && (
-                <p className="text-xs text-muted-foreground">Duration: {fmtDuration(duration)}</p>
-              )}
-              {durationWarning && (
-                <p className="text-xs text-amber-600">{durationWarning}</p>
-              )}
+              <p className="text-xs text-muted-foreground">
+                {file?.name} · {(file?.size / (1024 * 1024)).toFixed(1)} MB — duration is measured after upload.
+              </p>
               <Button
                 variant="outline"
                 className="w-full rounded-full"
-                onClick={() => { setAudioUrl(""); setFile(null); setDuration(null); setDurationWarning(""); }}
+                onClick={() => {
+                  setAudioUrl("");
+                  setFile(null);
+                }}
               >
                 Use different audio
               </Button>
@@ -185,31 +185,23 @@ export default function Record() {
           <div className="rounded-2xl border border-border bg-card p-6 space-y-4 animate-in fade-in duration-300">
             <div className="flex items-center gap-3">
               <Loader2 className="w-5 h-5 animate-spin text-primary shrink-0" />
-              <span className="font-medium">
-                {uploading ? "Uploading audio…" : "Preparing your meeting…"}
-              </span>
+              <span className="font-medium">{uploading ? "Uploading audio…" : "Creating your meeting…"}</span>
             </div>
-            {uploading ? (
+            {uploading && (
               <div className="space-y-2">
                 <div className="h-2.5 rounded-full bg-secondary overflow-hidden">
                   <div className="h-full bg-primary transition-all duration-300" style={{ width: `${uploadPct}%` }} />
                 </div>
-                <p className="text-xs text-muted-foreground text-right">{uploadPct}% · {uploadMb.toFixed(1)} MB</p>
+                <p className="text-xs text-muted-foreground text-right">
+                  {uploadPct}% · {uploadMb.toFixed(1)} MB
+                </p>
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                This usually takes a few seconds. You'll be taken to the meeting page automatically.
-              </p>
             )}
           </div>
         ) : (
           <>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button
-              onClick={handleCreate}
-              disabled={!file}
-              className="w-full h-12 rounded-full text-base"
-            >
+            <Button onClick={handleCreate} disabled={!file} className="w-full h-12 rounded-full text-base">
               Process meeting
             </Button>
           </>

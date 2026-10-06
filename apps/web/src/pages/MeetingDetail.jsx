@@ -1,103 +1,131 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import ReactMarkdown from "react-markdown";
+import {
+  Loader2, ArrowLeft, AlertTriangle, Sparkles, Pencil, Check, RefreshCw, Trash2,
+  Upload, FileText, GitMerge,
+} from "lucide-react";
+import { api } from "@/api/client";
+import { useAuth } from "@/lib/AuthContext";
+import { fmtDuration } from "@/lib/format";
 import TranscriptView from "@/components/TranscriptView";
 import ActionItems from "@/components/ActionItems";
 import MeetingExport from "@/components/MeetingExport";
-import {
-  Loader2, ArrowLeft, AlertCircle, Sparkles, Pencil, Check,
-  RefreshCw, Trash2, Upload, FileText, Users, GitMerge, Languages,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  AlertDialog, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
-  AlertDialogTitle, AlertDialogTrigger,
+  AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { getMeetingAudioUrl, deleteMeetingAudio } from "@/lib/audioStore";
 
-const STAGE_ORDER = ["uploaded", "transcribing", "diarizing", "aligning", "romanizing", "summarizing", "completed"];
-const STAGE_STEPS = [
-  { key: "uploaded", label: "Uploaded", icon: Upload },
-  { key: "transcribing", label: "Transcribing", icon: FileText },
-  { key: "diarizing", label: "Identifying speakers", icon: Users },
-  { key: "aligning", label: "Aligning", icon: GitMerge },
-  { key: "romanizing", label: "Romanizing", icon: Languages },
-  { key: "summarizing", label: "Summarizing", icon: Sparkles },
+const STAGES = ["ingest", "transcribe", "assemble", "summarise", "finalise", "done"];
+const STEPS = [
+  { key: "ingest", label: "Preparing audio", icon: Upload },
+  { key: "transcribe", label: "Transcribing", icon: FileText },
+  { key: "assemble", label: "Assembling transcript", icon: GitMerge },
+  { key: "summarise", label: "Summarising", icon: Sparkles },
 ];
+const STAGE_LABEL = { ingest: "preparing audio", transcribe: "transcription", assemble: "assembly", summarise: "summary", finalise: "finishing" };
 
-function stageIndex(stage) {
-  const idx = STAGE_ORDER.indexOf(stage);
-  return idx < 0 ? 0 : idx;
+const stageIdx = (s) => Math.max(0, STAGES.indexOf(s));
+
+function progressPct(m) {
+  const { chunksDone, chunksTotal } = m.progress ?? {};
+  switch (m.stage) {
+    case "ingest": return 5;
+    case "transcribe": return 10 + Math.round(70 * (chunksTotal ? chunksDone / chunksTotal : 0));
+    case "assemble": return 85;
+    case "summarise": return 92;
+    case "finalise": return 98;
+    default: return 100;
+  }
 }
+
+const SCRIPT_MODES = [
+  { mode: "roman", label: "Roman" },
+  { mode: "native", label: "Native" },
+  { mode: "both", label: "Both" },
+];
 
 export default function MeetingDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { workspace } = useAuth();
   const [meeting, setMeeting] = useState(null);
-  const [speakers, setSpeakers] = useState([]);
-  const [relabelTarget, setRelabelTarget] = useState(null);
-  const [newName, setNewName] = useState("");
+  const [notFound, setNotFound] = useState(false);
+  const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
-  const [audioBlobUrl, setAudioBlobUrl] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [scriptMode, setScriptMode] = useState("romanized");
-  const audioRef = useRef(null);
+  const [scriptMode, setScriptMode] = useState(workspace?.settings?.scriptPreference ?? "roman");
   const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef(null);
+  const dataKey = useRef(null);
 
   const load = useCallback(async () => {
-    try { setMeeting(await base44.entities.Meeting.get(id)); } catch { setMeeting(null); }
+    try {
+      setMeeting(await api.meetings.get(id));
+    } catch (e) {
+      if (e?.status === 404) setNotFound(true);
+    }
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
-
-  // Re-invoke processMeeting every 4s while processing, then reload.
-  // The staged function does one stage per invocation; this advances it.
-  // Auto-recovery: if a function timed out mid-stage, the lock stays at
-  // "processing" and the server won't retry until its own lock expires.
-  // We clear stuck locks from the client after 3 min (longer than the 120s
-  // max server lock) so the next poll forces a retry — the user never has
-  // to click anything.
-  const meetingRef = useRef(null);
-  meetingRef.current = meeting;
   useEffect(() => {
-    if (!meeting || meeting.status !== "processing") return;
-    const t = setInterval(async () => {
-      const m = meetingRef.current;
-      if (m?.stage_detail === "processing" && m?.updated_date) {
-        const ageMs = Date.now() - new Date(m.updated_date).getTime();
-        if (ageMs > 3 * 60 * 1000) {
-          await base44.entities.Meeting.update(id, { stage_detail: null }).catch(() => {});
-        }
-      }
-      await base44.functions.invoke("processMeeting", { meeting_id: id }).catch(() => {});
-      load();
-    }, 4000);
+    load();
+  }, [load]);
+
+  // Poll only the small meeting record; the worker does the processing, not this page.
+  useEffect(() => {
+    if (meeting?.status !== "processing") return;
+    const t = setInterval(load, 4000);
     return () => clearInterval(t);
-  }, [meeting?.status, id, load]);
+  }, [meeting?.status, load]);
 
+  // Fetch the transcript once it exists (after assembly), and once more when processing ends.
   useEffect(() => {
-    base44.entities.Speaker.list("-created_date", 100).then(setSpeakers).catch(() => {});
-  }, []);
+    if (!meeting || stageIdx(meeting.stage) < stageIdx("summarise")) return;
+    const key = meeting.status === "processing" ? "assembled" : `final:${meeting.updatedAt}`;
+    if (dataKey.current === key) return;
+    dataKey.current = key;
+    api.meetings.data(id).then(setData).catch(() => {});
+  }, [meeting, id]);
 
-  useEffect(() => { getMeetingAudioUrl(id).then(setAudioBlobUrl); }, [id]);
+  const run = async (fn) => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const m = await fn();
+      if (m) setMeeting(m);
+    } catch (e) {
+      setActionError(e?.message || "Something went wrong. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  const unknowns = meeting?.transcript
-    ? Array.from(new Set(meeting.transcript.filter((t) => t.speaker_name.startsWith("Unknown")).map((t) => t.speaker_name)))
-    : [];
-  const unknownSpoken = {};
-  if (meeting?.transcript) {
-    meeting.transcript.filter((t) => t.speaker_name.startsWith("Unknown")).forEach((t) => {
-      (unknownSpoken[t.speaker_name] ||= []).push(t.text);
-    });
-  }
+  const retryStage = (stage) => run(() => api.meetings.retry(id, stage));
+  const summariseAnyway = () => run(() => api.meetings.summarise(id, true));
 
-  const httpAudioUrl = meeting?.audio_file_url && /^https?:\/\//.test(meeting.audio_file_url) ? meeting.audio_file_url : null;
-  const playableUrl = httpAudioUrl || audioBlobUrl;
+  const saveTitle = async () => {
+    const value = titleDraft.trim();
+    if (!value) return;
+    await run(() => api.meetings.rename(id, value));
+    setEditingTitle(false);
+  };
+
+  const doDelete = async () => {
+    setBusy(true);
+    try {
+      await api.meetings.remove(id);
+      navigate("/");
+    } catch {
+      setActionError("Could not delete meeting. Try again.");
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  };
 
   const seekTo = (t) => {
     const a = audioRef.current;
@@ -106,90 +134,27 @@ export default function MeetingDetail() {
     a.play().catch(() => {});
   };
 
-  const refreshSpeakers = () => base44.entities.Speaker.list("-created_date", 100).then(setSpeakers).catch(() => {});
+  if (notFound) {
+    return (
+      <div className="py-20 text-center text-muted-foreground">
+        <p className="mb-2">This meeting does not exist.</p>
+        <Link to="/" className="text-sm underline">Back to meetings</Link>
+      </div>
+    );
+  }
+  if (!meeting) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
-  const doRelabel = async (target, { speaker_id }) => {
-    setBusy(true);
-    try {
-      await base44.functions.invoke("relabelUnknownSpeaker", { meeting_id: id, target_name: target, speaker_id });
-      setRelabelTarget(null); setNewName("");
-      await load(); refreshSpeakers();
-    } catch { alert("Could not relabel. Try again."); }
-    finally { setBusy(false); }
-  };
-
-  const enrollAndRelabel = async (target) => {
-    const name = newName.trim();
-    if (!name) return;
-    setBusy(true);
-    try {
-      // The server creates a voiceprint from the speaker's audio segments in
-      // this meeting — no separate onboarding needed.
-      const resp = await base44.functions.invoke("relabelUnknownSpeaker", {
-        meeting_id: id, target_name: target, new_name: name,
-      });
-      setRelabelTarget(null); setNewName("");
-      await load(); refreshSpeakers();
-      if (resp?.data?.voiceprint_created === false && resp?.data?.voiceprint_error) {
-        alert(`Saved, but voiceprint enrollment failed: ${resp.data.voiceprint_error}`);
-      }
-    } catch { alert("Could not relabel. Try again."); }
-    finally { setBusy(false); }
-  };
-
-  const reprocess = async () => {
-    setBusy(true);
-    try {
-      // Resume from the current stage instead of restarting from scratch —
-      // preserves transcript, raw_utterances, and identification so a 68-min
-      // file doesn't need to be re-transcribed after a stall.
-      const resumeStage = meeting.stage && meeting.stage !== "failed" ? meeting.stage : "uploaded";
-      await base44.entities.Meeting.update(id, {
-        status: "processing", stage: resumeStage, stage_detail: null,
-        error_message: "",
-      });
-      setMeeting((m) => m ? { ...m, status: "processing", stage: resumeStage, stage_detail: null, error_message: "" } : m);
-      base44.functions.invoke("processMeeting", { meeting_id: id }).catch(() => {});
-    } finally { setBusy(false); }
-  };
-
-  const regenerateSummary = async () => {
-    setBusy(true);
-    try {
-      await base44.entities.Meeting.update(id, {
-        status: "processing", stage: "summarizing", stage_detail: null,
-        summary_status: "pending",
-      });
-      setMeeting((m) => m ? { ...m, status: "processing", stage: "summarizing" } : m);
-      base44.functions.invoke("processMeeting", { meeting_id: id }).catch(() => {});
-    } finally { setBusy(false); }
-  };
-
-  const saveTitle = async () => {
-    const value = titleDraft.trim();
-    if (!value) return;
-    try {
-      await base44.entities.Meeting.update(id, { title: value });
-      setMeeting((m) => (m ? { ...m, title: value } : m));
-      setEditingTitle(false);
-    } catch { alert("Could not save title."); }
-  };
-
-  const doDelete = async () => {
-    setBusy(true);
-    try {
-      await base44.entities.Meeting.delete(id);
-      await deleteMeetingAudio(id);
-      navigate("/");
-    } catch { alert("Could not delete meeting. Try again."); }
-    finally { setBusy(false); setConfirmDelete(false); }
-  };
-
-  if (!meeting) return (
-    <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-  );
-
-  const curIdx = stageIndex(meeting.stage);
+  const cur = stageIdx(meeting.stage);
+  const pct = progressPct(meeting);
+  const coveragePct = meeting.coverage ? Math.round(meeting.coverage.ratio * 100) : null;
+  const processing = meeting.status === "processing";
+  const hasTranscript = data?.lines?.length > 0;
 
   return (
     <div>
@@ -199,67 +164,86 @@ export default function MeetingDetail() {
       <div className="flex items-center gap-1.5">
         {editingTitle ? (
           <>
-            <Input value={titleDraft} onChange={(e) => setTitleDraft(e.target.value)}
+            <Input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && saveTitle()}
-              className="text-2xl font-bold h-auto py-1 max-w-xs" autoFocus />
-            <Button size="icon" variant="ghost" onClick={saveTitle}><Check className="w-5 h-5" /></Button>
+              className="text-2xl font-bold h-auto py-1 max-w-xs"
+              autoFocus
+            />
+            <Button size="icon" variant="ghost" onClick={saveTitle} aria-label="Save title">
+              <Check className="w-5 h-5" />
+            </Button>
           </>
         ) : (
           <>
             <h1 className="text-2xl font-bold tracking-tight">{meeting.title}</h1>
-            {meeting.status !== "processing" && (
-              <Button size="icon" variant="ghost" onClick={() => { setEditingTitle(true); setTitleDraft(meeting.title); }}>
-                <Pencil className="w-4 h-4 text-muted-foreground" />
-              </Button>
-            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Rename"
+              onClick={() => {
+                setEditingTitle(true);
+                setTitleDraft(meeting.title);
+              }}
+            >
+              <Pencil className="w-4 h-4 text-muted-foreground" />
+            </Button>
           </>
         )}
       </div>
       <p className="text-sm text-muted-foreground mb-5">
-        {new Date(meeting.date || meeting.created_date).toLocaleString()}
-        {meeting.duration_seconds > 0 && ` · ${Math.round(meeting.duration_seconds / 60)} min`}
+        {new Date(meeting.date).toLocaleString()}
+        {meeting.durationSec ? ` · ${fmtDuration(meeting.durationSec)}` : ""}
+        {coveragePct !== null ? ` · ${coveragePct}% of speech transcribed` : ""}
       </p>
 
-      {playableUrl && (
-        <audio ref={audioRef} src={playableUrl} controls className="w-full mb-6"
-          onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)} />
+      {meeting.audio?.playbackUrl && (
+        <audio
+          ref={audioRef}
+          src={meeting.audio.playbackUrl}
+          controls
+          className="w-full mb-6"
+          onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+        />
       )}
 
-      {meeting.status === "processing" && (
+      {processing && (
         <div className="rounded-2xl border border-border bg-card p-5 mb-6">
           <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border">
             <Loader2 className="w-6 h-6 animate-spin text-primary shrink-0" />
             <div className="flex-1">
               <p className="font-semibold">Processing your meeting…</p>
-              <p className="text-xs text-muted-foreground">Usually about 1 minute per 10 minutes of audio. You can leave this page.</p>
+              <p className="text-xs text-muted-foreground">
+                Runs on the server. You can close this page and come back.
+              </p>
             </div>
-            <span className="text-sm font-medium text-muted-foreground tabular-nums">
-              {Math.round((curIdx / (STAGE_ORDER.length - 1)) * 100)}%
-            </span>
+            <span className="text-sm font-medium text-muted-foreground tabular-nums">{pct}%</span>
           </div>
           <div className="w-full h-2 bg-secondary rounded-full overflow-hidden mb-4">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${(curIdx / (STAGE_ORDER.length - 1)) * 100}%` }}
-            />
+            <div className="h-full bg-primary rounded-full transition-all duration-700 ease-out" style={{ width: `${pct}%` }} />
           </div>
           <div className="space-y-3">
-            {STAGE_STEPS.map((step, i) => {
-              const stepIdx = stageIndex(step.key);
-              const isDone = curIdx > stepIdx;
-              const isActive = curIdx === stepIdx;
+            {STEPS.map((step) => {
+              const i = stageIdx(step.key);
+              const done = cur > i;
+              const active = cur === i;
               const Icon = step.icon;
               return (
                 <div key={step.key} className="flex items-center gap-3">
-                  <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
-                    isDone ? "bg-emerald-100 text-emerald-600" : isActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
-                  }`}>
-                    {isDone ? <Check className="w-4 h-4" /> : isActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                      done ? "bg-emerald-100 text-emerald-600" : active ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {done ? <Check className="w-4 h-4" /> : active ? <Loader2 className="w-4 h-4 animate-spin" /> : <Icon className="w-3.5 h-3.5" />}
                   </div>
-                  <span className={`text-sm ${isDone || isActive ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                  <span className={`text-sm ${done || active ? "font-medium text-foreground" : "text-muted-foreground"}`}>
                     {step.label}
-                    {isActive && meeting.stage_detail && meeting.stage_detail !== "processing" && meeting.stage_detail !== "waiting for speaker identification" && (
-                      <span className="text-xs text-muted-foreground ml-2">{meeting.stage_detail}</span>
+                    {step.key === "transcribe" && meeting.progress?.chunksTotal > 0 && (
+                      <span className="text-xs text-muted-foreground ml-2 tabular-nums">
+                        {meeting.progress.chunksDone}/{meeting.progress.chunksTotal}
+                      </span>
                     )}
                   </span>
                 </div>
@@ -269,113 +253,108 @@ export default function MeetingDetail() {
         </div>
       )}
 
-      {meeting.status === "completed" && (
-        <>
-          {unknowns.length > 0 && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 mb-6">
-              <div className="flex items-center gap-2 mb-3">
-                <AlertCircle className="w-4 h-4 text-amber-600" />
-                <p className="text-sm font-medium text-amber-800">
-                  {unknowns.length} unidentified voice{unknowns.length > 1 ? "s" : ""} detected — tap to name {unknowns.length > 1 ? "them" : "it"}
-                </p>
-              </div>
-              <div className="space-y-2">
-                {unknowns.map((u) => (
-                  <div key={u} className="rounded-xl bg-white border border-amber-200 p-3">
-                    <p className="text-sm font-medium mb-1">{u}</p>
-                    {(unknownSpoken[u] || []).length > 0 && (
-                      <p className="text-xs text-muted-foreground italic mb-2 line-clamp-3">"{(unknownSpoken[u] || []).join(" ")}"</p>
-                    )}
-                    {relabelTarget !== u ? (
-                      <Button size="sm" variant="outline" onClick={() => setRelabelTarget(u)}>Name this speaker</Button>
-                    ) : (
-                      <div className="space-y-2">
-                        {speakers.filter((s) => s.voiceprint_id).length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {speakers.filter((s) => s.voiceprint_id).map((s) => (
-                              <Button key={s.id} size="sm" variant="secondary" disabled={busy} onClick={() => doRelabel(u, { speaker_id: s.id })}>{s.name}</Button>
-                            ))}
-                          </div>
-                        )}
-                        <p className="text-xs text-amber-700">New name? We'll auto-enroll a voiceprint from this voice.</p>
-                        <div className="flex gap-2">
-                          <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Enter a new name" />
-                          <Button size="sm" disabled={busy || !newName.trim()} onClick={() => enrollAndRelabel(u)}>Enroll &amp; save</Button>
-                          <Button size="sm" variant="ghost" onClick={() => { setRelabelTarget(null); setNewName(""); }}>Cancel</Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+      {meeting.status === "failed" && meeting.error && (
+        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive space-y-3 mb-6">
+          <p>
+            Processing stopped during {STAGE_LABEL[meeting.error.stage] ?? meeting.error.stage}. {meeting.error.message}
+          </p>
+          {meeting.error.retryable && (
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => retryStage(meeting.error.stage)}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Retry {STAGE_LABEL[meeting.error.stage] ?? "stage"}
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!processing && meeting.summaryStatus === "skipped_low_coverage" && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-6 space-y-3 text-amber-900">
+          <div className="flex gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <p className="text-sm">
+              Only {coveragePct ?? 0}% of the speech was transcribed; summary withheld. Check the transcript before relying on it.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" disabled={busy || !hasTranscript} onClick={summariseAnyway}>
+              <Sparkles className="w-4 h-4 mr-1" /> Summarise anyway
+            </Button>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => retryStage("transcribe")}>
+              <RefreshCw className="w-4 h-4 mr-1" /> Retry failed parts
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!processing && meeting.status === "partial" && meeting.summaryStatus !== "skipped_low_coverage" && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-6 space-y-3 text-amber-900 text-sm">
+          <p>Part of this recording could not be transcribed.</p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => retryStage("transcribe")}>
+            <RefreshCw className="w-4 h-4 mr-1" /> Retry failed parts
+          </Button>
+        </div>
+      )}
+
+      {actionError && <p className="text-sm text-destructive mb-4">{actionError}</p>}
+
+      {meeting.summary && (
+        <div className="rounded-2xl border border-border bg-card p-4 mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-4 h-4 text-muted-foreground" />
+            <h2 className="font-semibold">Summary</h2>
+          </div>
+          <div className="text-sm leading-relaxed text-muted-foreground meeting-summary">
+            <ReactMarkdown
+              components={{
+                h1: ({ node, ...p }) => <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />,
+                h2: ({ node, ...p }) => <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />,
+                h3: ({ node, ...p }) => <h4 className="text-sm font-semibold mt-2 mb-1 text-foreground" {...p} />,
+                ul: ({ node, ...p }) => <ul className="list-disc pl-5 space-y-1 my-1" {...p} />,
+                ol: ({ node, ...p }) => <ol className="list-decimal pl-5 space-y-1 my-1" {...p} />,
+                strong: ({ node, ...p }) => <strong className="font-semibold text-foreground" {...p} />,
+              }}
+            >
+              {meeting.summary}
+            </ReactMarkdown>
+          </div>
+        </div>
+      )}
+
+      {!processing && meeting.summaryStatus === "failed" && (
+        <div className="rounded-2xl border border-border bg-card p-4 mb-6 text-center">
+          <p className="text-sm text-muted-foreground mb-3">
+            {meeting.error?.stage === "summarise" ? meeting.error.message : "The summary could not be generated."}
+          </p>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => retryStage("summarise")}>
+            <RefreshCw className="w-4 h-4 mr-1" /> Retry summary
+          </Button>
+        </div>
+      )}
+
+      <ActionItems actionItems={meeting.actionItems} />
+
+      {(hasTranscript || !processing) && (
+        <div>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="font-semibold">Transcript</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              {hasTranscript && <MeetingExport meeting={meeting} lines={data.lines} scriptMode={scriptMode} />}
+              <div className="flex gap-1 bg-secondary rounded-full p-0.5" role="group" aria-label="Script">
+                {SCRIPT_MODES.map((s) => (
+                  <button
+                    key={s.mode}
+                    onClick={() => setScriptMode(s.mode)}
+                    aria-pressed={scriptMode === s.mode}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      scriptMode === s.mode ? "bg-primary text-primary-foreground" : "text-muted-foreground"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
                 ))}
               </div>
             </div>
-          )}
-
-          {meeting.summary && (
-            <div className="rounded-2xl border border-border bg-card p-4 mb-6">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles className="w-4 h-4 text-muted-foreground" />
-                <h2 className="font-semibold">Summary</h2>
-              </div>
-              <div className="text-sm leading-relaxed text-muted-foreground meeting-summary">
-                <ReactMarkdown components={{
-                  h1: ({ node, ...p }) => <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />,
-                  h2: ({ node, ...p }) => <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />,
-                  h3: ({ node, ...p }) => <h4 className="text-sm font-semibold mt-2 mb-1 text-foreground" {...p} />,
-                  ul: ({ node, ...p }) => <ul className="list-disc pl-5 space-y-1 my-1" {...p} />,
-                  ol: ({ node, ...p }) => <ol className="list-decimal pl-5 space-y-1 my-1" {...p} />,
-                  strong: ({ node, ...p }) => <strong className="font-semibold text-foreground" {...p} />,
-                }}>{meeting.summary}</ReactMarkdown>
-              </div>
-            </div>
-          )}
-
-          {meeting.summary_status === "failed" && (
-            <div className="rounded-2xl border border-border bg-card p-4 mb-6 text-center">
-              <p className="text-sm text-muted-foreground mb-3">Summary generation failed.</p>
-              <Button size="sm" variant="outline" disabled={busy} onClick={regenerateSummary}>
-                <RefreshCw className="w-4 h-4 mr-1" /> Regenerate summary
-              </Button>
-            </div>
-          )}
-
-          <ActionItems actionItems={meeting.action_items} />
-
-          <div>
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 className="font-semibold">Transcript</h2>
-              <div className="flex items-center gap-2 flex-wrap">
-                <MeetingExport meeting={meeting} />
-                <div className="flex gap-1 bg-secondary rounded-full p-0.5">
-                  {[
-                    { mode: "romanized", label: "Romanized" },
-                    { mode: "native", label: "Original" },
-                    { mode: "both", label: "Both" },
-                  ].map((s) => (
-                    <button
-                      key={s.mode}
-                      onClick={() => setScriptMode(s.mode)}
-                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                        scriptMode === s.mode ? "bg-primary text-primary-foreground" : "text-muted-foreground"
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <TranscriptView transcript={meeting.transcript} currentTime={currentTime} onSeek={seekTo} scriptMode={scriptMode} />
           </div>
-        </>
-      )}
-
-      {meeting.status === "failed" && (
-        <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive space-y-3">
-          <p>Processing failed. {meeting.error_message || "Please try again."}</p>
-          <Button size="sm" variant="outline" disabled={busy} onClick={reprocess}>
-            <RefreshCw className="w-4 h-4 mr-1" /> Reprocess
-          </Button>
+          <TranscriptView lines={data?.lines} currentTime={currentTime} onSeek={seekTo} scriptMode={scriptMode} />
         </div>
       )}
 
@@ -389,12 +368,15 @@ export default function MeetingDetail() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete this meeting?</AlertDialogTitle>
-              <AlertDialogDescription>This permanently removes the recording, transcript, and summary. This can't be undone.</AlertDialogDescription>
+              <AlertDialogDescription>
+                This permanently removes the recording, transcript, and summary. This can't be undone.
+              </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
               <Button disabled={busy} onClick={doDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}{busy ? "Deleting…" : "Delete"}
+                {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {busy ? "Deleting…" : "Delete"}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>

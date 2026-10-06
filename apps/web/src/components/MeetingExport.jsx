@@ -1,137 +1,105 @@
 import { useState } from "react";
 import { Copy, Download, Printer, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-function fmtTime(s) {
-  if (s == null) return "";
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${String(sec).padStart(2, "0")}`;
-}
+import { fmtDuration, fmtTime, lineText } from "@/lib/format";
 
 function fmtDate(iso) {
-  try { return new Date(iso).toLocaleString(); } catch { return ""; }
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return "";
+  }
 }
 
-// Build plain-text export: title, date, summary, action items, transcript.
-function buildText(meeting) {
-  const lines = [];
-  lines.push(`Meeting: ${meeting.title}`);
-  lines.push(`Date: ${fmtDate(meeting.date || meeting.created_date)}`);
-  if (meeting.duration_seconds > 0)
-    lines.push(`Duration: ${Math.round(meeting.duration_seconds / 60)} min`);
-  lines.push("");
-
-  if (meeting.summary) {
-    lines.push("SUMMARY");
-    lines.push("========");
-    lines.push(meeting.summary);
-    lines.push("");
-  }
-
-  if (meeting.action_items && meeting.action_items.length) {
-    lines.push("ACTION ITEMS");
-    lines.push("============");
-    meeting.action_items.forEach((a) => {
-      const sp = a.speaker_name || "Unknown";
-      lines.push(`- [${sp}] ${a.text}`);
-    });
-    lines.push("");
-  }
-
-  if (meeting.transcript && meeting.transcript.length) {
-    lines.push("TRANSCRIPT");
-    lines.push("==========");
-    meeting.transcript.forEach((t) => {
-      lines.push(`[${fmtTime(t.start_time)}] ${t.speaker_name}: ${t.text}`);
-    });
-  }
-
-  return lines.join("\n");
+// "both" exports roman with the native line underneath.
+function transcriptLines(lines, scriptMode) {
+  return lines.map((l) => {
+    const head = `[${fmtTime(l.start)}] ${l.speakerName}: `;
+    if (scriptMode === "both" && l.textNative && l.textNative !== l.textRoman) {
+      return `${head}${l.textRoman}\n${" ".repeat(head.length)}${l.textNative}`;
+    }
+    return head + lineText(l, scriptMode === "native" ? "native" : "roman");
+  });
 }
 
-// Build an HTML document for printing — uses the browser's native font
-// rendering, so Gujarati and Devanagari scripts print correctly without
-// embedding fonts. Opens in a new window and triggers print → Save as PDF.
-function buildPrintHtml(meeting) {
-  const escape = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const parts = [];
+function buildText(meeting, lines, scriptMode) {
+  const out = [`Meeting: ${meeting.title}`, `Date: ${fmtDate(meeting.date)}`];
+  if (meeting.durationSec) out.push(`Duration: ${fmtDuration(meeting.durationSec)}`);
+  out.push("");
+  if (meeting.summary) out.push("SUMMARY", "=======", meeting.summary, "");
+  if (meeting.actionItems?.length) {
+    out.push("ACTION ITEMS", "============");
+    meeting.actionItems.forEach((a) => out.push(`- [${a.speakerName}] ${a.text}`));
+    out.push("");
+  }
+  if (lines.length) out.push("TRANSCRIPT", "==========", ...transcriptLines(lines, scriptMode));
+  return out.join("\n");
+}
 
-  parts.push(`<h1>${escape(meeting.title)}</h1>`);
-  parts.push(`<p class="meta">${escape(fmtDate(meeting.date || meeting.created_date))}`);
-  if (meeting.duration_seconds > 0)
-    parts.push(` · ${Math.round(meeting.duration_seconds / 60)} min`);
+// Print-to-PDF via the browser so Gujarati and Devanagari render with system fonts. Phase 4 replaces this.
+function buildPrintHtml(meeting, lines, scriptMode) {
+  const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const parts = [`<h1>${esc(meeting.title)}</h1>`, `<p class="meta">${esc(fmtDate(meeting.date))}`];
+  if (meeting.durationSec) parts.push(` · ${fmtDuration(meeting.durationSec)}`);
   parts.push("</p>");
-
   if (meeting.summary) {
-    // Summary is Markdown — convert basic syntax for print
-    let html = escape(meeting.summary)
-      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/^\- (.+)$/gm, '<li>$1</li>')
-      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
+    const html = esc(meeting.summary)
+      .replace(/^## (.+)$/gm, "<h3>$1</h3>")
+      .replace(/^### (.+)$/gm, "<h4>$1</h4>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/^- (.+)$/gm, "<li>$1</li>")
+      .replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
     parts.push(`<div class="section"><h2>Summary</h2><div class="summary">${html}</div></div>`);
   }
-
-  if (meeting.action_items && meeting.action_items.length) {
+  if (meeting.actionItems?.length) {
     parts.push('<div class="section"><h2>Action Items</h2><ul class="actions">');
-    meeting.action_items.forEach((a) => {
-      parts.push(`<li><span class="speaker">${escape(a.speaker_name || "Unknown")}</span>: ${escape(a.text)}</li>`);
-    });
-    parts.push('</ul></div>');
+    meeting.actionItems.forEach((a) => parts.push(`<li><span class="speaker">${esc(a.speakerName)}</span>: ${esc(a.text)}</li>`));
+    parts.push("</ul></div>");
   }
-
-  if (meeting.transcript && meeting.transcript.length) {
+  if (lines.length) {
     parts.push('<div class="section"><h2>Transcript</h2>');
-    meeting.transcript.forEach((t) => {
-      parts.push(
-        `<div class="line">` +
-        `<span class="ts">${fmtTime(t.start_time)}</span> ` +
-        `<span class="sp">${escape(t.speaker_name)}</span>: ` +
-        `<span class="tx">${escape(t.text)}</span>` +
-        `</div>`
-      );
+    lines.forEach((l) => {
+      const both = scriptMode === "both" && l.textNative && l.textNative !== l.textRoman;
+      const text = both ? `${esc(l.textRoman)}<br><span class="native">${esc(l.textNative)}</span>` : esc(lineText(l, scriptMode === "native" ? "native" : "roman"));
+      parts.push(`<div class="line"><span class="ts">${fmtTime(l.start)}</span> <span class="sp">${esc(l.speakerName)}</span>: ${text}</div>`);
     });
-    parts.push('</div>');
+    parts.push("</div>");
   }
-
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>${escape(meeting.title)} — Export</title>
+<title>${esc(meeting.title)} — Export</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", "Noto Sans Gujarati", "Noto Sans Devanagari", sans-serif; max-width: 780px; margin: 24px auto; padding: 0 24px; color: #111; line-height: 1.6; }
   h1 { font-size: 22px; margin: 0 0 4px; }
   h2 { font-size: 16px; margin: 24px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
   h3 { font-size: 14px; margin: 16px 0 4px; }
   .meta { color: #666; font-size: 13px; margin: 0 0 16px; }
-  .section { margin-bottom: 20px; page-break-inside: avoid; }
-  .summary h2, .summary h3 { color: #111; }
-  .summary ul { margin: 4px 0; padding-left: 20px; }
-  .summary li { margin: 2px 0; }
-  .actions { padding-left: 20px; }
-  .actions .speaker { font-weight: 600; }
+  .section { margin-bottom: 20px; }
+  .summary ul, .actions { margin: 4px 0; padding-left: 20px; }
+  .actions .speaker, .sp { font-weight: 600; }
   .line { margin: 3px 0; font-size: 13px; page-break-inside: avoid; }
+  .native { color: #555; }
   .ts { color: #999; font-size: 11px; font-family: monospace; }
-  .sp { font-weight: 600; }
   @media print { body { margin: 0; padding: 12px; } }
 </style></head><body>${parts.join("\n")}
 <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
 }
 
-export default function MeetingExport({ meeting }) {
+export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(buildText(meeting));
+      await navigator.clipboard.writeText(buildText(meeting, lines, scriptMode));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch { alert("Could not copy. Try the Download button."); }
+    } catch {
+      alert("Could not copy. Try the Download button.");
+    }
   };
 
   const downloadTxt = () => {
-    const blob = new Blob([buildText(meeting)], { type: "text/plain;charset=utf-8" });
+    const blob = new Blob([buildText(meeting, lines, scriptMode)], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -142,8 +110,8 @@ export default function MeetingExport({ meeting }) {
 
   const printPdf = () => {
     const w = window.open("", "_blank");
-    if (!w) { alert("Please allow pop-ups to export as PDF."); return; }
-    w.document.write(buildPrintHtml(meeting));
+    if (!w) return alert("Please allow pop-ups to export as PDF.");
+    w.document.write(buildPrintHtml(meeting, lines, scriptMode));
     w.document.close();
   };
 
