@@ -42,3 +42,11 @@ Things noticed during Phase 1 that are out of its scope.
   `workspaces/*/meetings/*` folders would catch failures.
 - Old `done`/`failed` job documents accumulate; add a TTL index (e.g. 30 days on `updatedAt` for
   finished jobs).
+
+## Speech detection threshold
+
+`silencedetect noise=-35dB:d=0.8` found no silence at all in `Prachar.mp3` (100 % "speech",
+one segment over 36.8 min), while the other three recordings came out at 85–90 %. A noisy
+background makes the coverage denominator the whole file and the ratio pessimistic. Option: when
+speech exceeds ~97 % in ≤ 2 segments, re-run with a threshold relative to `volumedetect`'s mean
+volume (e.g. mean − 10 dB). Decide after seeing real Gemini coverage on that file.

@@ -13,7 +13,8 @@
     "eval": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/eval.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",
-    "test": "vitest run"
+    "test": "vitest run",
+    "probe": "tsx --conditions=source src/scripts/probe-files.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
