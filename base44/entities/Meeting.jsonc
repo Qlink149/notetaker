@@ -1,0 +1,249 @@
+{
+  "name": "Meeting",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "title": "Title"
+    },
+    "date": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Date"
+    },
+    "audio_file_url": {
+      "type": "string",
+      "title": "Audio file URL"
+    },
+    "cloudinary_public_id": {
+      "type": "string",
+      "title": "Cloudinary public ID",
+      "description": "Cloudinary public_id for the stored audio \u2014 used to build derived trim/normalize URLs"
+    },
+    "duration_seconds": {
+      "type": "number",
+      "title": "Duration (seconds)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "processing",
+        "completed",
+        "failed"
+      ],
+      "default": "processing",
+      "title": "Status"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "uploaded",
+        "transcribing",
+        "diarizing",
+        "aligning",
+        "romanizing",
+        "summarizing",
+        "completed",
+        "failed"
+      ],
+      "title": "Pipeline stage"
+    },
+    "stage_detail": {
+      "type": "string",
+      "title": "Stage detail"
+    },
+    "language_mode": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "en",
+          "hi",
+          "gu"
+        ]
+      },
+      "title": "Languages spoken"
+    },
+    "engine": {
+      "type": "string",
+      "enum": [
+        "deepgram",
+        "gemini",
+        "openai"
+      ],
+      "title": "Transcription engine used"
+    },
+    "key_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "Key terms"
+    },
+    "expected_speaker_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "Expected participants"
+    },
+    "processing_started_at": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Processing started at"
+    },
+    "pyannote_job_id": {
+      "type": "string",
+      "title": "Pyannote job ID"
+    },
+    "pyannote_mode": {
+      "type": "string",
+      "enum": [
+        "identify",
+        "diarize"
+      ],
+      "title": "Pyannote mode"
+    },
+    "identification": {
+      "type": "array",
+      "title": "Identification segments",
+      "description": "Intermediate pyannote output stored between stages",
+      "items": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "number"
+          },
+          "end": {
+            "type": "number"
+          },
+          "speaker": {
+            "type": "string"
+          },
+          "diarizationSpeaker": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "error_message": {
+      "type": "string",
+      "title": "Error message"
+    },
+    "summary_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "completed",
+        "failed"
+      ],
+      "title": "Summary status"
+    },
+    "clips_total": {
+      "type": "number",
+      "default": 0,
+      "title": "Total clips"
+    },
+    "clips_done": {
+      "type": "number",
+      "default": 0,
+      "title": "Clips done"
+    },
+    "transcript": {
+      "type": "array",
+      "title": "Transcript",
+      "items": {
+        "type": "object",
+        "properties": {
+          "speaker_name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "text_native": {
+            "type": "string"
+          },
+          "start_time": {
+            "type": "number"
+          },
+          "end_time": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "raw_utterances": {
+      "type": "array",
+      "title": "Raw utterances",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "start": {
+            "type": "number"
+          },
+          "end": {
+            "type": "number"
+          },
+          "words": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "word": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "number"
+                },
+                "end": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "title": "Summary"
+    },
+    "action_items": {
+      "type": "array",
+      "title": "Action items",
+      "items": {
+        "type": "object",
+        "properties": {
+          "speaker_name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "unknown_segment_count": {
+      "type": "number",
+      "default": 0,
+      "title": "Unknown voices"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "title": "Participants"
+    }
+  },
+  "required": [
+    "title"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "Speaker",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "title": "Name"
+    },
+    "voiceprint_id": {
+      "type": "string",
+      "title": "Voiceprint",
+      "description": "pyannoteAI voiceprint string (empty if not yet enrolled from a clean clip)"
+    },
+    "enrollment_audio_url": {
+      "type": "string",
+      "title": "Enrollment audio URL",
+      "description": "Cloudinary URL of the voice sample used to create the voiceprint"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
