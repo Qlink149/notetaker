@@ -1,0 +1,64 @@
+# Render blueprint: one codebase (apps/api), two services.
+# Secrets live in the "meetingid-shared" env group (create it once in the dashboard;
+# values marked sync: false are entered there, never committed).
+envVarGroups:
+  - name: meetingid-shared
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20.18.1"
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_TRANSCRIBE_MODEL
+        value: gemini-3.5-transcribe
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PYANNOTEAI_API_KEY
+        sync: false
+
+services:
+  - type: web
+    name: meetingid-api
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+    startCommand: npm run start -w @meetingid/api
+    healthCheckPath: /api/v1/health
+    envVars:
+      - fromGroup: meetingid-shared
+      - key: SERVICE_NAME
+        value: meetingid-api
+      # The Vercel origin(s), comma-separated, e.g. https://meetingid.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      # Used by `npm run seed` (run once from the Render shell)
+      - key: WORKSPACE_ACCESS_CODE
+        sync: false
+
+  - type: worker
+    name: meetingid-worker
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+    startCommand: npm run start:worker -w @meetingid/api
+    envVars:
+      - fromGroup: meetingid-shared
+      - key: SERVICE_NAME
+        value: meetingid-worker
+      - key: WORKER_CONCURRENCY
+        value: "2"
