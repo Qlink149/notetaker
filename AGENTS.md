@@ -1,34 +1,21 @@
-# AGENTS.md
+# MeetingID — agent notes
 
-## Project Context
+npm-workspaces monorepo. Base44 is gone; `legacy/base44/` is a read-only reference until Phase 2 ends.
 
-This is a Base44 app repository. Treat it as user-owned application code, keep changes focused on the user's request, and preserve existing project conventions.
+- `packages/shared` — zod schemas + types shared by web, api and worker.
+- `packages/pipeline` — pure pipeline logic (chunking, seam merge, speaker linking, lines, coverage,
+  repetition, glossary prompt, summary parsing). No I/O. Every function has vitest tests.
+- `apps/api` — Node 20 + TypeScript. Two entrypoints: `src/server.ts` (Render web service) and
+  `src/worker.ts` (Render background worker). MongoDB is both the database and the job queue.
+- `apps/web` — React + Vite (JSX). Talks to the API only through `src/api/client.ts`.
 
-Start with `README.md` for local setup, environment variables, and publish workflow.
+Rules:
 
-## Base44 References
+- `packages/pipeline` imports nothing from `apps/`; `apps/web` imports only from `packages/shared`.
+- No `any` in `packages/*`.
+- Before every commit run `npm run lint && npm run typecheck && npm test` at the repo root.
+- Secrets live in `.env` at the repo root (see `.env.example`); never print their values.
+- `files/` holds client recordings and is gitignored. Never commit audio larger than 3 MB.
+- Ideas outside the current phase go in `docs/PHASE2_NOTES.md`, not into code.
 
-- CLI overview: https://docs.base44.com/developers/references/cli/get-started/overview.md
-- Agent skills: https://docs.base44.com/developers/backend/overview/skills.md
-
-If your agent supports Agent Skills, install or update Base44 skills before Base44-specific work:
-
-```bash
-npx skills add base44/skills
-```
-
-## Key Files
-
-- `src/`: frontend application source.
-- `src/api/base44Client.js`: frontend Base44 SDK client.
-- `vite.config.js`: Vite config and Base44 Vite plugin setup.
-- `.env.local`: local-only environment values; never commit secrets.
-
-## Working Notes
-
-- Use `base44 dev` as the default local development command when you need the local Base44 backend. It can run the backend and frontend together.
-- When docs or code mention the frontend being started automatically, that usually means the Base44 project config includes `site.serveCommand`, for example `"serveCommand": "npm run dev"` in `base44/config.jsonc`.
-- Use `npm run dev` only for frontend-only work against the hosted Base44 backend.
-- Prefer the existing Base44 CLI workflow over adding new npm scripts for Base44-specific tasks.
-- Reuse the existing SDK client and Vite plugin patterns before adding new Base44 integration paths.
-- Run the relevant checks from `package.json` before finishing code changes.
+See `README.md` for running locally and `docs/` for architecture, decisions and the runbook.

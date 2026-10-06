@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import AudioRecorder from "@/components/AudioRecorder";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Loader2, Upload, Check, X } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import { getUploadSignature, uploadToCloudinary, readMediaDuration, validateAudioFile } from "@/lib/cloudinaryUpload";
 
 function fmtDuration(s) {

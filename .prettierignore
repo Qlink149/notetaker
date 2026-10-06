@@ -1,0 +1,7 @@
+node_modules
+dist
+legacy
+files
+apps/web/src/components/ui
+package-lock.json
+*.md
