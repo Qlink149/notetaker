@@ -1,5 +1,5 @@
 import { Toaster } from '@/components/ui/toaster';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import PageNotFound from '@/lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
@@ -13,9 +13,20 @@ import Benchmark from '@/pages/Benchmark';
 import Audit from '@/pages/Audit';
 import Settings from '@/pages/Settings';
 import Login from '@/pages/Login';
+import Join from '@/pages/Join';
 
 function AuthenticatedApp() {
   const { workspace, checking } = useAuth();
+  const { pathname } = useLocation();
+
+  // Guests open /join/<code> on their phones without logging in.
+  if (pathname.startsWith('/join/')) {
+    return (
+      <Routes>
+        <Route path="/join/:code" element={<Join />} />
+      </Routes>
+    );
+  }
 
   if (checking) {
     return (

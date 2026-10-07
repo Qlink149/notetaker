@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Loader2, Check, ChevronDown } from "lucide-react";
 import { api } from "@/api/client";
 import AudioRecorder from "@/components/AudioRecorder";
+import GroupRecording from "@/components/GroupRecording";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { getUploadSignature, uploadToCloudinary, validateAudioFile } from "@/lib/cloudinaryUpload";
@@ -156,6 +157,8 @@ export default function Record() {
             </div>
           )}
         </div>
+
+        <GroupRecording />
 
         <div>
           <label className="text-sm font-medium mb-2 block">Audio</label>

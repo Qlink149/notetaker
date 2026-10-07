@@ -137,6 +137,37 @@ export interface AuditTally {
   textMatchRate: number | null;
 }
 
+export interface SessionParticipant {
+  id: string;
+  name: string;
+  deviceLabel: string;
+  status: 'joined' | 'ready' | 'recording' | 'uploaded' | 'failed';
+  level: number | null;
+  secondsSinceSeen: number;
+  parts: number;
+  knownSpeaker: boolean;
+}
+export interface SessionView {
+  code: string;
+  title: string;
+  state: 'lobby' | 'recording' | 'stopped' | 'processing' | 'done' | 'failed';
+  startedAt: string | null;
+  meetingId: string | null;
+  error: string | null;
+  report: { tracks?: Record<string, unknown>[]; switches?: number; seconds?: number } | null;
+  participants: SessionParticipant[];
+}
+export interface JoinState {
+  state: SessionView['state'];
+  title: string;
+  startedAtServerMs: number | null;
+  serverNowMs: number;
+}
+export interface JoinAuth {
+  pid: string;
+  token: string;
+}
+
 export interface SimilarName {
   id: string;
   name: string;
@@ -237,6 +268,44 @@ export const api = {
       return request<{ speaker: Speaker }>('POST', '/speakers/enrol', form).then((r) => r.speaker);
     },
     remove: (id: string) => request<void>('DELETE', `/speakers/${id}`),
+  },
+  sessions: {
+    create: (title?: string) => request<SessionView>('POST', '/sessions', { title }),
+    get: (code: string) => request<SessionView>('GET', `/sessions/${code}`),
+    start: (code: string) => request<SessionView>('POST', `/sessions/${code}/start`),
+    stop: (code: string) => request<SessionView>('POST', `/sessions/${code}/stop`),
+    finish: (code: string) => request<SessionView>('POST', `/sessions/${code}/finish`),
+  },
+  join: {
+    join: (code: string, name: string, deviceLabel: string) =>
+      request<{ participantId: string; token: string } & JoinState>('POST', `/join/${code}`, {
+        name,
+        deviceLabel,
+      }),
+    heartbeat: (
+      code: string,
+      body: JoinAuth & { level?: number | null; status?: string },
+    ) => request<JoinState>('POST', `/join/${code}/heartbeat`, body),
+    sign: (code: string, auth: JoinAuth) =>
+      request<{
+        cloudName: string;
+        apiKey: string;
+        folder: string;
+        timestamp: number;
+        signature: string;
+        uploadUrl: string;
+      }>('POST', `/join/${code}/sign`, auth),
+    part: (
+      code: string,
+      body: JoinAuth & {
+        index: number;
+        publicId: string;
+        url: string;
+        bytes: number;
+        startSample: number;
+        firstSampleServerMs?: number;
+      },
+    ) => request<{ ok: boolean }>('POST', `/join/${code}/parts`, body),
   },
   audit: {
     list: () =>
