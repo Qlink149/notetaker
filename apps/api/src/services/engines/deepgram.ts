@@ -27,19 +27,23 @@ interface DgResponse {
   metadata?: { duration?: number };
   results?: {
     utterances?: DgUtterance[];
-    channels?: { alternatives?: { words?: DgWord[] }[] }[];
+    channels?: { detected_language?: string; alternatives?: { words?: DgWord[] }[] }[];
   };
 }
 
 /**
- * Nova-3 has no Gujarati and its `multi` mode mistakes Hindi for Spanish, so Hindi is the closest
- * explicit language for Indic or mixed meetings; English-only meetings use English.
+ * Language parameters from the workspace (Nova-3 supports hi, gu and en; one language per request):
+ * one language → set it explicitly; several → per-chunk language detection. Nova-3 rejects a
+ * restricted candidate list (`detect_language=hi&detect_language=gu` → 400, tested 2026-10-07).
  */
-export function deepgramLanguage(languages: Language[]): string {
-  return languages.length === 1 && languages[0] === 'en' ? 'en' : 'hi';
+export function deepgramLanguageParams(languages: Language[]): [string, string][] {
+  const langs = languages.length ? languages : (['hi', 'gu', 'en'] as Language[]);
+  if (langs.length === 1) return [['language', langs[0]!]];
+  return [['detect_language', 'true']];
 }
 
-const lang = (l: string): RawTurn['lang'] => (l === 'en' ? 'en' : 'hi');
+const lang = (l: string): RawTurn['lang'] =>
+  l.startsWith('en') ? 'en' : l.startsWith('gu') ? 'gu' : 'hi';
 
 /** Fallback when utterances are missing or sparse: group words on gaps over 0.5 s. */
 function utterancesFromWords(words: DgWord[]): DgUtterance[] {
@@ -85,15 +89,14 @@ export class DeepgramEngine implements TranscriptionEngine {
   readonly accepts = ['url', 'path'] as ChunkInput['audio']['kind'][];
 
   async transcribeChunk(input: ChunkInput): Promise<ChunkResult> {
-    const language = deepgramLanguage(input.languages);
     const params = new URLSearchParams({
       model: MODEL,
-      language,
       smart_format: 'true',
       punctuate: 'true',
       utterances: 'true',
       diarize: 'true',
     });
+    for (const [k, v] of deepgramLanguageParams(input.languages)) params.append(k, v);
     for (const t of glossaryKeyterms(input.glossary, 100)) params.append('keyterm', t);
 
     const headers: Record<string, string> = {
@@ -123,6 +126,8 @@ export class DeepgramEngine implements TranscriptionEngine {
     }
     if (!res.ok) throw errorForStatus('deepgram', res.status, await res.text());
     const data = (await res.json()) as DgResponse;
+    const language =
+      params.get('language') ?? data.results?.channels?.[0]?.detected_language ?? 'auto';
     return {
       turns: deepgramToTurns(data, language),
       usage: {
