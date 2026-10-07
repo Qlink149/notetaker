@@ -2,6 +2,7 @@ import {
   applyGapFills,
   assembleChunks,
   computeCoverage,
+  repairRomanLeaks,
   turnsToLines,
   type SpeakerResolver,
 } from '@meetingid/pipeline';
@@ -14,7 +15,7 @@ export const PAUSE_SEC = 1.2;
 
 /**
  * Build the meeting transcript from stored engine output (no engine calls): assemble the done
- * chunks, add any done gap fills, resolve speakers, build ≤45 s lines, measure coverage, and save.
+ * chunks, add any done gap fills, repair native-script leaks in the roman text, resolve speakers, build ≤45 s lines, measure coverage, and save.
  * Used by the assemble and gapfill stages and by `npm run reassemble`.
  */
 export async function rebuildTranscript(
@@ -27,7 +28,9 @@ export async function rebuildTranscript(
     done.map((c) => ({ startSec: c.startSec, endSec: c.endSec, turns: c.rawTurns as Turn[] })),
   );
   const fills = (data.gapFills ?? []).filter((g) => g.status === 'done' && g.turns.length);
-  const turns = fills.length ? applyGapFills(assembled.turns, fills) : assembled.turns;
+  const turns = repairRomanLeaks(
+    fills.length ? applyGapFills(assembled.turns, fills) : assembled.turns,
+  );
   const speakerCount = new Set(turns.map((t) => t.speaker)).size;
   const resolution = await resolver.resolve({
     turns,

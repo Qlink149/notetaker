@@ -184,3 +184,14 @@ Measured on the finished meetings, Gemini sometimes leaves detected speech untra
   the gap (±2 s) are kept, and repeats of existing turns within ±8 s are dropped.
 - Out-of-quota errors pause the stage (the job waits for the reset); other failures mark that gap
   `failed` and move on. The spend cap applies as for chunks.
+
+## 24. Roman-script leak check
+
+Gemini occasionally leaves a native-script word in `text_roman` (Meeting 21-9: 4 of 546 turns, e.g.
+"chal रहा है"). Assembly now runs `repairRomanLeaks` on every turn: any Devanagari or Gujarati run in
+`textRoman` is transliterated in place with a fixed table (Gujarati is mapped onto the parallel
+Devanagari block; schwa deletion only at word end; final "ee"/"aa" written "i"/"a"), and the turn and
+its line are marked `romanFix: "transliterated"`. Other Indic scripts are left as they are and
+marked `"unrepaired"`. No engine call is made: a per-turn retry would cost a request from the
+20-per-day free quota to fix one or two words, and the table is deterministic and unit-tested.
+`textNative` is never changed.

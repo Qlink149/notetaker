@@ -54,6 +54,8 @@ export const Turn = z.object({
   timeEstimated: z.boolean().optional(),
   /** Engine times were corrected by a linear rescale (minute.second repair, overshoot, seam drift). */
   timeScaled: z.boolean().optional(),
+  /** Native-script words found in textRoman were transliterated, or could not be. */
+  romanFix: z.enum(['transliterated', 'unrepaired']).optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -68,6 +70,8 @@ export const Line = z.object({
   timeEstimated: z.boolean().optional(),
   /** Engine times were corrected by a linear rescale (minute.second repair, overshoot, seam drift). */
   timeScaled: z.boolean().optional(),
+  /** Native-script words found in textRoman were transliterated, or could not be. */
+  romanFix: z.enum(['transliterated', 'unrepaired']).optional(),
 });
 export type Line = z.infer<typeof Line>;
 

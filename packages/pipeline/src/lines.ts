@@ -101,6 +101,7 @@ export function turnsToLines(
     if (canMerge) {
       if (turn.timeEstimated) last.timeEstimated = true;
       if (turn.timeScaled) last.timeScaled = true;
+      if (turn.romanFix && last.romanFix !== 'unrepaired') last.romanFix = turn.romanFix;
       last.end = Math.max(last.end, turn.end);
       last.textRoman = [last.textRoman, turn.textRoman].filter(Boolean).join(' ');
       last.textNative = [last.textNative, turn.textNative].filter(Boolean).join(' ');
@@ -113,6 +114,7 @@ export function turnsToLines(
         textNative: turn.textNative,
         ...(turn.timeEstimated ? { timeEstimated: true } : {}),
         ...(turn.timeScaled ? { timeScaled: true } : {}),
+        ...(turn.romanFix ? { romanFix: turn.romanFix } : {}),
       });
     }
     lastSpeaker = turn.speaker;

@@ -14,3 +14,4 @@ export * from './speakers.js';
 export * from './silence.js';
 export * from './align.js';
 export * from './gaps.js';
+export * from './romanize.js';

@@ -193,6 +193,7 @@ const turnSchema = new Schema(
     lang: { type: String, enum: TurnLang.options },
     timeEstimated: { type: Boolean, default: undefined },
     timeScaled: { type: Boolean, default: undefined },
+    romanFix: { type: String, enum: ['transliterated', 'unrepaired'], default: undefined },
   },
   opts,
 );
@@ -205,6 +206,7 @@ const lineSchema = new Schema(
     textRoman: String,
     timeEstimated: { type: Boolean, default: undefined },
     timeScaled: { type: Boolean, default: undefined },
+    romanFix: { type: String, enum: ['transliterated', 'unrepaired'], default: undefined },
   },
   opts,
 );
