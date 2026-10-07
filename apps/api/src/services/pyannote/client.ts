@@ -1,154 +1,198 @@
+import { readFile } from 'node:fs/promises';
+import type { DiarizationOutput } from '@meetingid/pipeline';
 import { requireEnv } from '../../config/env.js';
 
-// Ported from legacy/base44/shared/pyannote.ts and the pyannote helpers in pipeline.ts.
-// Phase 1 only uses `createVoiceprint` (speaker enrolment); identify/diarize are kept compiling
-// for Phase 2's VoiceprintResolver.
+// pyannoteAI REST client. Facts this relies on are in DECISIONS #26 (docs.pyannote.ai, checked
+// 2026-10-07): results expire 24 h after a job completes, `confidence` is precision-2 only,
+// identify takes at most 50 voiceprints, and 429 replies carry Retry-After.
 
 const BASE = 'https://api.pyannote.ai/v1';
 
-/** pyannote ignores `matching.threshold`; measured scores were 83-89 for enrolled speakers, 16-36 otherwise. */
-export const MATCH_CONFIDENCE_MIN = 50;
+export type PyannoteModel = 'precision-2' | 'precision-3';
+export const PYANNOTE_MODELS: readonly PyannoteModel[] = ['precision-2', 'precision-3'];
+export const MAX_IDENTIFY_VOICEPRINTS = 50;
+/** Env variable the key comes from; stored on records instead of anything derived from the key. */
+export const PYANNOTE_KEY_LABEL = 'PYANNOTEAI_API_KEY';
+
+export type JobStatus = 'pending' | 'created' | 'running' | 'succeeded' | 'failed' | 'canceled';
+
+export interface PyannoteJob<T> {
+  jobId: string;
+  status: JobStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  output?: T;
+}
+
+export class PyannoteError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 export function pyannoteHeaders(): Record<string, string> {
   return {
-    Authorization: `Bearer ${requireEnv('PYANNOTEAI_API_KEY')}`,
+    Authorization: `Bearer ${requireEnv(PYANNOTE_KEY_LABEL)}`,
     'Content-Type': 'application/json',
   };
 }
 
-interface Job<T> {
-  status: string;
-  output?: T;
-}
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export async function checkPyannoteJob<T = unknown>(
-  jobId: string,
-): Promise<{ done: boolean; output: T | null }> {
-  const res = await fetch(`${BASE}/jobs/${jobId}`, { headers: pyannoteHeaders() });
-  if (!res.ok) throw new Error(`pyannote job check failed: ${res.status}`);
-  const job = (await res.json()) as Job<T>;
-  if (job.status === 'succeeded' || job.status === 'done')
-    return { done: true, output: job.output ?? null };
-  if (job.status === 'failed') throw new Error(`pyannote job failed: ${JSON.stringify(job)}`);
-  return { done: false, output: null };
-}
-
-export async function pollPyannoteJob<T = unknown>(
-  jobId: string,
-  maxAttempts = 50,
-  intervalMs = 3000,
-): Promise<T> {
-  for (let i = 0; i < maxAttempts; i++) {
-    const { done, output } = await checkPyannoteJob<T>(jobId);
-    if (done) return output as T;
-    await new Promise((r) => setTimeout(r, intervalMs));
+/** fetch against the API; waits out 429s (Retry-After, else 10 s) up to `retries` times. */
+async function call<T>(path: string, init: RequestInit = {}, retries = 5): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...pyannoteHeaders(), ...(init.headers as Record<string, string> | undefined) },
+    });
+    if (res.status === 429 && attempt < retries) {
+      const after = Number(res.headers.get('retry-after'));
+      await sleep((Number.isFinite(after) && after > 0 ? after : 10) * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 500);
+      throw new PyannoteError(
+        `pyannote ${init.method ?? 'GET'} ${path} failed: ${res.status} ${body}`,
+        res.status,
+      );
+    }
+    return (await res.json()) as T;
   }
-  throw new Error('pyannote job timed out');
 }
 
-/** Create a voiceprint from a 3-30 s clip URL; returns the voiceprint string. */
-export async function createVoiceprint(url: string): Promise<string> {
-  const res = await fetch(`${BASE}/voiceprint`, {
-    method: 'POST',
-    headers: pyannoteHeaders(),
-    body: JSON.stringify({ url, model: 'precision-2' }),
-  });
-  if (!res.ok) throw new Error(`pyannote voiceprint create failed: ${await res.text()}`);
-  const { jobId } = (await res.json()) as { jobId: string };
-  const output = await pollPyannoteJob<{ voiceprint?: string }>(jobId);
-  if (!output?.voiceprint) throw new Error('No voiceprint returned');
-  return output.voiceprint;
+export interface SpeakerCountOptions {
+  numSpeakers?: number;
+  minSpeakers?: number;
+  maxSpeakers?: number;
+}
+
+export interface DiarizeOptions extends SpeakerCountOptions {
+  model: PyannoteModel;
+}
+
+function speakerCounts(o: SpeakerCountOptions): SpeakerCountOptions {
+  if (o.numSpeakers) return { numSpeakers: o.numSpeakers };
+  return {
+    ...(o.minSpeakers ? { minSpeakers: o.minSpeakers } : {}),
+    ...(o.maxSpeakers ? { maxSpeakers: o.maxSpeakers } : {}),
+  };
+}
+
+/**
+ * Request body for /diarize: model pinned, exclusive segments and turn confidence always on.
+ * The frame-level `confidence` curve exists only on precision-2 (DECISIONS #26).
+ */
+export function diarizeBody(url: string, o: DiarizeOptions): Record<string, unknown> {
+  return {
+    url,
+    model: o.model,
+    exclusive: true,
+    turnLevelConfidence: true,
+    ...(o.model === 'precision-2' ? { confidence: true } : {}),
+    ...speakerCounts(o),
+  };
 }
 
 export interface VoiceprintRef {
+  /** Opaque label (`<speakerId>-<n>`), never a person's name. */
   label: string;
   voiceprint: string;
 }
 
-export async function submitIdentify(
-  audioUrl: string,
-  voiceprints: VoiceprintRef[],
-): Promise<string | null> {
-  const valid = voiceprints.filter((v) => v.voiceprint).slice(0, 10);
-  if (!valid.length) return null;
-  const res = await fetch(`${BASE}/identify`, {
+export interface IdentifyOptions extends DiarizeOptions {
+  voiceprints: VoiceprintRef[];
+}
+
+/**
+ * Request body for /identify. Matching threshold stays 0 so every speaker gets a score for every
+ * voiceprint; names are accepted or rejected by our own resolver.
+ */
+export function identifyBody(url: string, o: IdentifyOptions): Record<string, unknown> {
+  const voiceprints = o.voiceprints.filter((v) => v.voiceprint);
+  if (!voiceprints.length) throw new Error('identify needs at least one voiceprint');
+  if (voiceprints.length > MAX_IDENTIFY_VOICEPRINTS)
+    throw new Error(`identify takes at most ${MAX_IDENTIFY_VOICEPRINTS} voiceprints`);
+  if (voiceprints.some((v) => /^speaker_/i.test(v.label)))
+    throw new Error('voiceprint labels must not start with SPEAKER_');
+  return {
+    ...diarizeBody(url, o),
+    voiceprints,
+    matching: { exclusive: true, threshold: 0 },
+  };
+}
+
+async function submit(endpoint: string, body: Record<string, unknown>): Promise<string> {
+  const job = await call<{ jobId: string; warning?: string }>(`/${endpoint}`, {
     method: 'POST',
-    headers: pyannoteHeaders(),
-    body: JSON.stringify({
-      url: audioUrl,
-      voiceprints: valid,
-      matching: { threshold: MATCH_CONFIDENCE_MIN, exclusive: true },
-      confidence: true,
-      turnLevelConfidence: true,
-    }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`pyannote identify submit failed: ${await res.text()}`);
-  return ((await res.json()) as { jobId: string }).jobId;
+  return job.jobId;
 }
 
-export async function submitDiarize(audioUrl: string): Promise<string> {
-  const res = await fetch(`${BASE}/diarize`, {
+export const submitDiarize = (url: string, o: DiarizeOptions): Promise<string> =>
+  submit('diarize', diarizeBody(url, o));
+
+export const submitIdentify = (url: string, o: IdentifyOptions): Promise<string> =>
+  submit('identify', identifyBody(url, o));
+
+export const submitVoiceprint = (url: string, model: PyannoteModel): Promise<string> =>
+  submit('voiceprint', { url, model });
+
+export function getJob<T = DiarizationOutput>(jobId: string): Promise<PyannoteJob<T>> {
+  return call<PyannoteJob<T>>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export interface WaitOptions {
+  /** Give up after this long (default 30 min; a 45-min meeting takes a few minutes). */
+  maxWaitMs?: number;
+  onPoll?: (status: JobStatus, waitedMs: number) => void;
+}
+
+/** Poll until the job finishes; interval grows 5 s → 60 s. Throws on failed/canceled. */
+export async function waitForJob<T = DiarizationOutput>(
+  jobId: string,
+  { maxWaitMs = 30 * 60_000, onPoll }: WaitOptions = {},
+): Promise<PyannoteJob<T>> {
+  const started = Date.now();
+  let interval = 5000;
+  for (;;) {
+    const job = await getJob<T>(jobId);
+    onPoll?.(job.status, Date.now() - started);
+    if (job.status === 'succeeded') return job;
+    if (job.status === 'failed' || job.status === 'canceled')
+      throw new PyannoteError(`pyannote job ${jobId} ${job.status}`, 0);
+    if (Date.now() - started > maxWaitMs)
+      throw new PyannoteError(`pyannote job ${jobId} still ${job.status} after ${maxWaitMs} ms`, 0);
+    await sleep(interval);
+    interval = Math.min(60_000, Math.round(interval * 1.5));
+  }
+}
+
+/** Upload a local file to pyannote's temporary storage; returns its `media://` URL. */
+export async function uploadMedia(localPath: string, key: string): Promise<string> {
+  if (!/^[a-zA-Z0-9\-_./]+$/.test(key)) throw new Error(`invalid media key: ${key}`);
+  const mediaUrl = `media://${key}`;
+  const { url } = await call<{ url: string }>('/media/input', {
     method: 'POST',
-    headers: pyannoteHeaders(),
-    body: JSON.stringify({ url: audioUrl }),
+    body: JSON.stringify({ url: mediaUrl }),
   });
-  if (!res.ok) throw new Error(`pyannote diarize submit failed: ${await res.text()}`);
-  return ((await res.json()) as { jobId: string }).jobId;
+  const res = await fetch(url, { method: 'PUT', body: await readFile(localPath) });
+  if (!res.ok) throw new PyannoteError(`pyannote media upload failed: ${res.status}`, res.status);
+  return mediaUrl;
 }
 
-export interface IdentifiedSegment {
-  start: number;
-  end: number;
-  speaker: string;
-  diarizationSpeaker?: string;
-  confidence?: Record<string, number>;
-}
-
-export function parseIdentifyOutput(
-  output: { identification?: IdentifiedSegment[] } | null,
-): IdentifiedSegment[] {
-  return output?.identification ?? [];
-}
-
-export function parseDiarizeOutput(
-  output: { diarization?: IdentifiedSegment[]; segments?: IdentifiedSegment[] } | null,
-): IdentifiedSegment[] {
-  return (output?.diarization ?? output?.segments ?? []).map((s) => ({
-    ...s,
-    diarizationSpeaker: s.speaker,
-  }));
-}
-
-/** Duration-weighted average confidence per diarization speaker; ≥ 50 wins, else `Unknown N`. */
-export function resolveSpeakers(identification: IdentifiedSegment[]): Record<string, string> {
-  const scores = new Map<string, Map<string, { sum: number; dur: number }>>();
-  const order: string[] = [];
-  for (const seg of identification) {
-    const key = seg.diarizationSpeaker ?? seg.speaker;
-    if (!scores.has(key)) {
-      scores.set(key, new Map());
-      order.push(key);
-    }
-    const dur = Math.max(0.01, seg.end - seg.start);
-    for (const [label, score] of Object.entries(seg.confidence ?? {})) {
-      const row = scores.get(key)!;
-      const cur = row.get(label) ?? { sum: 0, dur: 0 };
-      row.set(label, { sum: cur.sum + score * dur, dur: cur.dur + dur });
-    }
-  }
-  const map: Record<string, string> = {};
-  let unknown = 0;
-  for (const key of order) {
-    let best: string | null = null;
-    let bestScore = -1;
-    for (const [label, { sum, dur }] of scores.get(key) ?? []) {
-      const avg = sum / dur;
-      if (avg > bestScore) {
-        best = label;
-        bestScore = avg;
-      }
-    }
-    map[key] = best && bestScore >= MATCH_CONFIDENCE_MIN ? best : `Unknown ${++unknown}`;
-  }
-  return map;
+/** Create a voiceprint from a ≤ 30 s single-speaker clip URL; returns the voiceprint string. */
+export async function createVoiceprint(
+  url: string,
+  model: PyannoteModel = 'precision-2',
+): Promise<string> {
+  const jobId = await submitVoiceprint(url, model);
+  const job = await waitForJob<{ voiceprint?: string }>(jobId, { maxWaitMs: 5 * 60_000 });
+  if (!job.output?.voiceprint) throw new Error('No voiceprint returned');
+  return job.output.voiceprint;
 }
