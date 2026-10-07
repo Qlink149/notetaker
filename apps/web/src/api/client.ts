@@ -358,6 +358,39 @@ export const api = {
         { name, meetingIds },
       ),
   },
+  dashboard: () =>
+    request<{
+      totals: {
+        meetings: number;
+        hours: number;
+        usdRecorded: number;
+        usdLedger: number;
+        ledgerByProvider: Record<string, number>;
+        averageCoverage: number | null;
+        belowNinety: number;
+        voiceBacked: number;
+      };
+      usage: {
+        engineCalls: { engine: string; kind: string; calls: number }[];
+        pyannoteJobs: { kind: string; status: string; jobs: number }[];
+        pyannoteHours: number;
+        pyannoteCostNote: string;
+      };
+      quotas: { key: string; until: string }[];
+      audit: AuditTally[];
+      meetings: {
+        id: string;
+        title: string;
+        status: string;
+        minutes: number | null;
+        coverage: number | null;
+        speakers: number;
+        speakerSource: string;
+        voices: { confident: number; needsReview: number; newVoices: number; edited: number };
+        usd: number;
+        deepgramMin: number;
+      }[];
+    }>('GET', '/dashboard'),
   health: () =>
     request<{ ok: boolean; db: string; worker: { lastHeartbeat: string | null } }>(
       'GET',

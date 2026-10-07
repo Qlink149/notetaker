@@ -11,6 +11,7 @@ import Record from '@/pages/Record';
 import MeetingDetail from '@/pages/MeetingDetail';
 import Benchmark from '@/pages/Benchmark';
 import Audit from '@/pages/Audit';
+import Dashboard from '@/pages/Dashboard';
 import Settings from '@/pages/Settings';
 import Login from '@/pages/Login';
 import Join from '@/pages/Join';

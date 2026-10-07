@@ -1,11 +1,12 @@
 import { Outlet, NavLink } from "react-router-dom";
-import { Mic, Users, List, Gauge, Settings } from "lucide-react";
+import { Mic, Users, List, Gauge, Settings, BarChart3 } from "lucide-react";
 
 export default function Layout() {
   const navItems = [
     { to: "/", label: "Meetings", icon: List, end: true },
     { to: "/record", label: "Record", icon: Mic, end: false },
     { to: "/speakers", label: "Speakers", icon: Users, end: false },
+    { to: "/dashboard", label: "Insights", icon: BarChart3, end: false },
     { to: "/benchmark", label: "Benchmark", icon: Gauge, end: false },
     { to: "/settings", label: "Settings", icon: Settings, end: false },
   ];
