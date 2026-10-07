@@ -4,6 +4,7 @@ export const GlossaryKind = z.enum([
   'company',
   'person',
   'competitor',
+  'agency',
   'product',
   'place',
   'other',

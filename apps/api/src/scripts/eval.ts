@@ -28,7 +28,7 @@ const { values, positionals } = parseArgs({
     title: { type: 'string' },
     start: { type: 'string' },
     duration: { type: 'string' },
-    workspace: { type: 'string', default: 'notetaker' },
+    workspace: { type: 'string', default: 'kisna' },
     'no-run': { type: 'boolean', default: false },
   },
 });
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
       'usage: eval <audio file> [--start s --duration s] [--engine gemini|deepgram] [--no-run]',
     );
   const cfg = env();
-  await connectMongo(cfg.MONGODB_URI);
+  await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
   const workspace = await WorkspaceModel.findOne({ slug: values.workspace }).lean();
   if (!workspace)
     throw new Error(`workspace "${values.workspace}" not found; run npm run seed first`);

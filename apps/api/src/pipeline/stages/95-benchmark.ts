@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { Types } from 'mongoose';
 import { BenchmarkEngineName } from '@meetingid/shared';
 import {
@@ -9,6 +8,7 @@ import {
 } from '@meetingid/pipeline';
 import { EvalRunModel, MeetingDataModel } from '../../models/index.js';
 import type { ChunkAudio } from '../../services/engines/types.js';
+import { materializeChunk } from '../chunkAudio.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, humanizeError } from '../errors.js';
 import { loadMeeting, loadWorkspaceContext } from '../meetings.js';
@@ -70,11 +70,15 @@ export const benchmarkStage: StageHandler = {
     let model = '';
     for (const c of chunks) {
       let audio: ChunkAudio;
-      if (engine.accepts.includes('url') && c.audioUrl) {
-        audio = { kind: 'url', url: c.audioUrl, mimeType: FLAC };
-      } else {
-        const path = join(tmpDir, `bench-${c.index}.flac`);
-        await deps.storage.download(c.audioUrl!, path);
+      {
+        const path = await materializeChunk(
+          deps,
+          tmpDir,
+          meeting.audio.originalUrl,
+          c.startSec,
+          c.endSec,
+          `bench-${c.index}`,
+        );
         audio = engine.accepts.includes('gemini-file')
           ? {
               kind: 'gemini-file',

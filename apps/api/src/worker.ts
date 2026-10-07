@@ -8,7 +8,7 @@ import { stages } from './pipeline/stages/index.js';
 // Render background worker entrypoint.
 async function main(): Promise<void> {
   const cfg = env();
-  await connectMongo(cfg.MONGODB_URI);
+  await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
   const runner = new Runner(defaultDeps(), stages, {
     ...(cfg.WORKER_ID ? { workerId: cfg.WORKER_ID } : {}),
     concurrency: cfg.WORKER_CONCURRENCY,

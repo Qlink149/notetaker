@@ -49,7 +49,9 @@ const NETWORK =
 export function classify(err: unknown): RetryableError | FatalError {
   if (err instanceof RetryableError || err instanceof FatalError) return err;
   const e = err as { status?: unknown; code?: unknown; message?: unknown; name?: unknown };
-  if (e?.name === 'NotImplementedError') return new FatalError(String(e.message), { cause: err });
+  if (e?.name === 'NotImplementedError' || e?.name === 'MissingConfigError') {
+    return new FatalError(String(e.message), { cause: err });
+  }
   const message = typeof e?.message === 'string' ? e.message : String(err);
   const status = typeof e?.status === 'number' ? e.status : undefined;
   if (status !== undefined) {

@@ -8,6 +8,7 @@ import { TRANSCRIPT_JSON_SCHEMA, buildTranscriptionInstruction } from './prompt.
 import type { ChunkInput, ChunkResult, TranscriptionEngine } from './types.js';
 
 const MAX_OUTPUT_TOKENS = 65_536;
+const GEMINI_SEED = 20_260_927;
 /** Below the 8-minute transcribe lease so a hung call never outlives its job lock. */
 const REQUEST_TIMEOUT_MS = 7 * 60_000;
 
@@ -115,7 +116,12 @@ export class GeminiEngine implements TranscriptionEngine {
             mime_type: 'application/json',
             schema: TRANSCRIPT_JSON_SCHEMA,
           },
-          generation_config: { max_output_tokens: MAX_OUTPUT_TOKENS, thinking_level: 'low' },
+          // No temperature on the Interactions API (DECISIONS #9); a fixed seed keeps reruns comparable.
+          generation_config: {
+            max_output_tokens: MAX_OUTPUT_TOKENS,
+            thinking_level: 'low',
+            seed: GEMINI_SEED,
+          },
           store: false,
         },
         { timeout: REQUEST_TIMEOUT_MS, maxRetries: 1 },

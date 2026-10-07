@@ -1,7 +1,7 @@
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express, { Router, type Express } from 'express';
-import { env } from './config/env.js';
+import { engineStatus, env } from './config/env.js';
 import { mongoReady } from './db/mongo.js';
 import { requireAuth } from './lib/auth.js';
 import { errorHandler } from './lib/http.js';
@@ -48,6 +48,7 @@ export function createApp(deps: ApiDeps): Express {
       ok: mongoReady(),
       db: mongoReady() ? 'up' : 'down',
       worker: { lastHeartbeat: beat?.lastHeartbeat ?? null },
+      engines: Object.fromEntries(Object.entries(engineStatus()).map(([k, v]) => [k, v.enabled])),
     });
   });
   v1.use(authRouter());

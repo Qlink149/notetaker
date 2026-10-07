@@ -8,7 +8,7 @@ import {
   type Stage,
 } from '@meetingid/shared';
 import { ws } from '../lib/auth.js';
-import { HttpError, body, idParam, notFound } from '../lib/http.js';
+import { HttpError, assertEngineEnabled, body, idParam, notFound } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
 import { meetingDataView, meetingView } from '../lib/views.js';
 import { JobModel, MeetingDataModel, MeetingModel, type MeetingDoc } from '../models/index.js';
@@ -38,6 +38,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
   r.post('/meetings', async (req, res) => {
     const workspace = ws(req);
     const input = body(CreateMeetingBody, req);
+    await assertEngineEnabled([input.engine ?? workspace.settings.engine]);
     const folder = meetingFolder(workspace.slug, input.meetingId);
     if (!input.publicId.startsWith(`${folder}/`))
       throw new HttpError(400, "publicId is not in this meeting's upload folder");

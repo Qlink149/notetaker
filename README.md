@@ -24,7 +24,7 @@ npm install
 cp .env.example .env            # fill in values; never commit .env
 cp apps/web/.env.example apps/web/.env.local
 npm run build -w @meetingid/shared -w @meetingid/pipeline   # once, for compiled imports
-npm run seed -w @meetingid/api  # creates workspace "notetaker" + glossary; login code = WORKSPACE_ACCESS_CODE
+npm run seed -w @meetingid/api  # creates workspace "Kisna" + glossary; login code = WORKSPACE_ACCESS_CODE
 
 npm run dev -w @meetingid/api          # API on :8080
 npm run dev:worker -w @meetingid/api   # worker (separate terminal)

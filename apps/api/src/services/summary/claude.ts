@@ -54,7 +54,10 @@ function anthropic(): Anthropic {
   return client;
 }
 
-function systemPrompt(input: SummaryInput, speakers: string[]): string {
+export function buildSummarySystemPrompt(
+  input: Pick<SummaryInput, 'glossary' | 'languages'>,
+  speakers: string[],
+): string {
   const langs =
     input.languages.map((l) => LANGUAGE_NAMES[l]).join(', ') || 'Hindi, Gujarati, English';
   const glossary = renderGlossaryForPrompt(input.glossary);
@@ -71,7 +74,7 @@ function systemPrompt(input: SummaryInput, speakers: string[]): string {
     '  "## Decisions" (bullets; if none, write "No explicit decisions were made."),',
     '  "## Insights" (notable points, risks, concerns),',
     '  "## Open Questions" (anything unresolved or flagged for follow-up).',
-    '  Do not include action items, horizontal rules (---) or any other heading in summary_markdown.',
+    '  Do not include action items, horizontal rules (---) or any other heading in summary_markdown. Never write an "ACTION_ITEMS" marker or heading anywhere; action items go only in the action_items field.',
     '- action_items: every task, follow-up, commitment or next step. text is an imperative phrase starting with a verb, including any deadline, dependency or context stated. speaker_name is the speaker who owns it, exactly as labelled; if the owner is unclear use "Unassigned". Deduplicate near-identical items.',
     'Base everything strictly on the transcript. Do not invent facts.',
   ]
@@ -141,7 +144,7 @@ export class ClaudeSummariser implements Summariser {
       body = `The transcript was too long to send at once. Summaries of consecutive segments:\n\n${partSummaries.join('\n\n')}`;
     }
 
-    const system = systemPrompt(input, speakers);
+    const system = buildSummarySystemPrompt(input, speakers);
     let lastError = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       const text = await call(system, body, 8000, true);

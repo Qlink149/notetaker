@@ -30,6 +30,9 @@ export async function startDb(): Promise<void> {
     MONGODB_URI: mongo.getUri(),
     JWT_SECRET: 'x'.repeat(40),
     CORS_ORIGINS: 'https://meetingid.example',
+    GEMINI_API_KEY: 'test-gemini',
+    DEEPGRAM_API_KEY: 'test-deepgram',
+    PYANNOTEAI_API_KEY: 'test-pyannote',
   });
   resetEnvCache();
   await mongoose.connect(mongo.getUri());
@@ -48,8 +51,8 @@ export async function clearDb(): Promise<void> {
 
 export async function seedWorkspace(): Promise<WorkspaceDoc> {
   const w = await WorkspaceModel.create({
-    name: 'notetaker',
-    slug: 'notetaker',
+    name: 'Kisna',
+    slug: 'kisna',
     accessCodeHash: hashAccessCode(ACCESS_CODE),
     settings: {
       engine: 'gemini',
@@ -84,7 +87,6 @@ export async function fakeStorage(): Promise<StorageService & { root: string }> 
       signature: 'sig',
       uploadUrl: 'https://upload.example',
     }),
-    uploadRaw: put,
     uploadAudio: put,
     trimmedWavUrl: (id, s, e) => `wav://${id}/${s}-${e}`,
     playbackUrl: (id) => `mp3://${id}`,
@@ -206,6 +208,7 @@ export function testDeps(over: Partial<Deps> & Pick<Deps, 'storage' | 'engine'>)
       toAnalysisFlac: ffmpeg.toAnalysisFlac,
       decodedDuration: ffmpeg.decodedDuration,
       detectSilences: ffmpeg.detectSilences,
+      noiseFloorDb: ffmpeg.noiseFloorDb,
       cutFlac: ffmpeg.cutFlac,
     },
     now: () => new Date(),

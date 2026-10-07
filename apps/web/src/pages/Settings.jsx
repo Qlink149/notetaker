@@ -6,7 +6,7 @@ import { LANGUAGES } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const KINDS = ["company", "person", "competitor", "product", "place", "other"];
+const KINDS = ["company", "person", "competitor", "agency", "product", "place", "other"];
 
 function Section({ title, description, children }) {
   return (

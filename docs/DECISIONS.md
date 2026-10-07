@@ -42,12 +42,25 @@ machine (GitHub unreachable) and is a supply-chain risk at deploy time. `@ffmpeg
 and `@ffprobe-installer/ffprobe` ship the binaries as npm packages per platform. `FFMPEG_PATH` /
 `FFPROBE_PATH` override them (e.g. a system ffmpeg in Docker).
 
-### 9. Gemini Interactions API without `temperature`
-The current SDK (`@google/genai` 2.x) routes audio understanding through `client.interactions.create`
-with `response_format` (JSON Schema) and `generation_config`. Its generation config has no
-`temperature` field, so the brief's `temperature: 0` cannot be set. Determinism comes from the strict
-schema, a precise instruction, `thinking_level: 'low'`, and output validation with retry.
-Truncation is detected from `status: 'incomplete' | 'budget_exceeded'`.
+### 9. Gemini Interactions API without `temperature`; fixed `seed` instead
+The current SDK (`@google/genai` 2.24.0) routes audio understanding through
+`client.interactions.create` (https://ai.google.dev/gemini-api/docs/audio) with `response_format`
+(JSON Schema) and `generation_config`. Evidence, re-checked 2026-10-07:
+
+- The type of `generation_config` on that call (`GenerationConfig_2` in `dist/node/node.d.ts`)
+  has `max_output_tokens`, `seed`, `stop_sequences`, `thinking_level`, `thinking_summaries`,
+  `transcription_config` and others, but no `temperature`. The `temperature` field in the same
+  file belongs to the older `generateContent` `GenerationConfig`, whose documented range is
+  (0.0, 2.0], so 0 is not valid there either.
+- Live test against `gemini-3.8-flash`: four calls sending `temperature` (0, 0.01, 0, 0.5) all timed
+  out with no response, while interleaved calls sending only `seed` completed in 4–6 s (one also
+  timed out during the same demand spike).
+- `thinking_level: 'minimal'` is rejected for this model (400); `'low'` is accepted.
+
+So the request sends no temperature and a fixed `seed`, which the API documents as making output
+"mostly deterministic". The rest of the determinism comes from the strict schema, a precise
+instruction, `thinking_level: 'low'`, and output validation with retry. Truncation is detected
+from `status: 'incomplete' | 'budget_exceeded'`.
 
 ### 10. Model ids are configuration
 `GEMINI_MODEL` (default `gemini-3.8-flash`) and the workspace `summaryModel` (default
@@ -63,3 +76,22 @@ The summariser receives `[mm:ss] Speaker N: text_roman` (native too only when th
 prefers native script), the glossary, and the speaker list, and must return one JSON object
 (`output_config.format` JSON Schema). Owners not in the speaker list become `Unassigned`; stray
 `---` and `ACTION_ITEMS` lines are stripped (D4, D5).
+
+### 13. Cloudinary stores only the original recording
+The account is on Cloudinary's Free plan: raw files max 10 MB, video/audio max 100 MB (read from
+the Admin API `usage` endpoint, 2026-10-07). 16 kHz mono FLAC is ~1.1 MB per minute, so a single
+10-minute chunk (~11 MB) already exceeds the raw limit and a 2-hour analysis FLAC (~130 MB) exceeds
+the video limit. Phase 1 therefore stores nothing but the original: ingest builds the FLAC and chunks
+in its temp directory and uploads chunks straight to the Gemini Files API. When a later job needs a
+chunk as a file (Gemini file expired, Deepgram, benchmark, a split chunk), it is re-cut from the
+original (`pipeline/chunkAudio.ts`; the original is fetched once per job). `audio.analysisUrl` stays
+null; Phase 2 derives analysis audio on demand. Note the same plan caps browser uploads of the
+original at 100 MB (≈ 1 h 45 min of 128 kbps MP3); larger files need a paid plan or chunked upload.
+
+### 14. Silence threshold: −35 dB, raised only on noisy recordings
+`threshold = max(−35 dB, noise floor + 10 dB)`, capped at −25 dB, where the noise floor is the
+10th-percentile RMS level of 0.5 s windows (ffmpeg `astats`). Measured on the four client
+recordings (speech share at fixed −35 → with this rule): 200 85 % → 85 %, AOM part 1 90 % → 90 %,
+21-9-2026 85 % → 85 %, Prachar 100 % (one segment) → 93 % (117 segments). The brief's
+`mean − 18 dB` rule was tried first and rejected: it lowers the threshold below −35 dB on these
+files and turned 200 and AOM into 100 % "speech" while leaving Prachar unchanged.

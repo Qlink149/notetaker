@@ -1,7 +1,6 @@
 import { join } from 'node:path';
-import { planChunks, speechFromSilences } from '@meetingid/pipeline';
+import { planChunks, silenceThresholdDb, speechFromSilences } from '@meetingid/pipeline';
 import { MeetingDataModel, MeetingModel } from '../../models/index.js';
-import { meetingFolder } from '../../services/storage/cloudinary.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError } from '../errors.js';
 import { loadMeeting, loadWorkspaceContext } from '../meetings.js';
@@ -12,15 +11,15 @@ export const OVERLAP_SEC = 30;
 const FLAC = 'audio/flac';
 
 /**
- * Probe → 16 kHz mono FLAC (analysis audio, fixes A1) → silencedetect → plan 10-min chunks →
- * cut each chunk and store it, upload to Gemini Files when Gemini is the engine → one transcribe
- * job per chunk. Idempotent: a re-run rebuilds MeetingData from scratch.
+ * Probe → 16 kHz mono FLAC (what every engine gets; fixes A1) → silencedetect (threshold raised on noisy recordings) →
+ * plan 10-min chunks → cut each chunk locally and upload it to Gemini Files when Gemini is the
+ * engine → one transcribe job per chunk. Only the original lives in Cloudinary; chunk audio is
+ * re-cut from it on demand (DECISIONS #13). Idempotent: a re-run rebuilds MeetingData.
  */
 export const ingestStage: StageHandler = {
   async run({ job, deps, log, tmpDir }: StageContext) {
     const meeting = await loadMeeting(job.meetingId);
-    const { workspace } = await loadWorkspaceContext(meeting.workspaceId);
-    const folder = meetingFolder(workspace.slug, String(meeting._id));
+    await loadWorkspaceContext(meeting.workspaceId); // fails fast if the workspace is gone
 
     const original = join(tmpDir, 'original');
     await deps.storage.download(meeting.audio.originalUrl, original);
@@ -38,8 +37,9 @@ export const ingestStage: StageHandler = {
       'probed',
     );
 
-    const analysisUp = await deps.storage.uploadRaw(analysis, `${folder}/analysis.flac`);
-    const silences = await deps.audio.detectSilences(analysis);
+    const noiseFloor = await deps.audio.noiseFloorDb(analysis);
+    const thresholdDb = silenceThresholdDb(noiseFloor);
+    const silences = await deps.audio.detectSilences(analysis, thresholdDb);
     const speechSegments = speechFromSilences(silences, durationSec);
 
     const plan = planChunks(durationSec, CHUNK_SEC, OVERLAP_SEC);
@@ -48,14 +48,13 @@ export const ingestStage: StageHandler = {
     for (const c of plan) {
       const path = join(tmpDir, `chunk-${c.index}.flac`);
       await deps.audio.cutFlac(analysis, path, c.startSec, c.endSec);
-      const up = await deps.storage.uploadRaw(path, `${folder}/chunks/chunk-${c.index}.flac`);
       const gem = useGemini
         ? await deps.geminiFiles.upload(path, FLAC, `${String(meeting._id)}-${c.index}`)
         : null;
       chunks.push({
         ...c,
-        audioUrl: up.url,
-        audioPublicId: up.publicId,
+        audioUrl: null,
+        audioPublicId: null,
         geminiFileUri: gem?.uri ?? null,
         geminiFileName: gem?.name ?? null,
         uploadedAt: gem ? deps.now() : null,
@@ -76,8 +75,8 @@ export const ingestStage: StageHandler = {
       {
         $set: {
           durationSec: Math.round(durationSec * 10) / 10,
-          'audio.analysisUrl': analysisUp.url,
-          'audio.analysisPublicId': analysisUp.publicId,
+          'audio.analysisUrl': null,
+          'audio.analysisPublicId': null,
           'audio.playbackUrl': deps.storage.playbackUrl(meeting.audio.originalPublicId),
           status: 'processing',
           stage: 'transcribe',
@@ -89,7 +88,12 @@ export const ingestStage: StageHandler = {
     for (const c of chunks)
       await enqueue({ meetingId: meeting._id, stage: 'transcribe', step: c.index });
     log.info(
-      { chunks: chunks.length, speechSec: speechSegments.reduce((s, x) => s + x.end - x.start, 0) },
+      {
+        chunks: chunks.length,
+        noiseFloor,
+        thresholdDb,
+        speechSec: Math.round(speechSegments.reduce((s, x) => s + x.end - x.start, 0)),
+      },
       'ingested',
     );
   },

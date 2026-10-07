@@ -4,6 +4,7 @@ const KIND_ORDER: { kind: GlossaryKind; label: string }[] = [
   { kind: 'company', label: 'Company' },
   { kind: 'person', label: 'People' },
   { kind: 'competitor', label: 'Competitors' },
+  { kind: 'agency', label: 'Agencies' },
   { kind: 'product', label: 'Products' },
   { kind: 'place', label: 'Places' },
   { kind: 'other', label: 'Other terms' },

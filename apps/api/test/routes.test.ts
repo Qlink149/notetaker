@@ -78,7 +78,7 @@ describe('auth', () => {
       .post('/api/v1/auth/login')
       .send({ code: ACCESS_CODE })
       .expect(200);
-    expect(res.body.workspace).toMatchObject({ name: 'notetaker', slug: 'notetaker' });
+    expect(res.body.workspace).toMatchObject({ name: 'Kisna', slug: 'kisna' });
     expect(res.headers['set-cookie']?.[0]).toContain('mid_token=');
   });
 
@@ -98,7 +98,7 @@ describe('auth', () => {
 describe('meetings', () => {
   it('signs uploads into a per-meeting folder', async () => {
     const res = await auth(request(app).post('/api/v1/uploads/sign')).expect(200);
-    expect(res.body.folder).toBe(`workspaces/notetaker/meetings/${res.body.meetingId}`);
+    expect(res.body.folder).toBe(`workspaces/kisna/meetings/${res.body.meetingId}`);
     expect(Types.ObjectId.isValid(res.body.meetingId)).toBe(true);
   });
 
@@ -331,5 +331,36 @@ describe('benchmark', () => {
     );
     expect(got.body.run.status).toBe('running');
     expect(String(workspace._id)).toBe(got.body.run.workspaceId);
+  });
+});
+
+describe('access code security', () => {
+  it('stores only a scrypt hash of the access code', async () => {
+    const { WorkspaceModel } = await import('../src/models/index.js');
+    const w = await WorkspaceModel.findOne({ slug: 'kisna' }).lean();
+    expect(w?.accessCodeHash).toMatch(/^[0-9a-f]{32}:[0-9a-f]{64}$/);
+    expect(JSON.stringify(w)).not.toContain(ACCESS_CODE);
+  });
+
+  it('locks an IP out after 10 failed logins', async () => {
+    const ip = '203.0.113.7';
+    for (let i = 0; i < 10; i++) {
+      await request(app)
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', ip)
+        .send({ code: `wrong-${i}` })
+        .expect(401);
+    }
+    await request(app)
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', ip)
+      .send({ code: ACCESS_CODE })
+      .expect(429);
+    // other clients are unaffected
+    await request(app)
+      .post('/api/v1/auth/login')
+      .set('X-Forwarded-For', '203.0.113.8')
+      .send({ code: ACCESS_CODE })
+      .expect(200);
   });
 });

@@ -9,11 +9,11 @@ import {
   workspaceForCode,
   ws,
 } from '../lib/auth.js';
-import { HttpError, body } from '../lib/http.js';
+import { HttpError, assertEngineEnabled, body } from '../lib/http.js';
 import { workspaceView } from '../lib/views.js';
 import { GlossaryModel, WorkspaceModel, type WorkspaceDoc } from '../models/index.js';
 
-/** Per-IP throttle on failed logins: 10 failures per 5 minutes. */
+/** Per-IP throttle on failed logins: 10 failures per 15 minutes, then 429 until the window ends. */
 const failures = new Map<string, { count: number; resetAt: number }>();
 function checkThrottle(ip: string): void {
   const f = failures.get(ip);
@@ -22,7 +22,7 @@ function checkThrottle(ip: string): void {
 function recordFailure(ip: string): void {
   const now = Date.now();
   const f = failures.get(ip);
-  if (!f || f.resetAt < now) failures.set(ip, { count: 1, resetAt: now + 5 * 60_000 });
+  if (!f || f.resetAt < now) failures.set(ip, { count: 1, resetAt: now + 15 * 60_000 });
   else f.count++;
 }
 
@@ -66,6 +66,7 @@ export function workspaceRouter(): Router {
 
   r.put('/workspace/settings', async (req, res) => {
     const settings = body(WorkspaceSettings, req);
+    await assertEngineEnabled([settings.engine]);
     const updated = await WorkspaceModel.findByIdAndUpdate(
       ws(req)._id,
       { $set: { settings } },

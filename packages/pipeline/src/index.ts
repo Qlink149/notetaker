@@ -11,3 +11,4 @@ export * from './summaryInput.js';
 export * from './normalize.js';
 export * from './assemble.js';
 export * from './speakers.js';
+export * from './silence.js';

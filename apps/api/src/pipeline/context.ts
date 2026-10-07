@@ -17,6 +17,7 @@ export interface AudioTools {
   toAnalysisFlac: typeof ffmpeg.toAnalysisFlac;
   decodedDuration: typeof ffmpeg.decodedDuration;
   detectSilences: typeof ffmpeg.detectSilences;
+  noiseFloorDb: typeof ffmpeg.noiseFloorDb;
   cutFlac: typeof ffmpeg.cutFlac;
 }
 
@@ -48,6 +49,7 @@ export function defaultDeps(): Deps {
       toAnalysisFlac: ffmpeg.toAnalysisFlac,
       decodedDuration: ffmpeg.decodedDuration,
       detectSilences: ffmpeg.detectSilences,
+      noiseFloorDb: ffmpeg.noiseFloorDb,
       cutFlac: ffmpeg.cutFlac,
     },
     now: () => new Date(),

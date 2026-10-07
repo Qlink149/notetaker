@@ -42,3 +42,6 @@ base44/.app.jsonc
 # Client recordings and exports (never commit)
 /files/
 scripts/eval/out/
+
+# Local scratch clips
+/scratch/

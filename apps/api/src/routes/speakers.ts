@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
+import { env } from '../config/env.js';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import { SpeakerModel, type SpeakerDoc } from '../models/index.js';
@@ -45,6 +46,9 @@ export function speakersRouter(deps: ApiDeps): Router {
 
   /** Multipart (`name` + `audio` file) or JSON (`name` + `audioUrl` | `trim`). */
   r.post('/speakers/enrol', upload.single('audio'), async (req, res) => {
+    if (!env().PYANNOTEAI_API_KEY) {
+      throw new HttpError(503, 'Speaker enrolment is disabled: PYANNOTEAI_API_KEY is not set');
+    }
     const workspace = ws(req);
     const input = body(EnrolBody, {
       ...req,

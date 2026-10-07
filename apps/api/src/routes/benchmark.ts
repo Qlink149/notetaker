@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { Types } from 'mongoose';
 import { BenchmarkRunBody, PromoteEvalSetBody } from '@meetingid/shared';
 import { ws } from '../lib/auth.js';
-import { HttpError, body, idParam, notFound } from '../lib/http.js';
+import { HttpError, assertEngineEnabled, body, idParam, notFound } from '../lib/http.js';
 import { evalRunView } from '../lib/views.js';
 import {
   EvalRunModel,
@@ -20,6 +20,7 @@ export function benchmarkRouter(): Router {
   r.post('/benchmark/run', async (req, res) => {
     const workspace = ws(req);
     const input = body(BenchmarkRunBody, req);
+    await assertEngineEnabled(input.engines);
     const meetingIds = input.meetingIds.map((id) => {
       if (!Types.ObjectId.isValid(id)) throw new HttpError(400, `invalid meeting id ${id}`);
       return new Types.ObjectId(id);

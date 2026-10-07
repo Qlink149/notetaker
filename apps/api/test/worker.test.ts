@@ -51,7 +51,7 @@ async function createMeeting(engine: 'gemini' | 'deepgram' = 'gemini') {
     languages: ['hi', 'gu', 'en'],
     audio: {
       originalUrl: fixture,
-      originalPublicId: `workspaces/notetaker/meetings/${String(id)}/original`,
+      originalPublicId: `workspaces/kisna/meetings/${String(id)}/original`,
     },
   });
   await enqueue({ meetingId: id, stage: 'ingest' });
@@ -80,7 +80,7 @@ describe('worker state machine', () => {
     expect(m?.actionItems).toEqual([{ speakerName: 'Speaker 1', text: 'Send the plan.' }]);
     expect(m?.cost.geminiInputTokens).toBe(1000);
     expect(m?.cost.claudeInputTokens).toBe(500);
-    expect(m?.audio.analysisUrl).toBeTruthy();
+    expect(m?.audio.analysisUrl).toBeNull(); // only the original is stored (DECISIONS #13)
     expect(engine.calls).toHaveLength(1);
     expect(engine.calls[0]!.audio.kind).toBe('gemini-file');
     expect(engine.calls[0]!.glossary?.entries[0]?.term).toBe('Kisna');

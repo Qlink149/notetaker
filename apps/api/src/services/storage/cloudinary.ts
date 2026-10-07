@@ -33,8 +33,6 @@ export interface StorageService {
     signature: string;
     uploadUrl: string;
   };
-  /** Upload a local file as a `raw` asset (FLAC analysis audio, chunk audio). */
-  uploadRaw(path: string, publicId: string): Promise<{ url: string; publicId: string }>;
   /** Upload a local audio file as a `video` asset so Cloudinary can transcode it. */
   uploadAudio(path: string, publicId: string): Promise<{ url: string; publicId: string }>;
   /** WAV derivative of [startSec, endSec] of an audio asset (voiceprint clips). */
@@ -62,20 +60,6 @@ export const cloudinaryStorage: StorageService = {
       signature,
       uploadUrl: `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
     };
-  },
-
-  async uploadRaw(path, publicId) {
-    try {
-      const res = await cld().uploader.upload(path, {
-        resource_type: 'raw',
-        public_id: publicId,
-        overwrite: true,
-        invalidate: true,
-      });
-      return { url: res.secure_url, publicId: res.public_id };
-    } catch (err) {
-      throw classify(err);
-    }
   },
 
   async uploadAudio(path, publicId) {

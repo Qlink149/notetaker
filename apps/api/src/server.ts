@@ -9,7 +9,7 @@ import { cloudinaryStorage } from './services/storage/cloudinary.js';
 // Render web service entrypoint. Long work never runs here; it is queued for the worker.
 async function main(): Promise<void> {
   const cfg = env();
-  await connectMongo(cfg.MONGODB_URI);
+  await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
   const app = createApp({
     storage: cloudinaryStorage,
     geminiFiles: { upload: uploadToGeminiFiles, delete: deleteGeminiFile },

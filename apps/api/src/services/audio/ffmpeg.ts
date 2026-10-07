@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { Segment } from '@meetingid/shared';
+import { quantile } from '@meetingid/pipeline';
 import { env } from '../../config/env.js';
 import { FatalError } from '../../pipeline/errors.js';
 
@@ -114,6 +115,31 @@ export async function decodedDuration(path: string): Promise<number> {
 }
 
 /** Silences from ffmpeg silencedetect (`noise=-35dB:d=0.8`). */
+/**
+ * Noise floor in dBFS: the 10th-percentile RMS level of 0.5 s windows (16 kHz mono input), or null
+ * if it could not be measured. Drives the silencedetect threshold (DECISIONS #14).
+ */
+export async function noiseFloorDb(path: string): Promise<number | null> {
+  try {
+    const { stdout } = await run(ffmpegPath(), [
+      '-hide_banner',
+      '-i',
+      path,
+      '-af',
+      'asetnsamples=n=8000,astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-',
+      '-f',
+      'null',
+      '-',
+    ]);
+    const levels = [...stdout.matchAll(/RMS_level=(-?[\d.]+|-inf)/g)].map((m) =>
+      m[1] === '-inf' ? -120 : Number(m[1]),
+    );
+    return quantile(levels, 0.1);
+  } catch {
+    return null;
+  }
+}
+
 export async function detectSilences(
   path: string,
   noiseDb = -35,

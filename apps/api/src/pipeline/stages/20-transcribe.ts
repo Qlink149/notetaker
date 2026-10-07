@@ -1,9 +1,8 @@
-import { join } from 'node:path';
 import type { Types } from 'mongoose';
 import { looksRepetitive, normalizeChunkTurns, splitChunk } from '@meetingid/pipeline';
 import { MeetingDataModel, MeetingModel } from '../../models/index.js';
 import type { ChunkAudio } from '../../services/engines/types.js';
-import { meetingFolder } from '../../services/storage/cloudinary.js';
+import { materializeChunk } from '../chunkAudio.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, RetryableError } from '../errors.js';
 import { addCost, loadChunkStatuses, loadMeeting, loadWorkspaceContext } from '../meetings.js';
@@ -57,15 +56,16 @@ export const transcribeStage: StageHandler = {
     const { workspace, glossary } = await loadWorkspaceContext(meeting.workspaceId);
     const engine = deps.engine(meeting.engine);
 
-    let localPath: string | null = null;
-    const ensureLocal = async (): Promise<string> => {
-      if (localPath) return localPath;
-      if (!chunk.audioUrl)
-        throw new FatalError(`Chunk ${index} has no stored audio; re-run ingest`);
-      localPath = join(tmpDir, `chunk-${index}.flac`);
-      await deps.storage.download(chunk.audioUrl, localPath);
-      return localPath;
-    };
+    // Chunk audio is re-cut from the original only when it is needed as a file.
+    const ensureLocal = (): Promise<string> =>
+      materializeChunk(
+        deps,
+        tmpDir,
+        meeting.audio.originalUrl,
+        chunk.startSec,
+        chunk.endSec,
+        `chunk-${index}`,
+      );
 
     let audio: ChunkAudio;
     const fresh =
@@ -91,8 +91,6 @@ export const transcribeStage: StageHandler = {
         },
       );
       audio = { kind: 'gemini-file', uri: up.uri, mimeType: FLAC };
-    } else if (engine.accepts.includes('url') && chunk.audioUrl) {
-      audio = { kind: 'url', url: chunk.audioUrl, mimeType: FLAC };
     } else {
       audio = { kind: 'path', path: await ensureLocal(), mimeType: FLAC };
     }
@@ -125,14 +123,7 @@ export const transcribeStage: StageHandler = {
       log.warn({ bad, attempts }, 'engine output rejected');
       const length = chunk.endSec - chunk.startSec;
       if (attempts >= BAD_OUTPUTS_BEFORE_SPLIT && length >= MIN_SPLIT_SEC) {
-        await splitAndRequeue({
-          meetingId: meeting._id,
-          chunk,
-          ensureLocal,
-          ctxDeps: deps,
-          tmpDir,
-          slug: workspace.slug,
-        });
+        await splitAndRequeue(meeting._id, chunk);
         return;
       }
       throw new RetryableError(`Chunk ${index} output ${bad}`, 'truncated');
@@ -166,39 +157,25 @@ export const transcribeStage: StageHandler = {
   },
 };
 
-async function splitAndRequeue(args: {
-  meetingId: Types.ObjectId;
-  chunk: { index: number; startSec: number; endSec: number };
-  ensureLocal: () => Promise<string>;
-  ctxDeps: StageContext['deps'];
-  tmpDir: string;
-  slug: string;
-}): Promise<void> {
-  const { meetingId, chunk, ensureLocal, ctxDeps: deps, tmpDir, slug } = args;
+/** Replace a chunk that keeps failing with two halves (audio is re-cut on demand when they run). */
+async function splitAndRequeue(
+  meetingId: Types.ObjectId,
+  chunk: { index: number; startSec: number; endSec: number },
+): Promise<void> {
   const all = await loadChunkStatuses(meetingId);
   const nextIndex = Math.max(...all.map((c) => c.index)) + 1;
-  const halves = splitChunk(chunk, OVERLAP_SEC, nextIndex);
-  const source = await ensureLocal();
-  const folder = meetingFolder(slug, String(meetingId));
-
-  const records = [];
-  for (const h of halves) {
-    const path = join(tmpDir, `chunk-${h.index}.flac`);
-    await deps.audio.cutFlac(source, path, h.startSec - chunk.startSec, h.endSec - chunk.startSec);
-    const up = await deps.storage.uploadRaw(path, `${folder}/chunks/chunk-${h.index}.flac`);
-    records.push({
-      ...h,
-      audioUrl: up.url,
-      audioPublicId: up.publicId,
-      geminiFileUri: null,
-      geminiFileName: null,
-      uploadedAt: null,
-      status: 'pending' as const,
-      attempts: 0,
-      parent: chunk.index,
-      rawTurns: [],
-    });
-  }
+  const records = splitChunk(chunk, OVERLAP_SEC, nextIndex).map((h) => ({
+    ...h,
+    audioUrl: null,
+    audioPublicId: null,
+    geminiFileUri: null,
+    geminiFileName: null,
+    uploadedAt: null,
+    status: 'pending' as const,
+    attempts: 0,
+    parent: chunk.index,
+    rawTurns: [],
+  }));
   const res = await MeetingDataModel.updateOne(
     { meetingId, chunks: { $elemMatch: { index: chunk.index, status: 'pending' } } },
     { $set: { 'chunks.$.status': 'superseded' } },
