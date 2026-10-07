@@ -131,3 +131,45 @@ describe('timestamps', () => {
     expect(overshootScale([{ start: 0, end: 610 }], 600)).toBe(1);
   });
 });
+
+describe('time provenance flags', () => {
+  it('leaves engine times unflagged when they are used as given', async () => {
+    const { normalizeChunkTurns } = await import('../src/normalize.js');
+    const [t] = normalizeChunkTurns([raw('S1', 1, 4)], 600, 0);
+    expect(t!.timeEstimated).toBeUndefined();
+    expect(t!.timeScaled).toBeUndefined();
+  });
+
+  it('flags clamped, pushed-forward and zero-length turns as estimated', async () => {
+    const { normalizeChunkTurns } = await import('../src/normalize.js');
+    const turns = normalizeChunkTurns(
+      [raw('S1', 10, 20), raw('S1', 8, 12), raw('S2', 30, 30, 'ek do teen'), raw('S2', 590, 612)],
+      600,
+      0,
+    );
+    expect(turns.map((t) => Boolean(t.timeEstimated))).toEqual([false, true, true, true]);
+  });
+
+  it('flags every turn of a rescaled (overshooting) chunk as scaled', async () => {
+    const { normalizeChunkTurns } = await import('../src/normalize.js');
+    const turns = normalizeChunkTurns([raw('S1', 0, 100), raw('S2', 400, 800)], 600, 0);
+    expect(turns.every((t) => t.timeScaled)).toBe(true);
+  });
+
+  it('flags turns split by word share as estimated', async () => {
+    const { splitLongTurn } = await import('../src/lines.js');
+    const parts = splitLongTurn(
+      {
+        ...raw('S1', 0, 0),
+        speaker: 'S1',
+        start: 0,
+        end: 100,
+        textRoman: 'a b c d e f',
+        textNative: 'a b c d e f',
+        lang: 'hi',
+      } as never,
+      45,
+    );
+    expect(parts.every((p) => p.timeEstimated)).toBe(true);
+  });
+});

@@ -146,3 +146,23 @@ Render has no free background workers. `src/all.ts` runs the API and the job loo
 (concurrency 1) on one Free web service (512 MB, 0.1 CPU) in Singapore, kept awake by an uptime ping
 on `/api/v1/health`. Measured local peak 413 MB under `tsx` during a 42-minute assembly; a 2–3 hour
 meeting may hit the limit and restart (jobs resume). `render.paid.yaml` keeps the two-service layout.
+
+### 22. Where turn times come from (provenance flags)
+Every place a time is changed rather than taken from the engine, in order:
+
+| Step | Where | What happens | Flag |
+|---|---|---|---|
+| Minute.second repair | `normalizeChunkTurns` | `2.35` read as 2 min 35 s when the whole chunk looks written that way | `timeScaled` |
+| Overshoot rescale | `normalizeChunkTurns` | if the latest timestamp exceeds the chunk length by > 3 %, every time in the chunk × (length / latest) | `timeScaled` |
+| Clamp | `normalizeChunkTurns` | a time still outside [0, chunk length] (or not a number) is clamped to the nearest bound | `timeEstimated` |
+| Monotonic start | `normalizeChunkTurns` | a start earlier than the previous turn's start is pushed forward to it | `timeEstimated` |
+| Zero-length fill | `normalizeChunkTurns` | an end < 0.05 s after the start is set to start + 0.4 s × words (bounded by the next turn) | `timeEstimated` |
+| Seam alignment | `assembleChunks` → `alignSeam` | the earlier chunk's clock × factor (median drift from shared sentences, ±15 % max) | `timeScaled` |
+| Long-turn split | `turnsToLines` → `splitLongTurn` | a turn > 45 s is split by word share; piece times are interpolated | `timeEstimated` |
+
+`timeEstimated` / `timeScaled` are optional booleans on `Turn` and `Line` (a line carries a flag if any
+turn merged into it does). Unflagged times are the engine's own, only re-based by the chunk offset.
+Rescaled times are still the engine's relative timing, corrected for a clock error; estimated times
+are not engine timing at all. Phase 2 should prefer unflagged turns when choosing voiceprint clips.
+Meetings transcribed before this change carry flags only from assembly (seam alignment, splits);
+normalisation-stage flags appear for chunks transcribed from now on.

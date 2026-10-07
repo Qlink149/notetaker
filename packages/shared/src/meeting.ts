@@ -35,6 +35,10 @@ export const Turn = z.object({
   textNative: z.string(),
   textRoman: z.string(),
   lang: TurnLang,
+  /** Start or end was invented, interpolated or clamped rather than taken from the engine. */
+  timeEstimated: z.boolean().optional(),
+  /** Engine times were corrected by a linear rescale (minute.second repair, overshoot, seam drift). */
+  timeScaled: z.boolean().optional(),
 });
 export type Turn = z.infer<typeof Turn>;
 
@@ -45,6 +49,10 @@ export const Line = z.object({
   end: z.number(),
   textNative: z.string(),
   textRoman: z.string(),
+  /** Start or end was invented, interpolated or clamped rather than taken from the engine. */
+  timeEstimated: z.boolean().optional(),
+  /** Engine times were corrected by a linear rescale (minute.second repair, overshoot, seam drift). */
+  timeScaled: z.boolean().optional(),
 });
 export type Line = z.infer<typeof Line>;
 

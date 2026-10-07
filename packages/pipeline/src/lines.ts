@@ -66,6 +66,8 @@ export function splitLongTurn(turn: Turn, maxLineSec: number): Turn[] {
     const end = i === pieces - 1 ? turn.end : turn.start + (duration * consumed) / total;
     out.push({
       ...turn,
+      // interpolated by word share inside the engine's turn
+      timeEstimated: true,
       start,
       end: Math.min(end, start + maxLineSec),
       textRoman: (roman[i] ?? []).join(' '),
@@ -97,6 +99,8 @@ export function turnsToLines(
       turn.start - last.end < pauseSec &&
       Math.max(last.end, turn.end) - last.start <= maxLineSec;
     if (canMerge) {
+      if (turn.timeEstimated) last.timeEstimated = true;
+      if (turn.timeScaled) last.timeScaled = true;
       last.end = Math.max(last.end, turn.end);
       last.textRoman = [last.textRoman, turn.textRoman].filter(Boolean).join(' ');
       last.textNative = [last.textNative, turn.textNative].filter(Boolean).join(' ');
@@ -107,6 +111,8 @@ export function turnsToLines(
         end: turn.end,
         textRoman: turn.textRoman,
         textNative: turn.textNative,
+        ...(turn.timeEstimated ? { timeEstimated: true } : {}),
+        ...(turn.timeScaled ? { timeScaled: true } : {}),
       });
     }
     lastSpeaker = turn.speaker;

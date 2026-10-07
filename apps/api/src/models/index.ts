@@ -191,11 +191,21 @@ const turnSchema = new Schema(
     textNative: String,
     textRoman: String,
     lang: { type: String, enum: TurnLang.options },
+    timeEstimated: { type: Boolean, default: undefined },
+    timeScaled: { type: Boolean, default: undefined },
   },
   opts,
 );
 const lineSchema = new Schema(
-  { speakerName: String, start: Number, end: Number, textNative: String, textRoman: String },
+  {
+    speakerName: String,
+    start: Number,
+    end: Number,
+    textNative: String,
+    textRoman: String,
+    timeEstimated: { type: Boolean, default: undefined },
+    timeScaled: { type: Boolean, default: undefined },
+  },
   opts,
 );
 

@@ -83,12 +83,16 @@ export function normalizeChunkTurns(
     end: fixMs ? minuteSecondsToSec(t.end) : t.end,
   }));
   const scale = overshootScale(repaired, chunkDurationSec);
+  const scaled = fixMs || scale !== 1;
+  const inRange = (v: number): boolean =>
+    Number.isFinite(v) && v * scale >= 0 && v * scale <= chunkDurationSec;
   const clamp = (v: number): number =>
     Math.min(Math.max(Number.isFinite(v) ? v * scale : 0, 0), chunkDurationSec);
 
   const kept = repaired
     .map((t) => ({
       ...t,
+      clamped: !inRange(t.start) || !inRange(t.end),
       start: clamp(t.start),
       end: clamp(t.end),
       text_native: (t.text_native ?? '').trim(),
@@ -102,7 +106,11 @@ export function normalizeChunkTurns(
     const t = kept[i]!;
     const start = Math.max(t.start, lastStart);
     let end = Math.max(t.end, start);
+    // Times not taken from the engine: clamped into the chunk, pushed forward to keep starts
+    // non-decreasing, or an end invented for a zero-length turn.
+    let estimated = t.clamped || start !== t.start || end !== t.end;
     if (end - start < 0.05) {
+      estimated = true;
       const words = (t.text_roman || t.text_native).split(/\s+/).length;
       const nextStart = kept[i + 1]?.start ?? chunkDurationSec;
       end = Math.min(
@@ -118,6 +126,8 @@ export function normalizeChunkTurns(
       textNative: t.text_native || t.text_roman,
       textRoman: t.text_roman || t.text_native,
       lang: t.lang,
+      ...(estimated ? { timeEstimated: true } : {}),
+      ...(scaled ? { timeScaled: true } : {}),
     });
   }
   return out;

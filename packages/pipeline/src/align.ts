@@ -68,5 +68,5 @@ export function alignSeam(
 export function rescaleTurns(turns: Turn[], startSec: number, scale: number): Turn[] {
   if (scale === 1) return turns;
   const f = (t: number): number => Math.round((startSec + (t - startSec) * scale) * 1000) / 1000;
-  return turns.map((t) => ({ ...t, start: f(t.start), end: f(t.end) }));
+  return turns.map((t) => ({ ...t, start: f(t.start), end: f(t.end), timeScaled: true }));
 }
