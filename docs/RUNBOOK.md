@@ -84,3 +84,24 @@ Stop-Process -Id <pid> -Force
 ```
 
 The worker heartbeat (`db.workerheartbeats.find()`) also shows every worker id that is alive.
+
+## Gemini free-tier quota
+
+`db.geminiquotas.find()` lists keys exhausted per model and until when (Google's reset is midnight
+Pacific). Jobs waiting for a reset show `lastError: "Gemini daily quota used up …"` and a `runAfter`
+at the reset; they do not use attempts. To add capacity, add `GEMINI_API_KEY3` etc. (a key in another
+project) and restart; to clear a wrong mark: `db.geminiquotas.deleteOne({ _id: "<keyId>:<model>" })`.
+
+## Summary handoff (testing only, SUMMARY_PROVIDER=handoff)
+
+1. `npm run handoff -w @meetingid/api -- pending` writes `scratch/handoff/<id>.prompt.txt`.
+2. Have an isolated Claude Haiku 4.5 agent read that file, follow its SYSTEM part on its USER part,
+   and write only the JSON object to `scratch/handoff/<id>.reply.json`.
+3. `npm run handoff -w @meetingid/api -- submit <id> scratch/handoff/<id>.reply.json`.
+The worker validates the reply within 15 s; an invalid reply re-opens the request once.
+
+## Re-run only assembly (free, no API calls)
+
+Assembly works from stored chunk turns. Mark the meeting `stage: "assemble"`, `status:
+"processing"`, delete its pending summary handoffs, and queue an `assemble` job (see
+`POST /meetings/:id/retry {"stage": "assemble"}`).

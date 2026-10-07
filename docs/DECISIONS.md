@@ -123,3 +123,26 @@ from the prompt alone, and the reply went through the same strict `parseSummary`
 testing. Production keeps `SUMMARY_PROVIDER=anthropic` because the Render worker cannot call a
 subagent. Differences from the API path: no JSON-schema constraint (validation only), and the whole
 transcript is sent in one request instead of being split at 60k characters.
+
+### 18. Timestamps as "MM:SS.s" with overshoot rescale
+Live 10-minute chunks on gemini-3.5-flash ran their clock fast: up to 38 % of a chunk's words had
+timestamps past the end of the audio and were clamped onto its last second. The schema now asks for
+`MM:SS.s` strings with the chunk's exact length stated in the prompt, and `normalizeChunkTurns`
+rescales a chunk's times linearly when the latest one overshoots by more than 3 %. Rerun: 0 piled turns.
+
+### 19. Align chunk clocks at seams before merging
+The same sentence appeared up to 26 s apart in two adjacent chunks. `alignSeam` finds sentences both
+chunks transcribed in the overlap (≥ 5 words, containment ≥ 0.7, within ±60 s), takes the median
+drift and rescales the earlier chunk's clock around its start (bounded to ±15 %) before speaker
+linking and the midpoint merge. Speaker linking uses containment similarity and a 15 s window.
+
+### 20. Deepgram language from the workspace
+Nova-3 supports hi, gu and en but one language per request, and rejects a restricted
+`detect_language` list (400). One workspace language → explicit; several → per-chunk detection.
+Detection chose Italian for the Gujarati-heavy 200.mp3 (255 words), so Deepgram stays a fallback.
+
+### 21. Phase 1 deploy: one Render Free web service running API + worker
+Render has no free background workers. `src/all.ts` runs the API and the job loop in one process
+(concurrency 1) on one Free web service (512 MB, 0.1 CPU) in Singapore, kept awake by an uptime ping
+on `/api/v1/health`. Measured local peak 413 MB under `tsx` during a 42-minute assembly; a 2–3 hour
+meeting may hit the limit and restart (jobs resume). `render.paid.yaml` keeps the two-service layout.
