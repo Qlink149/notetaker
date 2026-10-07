@@ -1,5 +1,5 @@
 import { Types } from 'mongoose';
-import { BenchmarkEngineName } from '@meetingid/shared';
+import { BenchmarkEngineName, Language } from '@meetingid/shared';
 import {
   assembleChunks,
   computeCoverage,
@@ -20,14 +20,21 @@ const FLAC = 'audio/flac';
 interface BenchmarkPayload {
   evalRunId: string;
   engine: string;
+  /** Override the meeting's languages for this run (e.g. Deepgram with an explicit language). */
+  languages?: string[];
 }
 
-function payloadOf(ctx: StageContext): { evalRunId: Types.ObjectId; engine: BenchmarkEngineName } {
+function payloadOf(ctx: StageContext): {
+  evalRunId: Types.ObjectId;
+  engine: BenchmarkEngineName;
+  languages: Language[] | null;
+} {
   const p = ctx.job.payload as BenchmarkPayload | null;
   const engine = BenchmarkEngineName.safeParse(p?.engine);
   if (!p?.evalRunId || !engine.success)
     throw new FatalError('benchmark job is missing evalRunId/engine');
-  return { evalRunId: new Types.ObjectId(p.evalRunId), engine: engine.data };
+  const languages = p.languages?.length ? Language.array().parse(p.languages) : null;
+  return { evalRunId: new Types.ObjectId(p.evalRunId), engine: engine.data, languages };
 }
 
 async function saveResult(
@@ -53,7 +60,7 @@ async function saveResult(
 export const benchmarkStage: StageHandler = {
   async run(ctx: StageContext) {
     const { job, deps, log, tmpDir } = ctx;
-    const { evalRunId, engine: engineName } = payloadOf(ctx);
+    const { evalRunId, engine: engineName, languages: override } = payloadOf(ctx);
     const meeting = await loadMeeting(job.meetingId);
     const { workspace, glossary } = await loadWorkspaceContext(meeting.workspaceId);
     const data = await MeetingDataModel.findOne({ meetingId: meeting._id }).lean();
@@ -61,7 +68,8 @@ export const benchmarkStage: StageHandler = {
     if (!chunks.length) throw new FatalError('Meeting has not been ingested yet');
 
     const engine = deps.engine(engineName);
-    const languages = meeting.languages.length ? meeting.languages : workspace.settings.languages;
+    const languages =
+      override ?? (meeting.languages.length ? meeting.languages : workspace.settings.languages);
     const started = Date.now();
     const usage = { input: 0, output: 0, audioSec: 0 };
     const perChunk = [];
@@ -70,6 +78,7 @@ export const benchmarkStage: StageHandler = {
     const pipelineDone = (data?.chunks ?? []).filter((c) => c.status === 'done');
     const reuse =
       engineName === 'gemini' &&
+      !override &&
       pipelineDone.length > 0 &&
       (data?.chunks ?? []).every((c) => c.status === 'done' || c.status === 'superseded') &&
       pipelineDone.every((c) => (c.model ?? '').startsWith('gemini'));
