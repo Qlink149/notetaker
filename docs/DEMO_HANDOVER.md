@@ -16,6 +16,7 @@ Everything is committed locally on branch `phase-2-speaker-identity` in the work
 | 5a. Deploy | **Skipped** | you asked me not to push |
 | 5b. Local demo setup | **Done** | `npm run demo`, `demo:tunnel`, `demo:check` (11/11 pass, also through the https tunnel), `demo:snapshot`, `demo:reset` |
 | Phase 4: Word export (embedded fonts), cost and quality page, login limits | **Done** | export file inspected in a test; dashboard test; expired/forged tokens rejected |
+| Web screens | **Tested in a simulated browser, not looked at** | 21 tests render and drive the speaker cards, transcript editing, audit, insights, host panel, the phone's join page (join → record → upload → finish), the meeting page and the login wall. They found and fixed one crash (host panel) |
 | Phase 4: PDF | **Unchanged** | browser print-to-PDF; no browser engine is bundled on the server |
 
 ## 2. What is real, what is a prototype, what is not built
@@ -77,7 +78,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 ## 5. Morning checklist (08:00–10:00)
 
 1. **pyannote credit** (see "Needs Yogansh"). Without it the demo still works as above.
-2. `npm run demo:reset`, `npm run demo`, `npm run demo:check`. Click through the script once yourself: I could not open a browser, so the screens were built and their data checked, not looked at.
+2. `npm run demo:reset`, `npm run demo`, `npm run demo:check`. Click through the script once yourself: nobody has looked at the screens in a real browser (see §7).
 3. **Name the voices** (listen to the samples on each Speakers card). This is the ground truth the audit and the "true count" need.
 4. **Blind audit, about 25 minutes**: http://localhost:5173/audit. Name each voice from its three samples, then judge the lines; keys R / W / U for the speaker and 1 / 2 / 3 for the text. *Results* tab shows the two methods side by side.
 5. **Two-phone test (10 minutes):** laptop + one phone (+ a second if you have one). `npm run demo:live` is not needed to test the join. `npm run demo:tunnel`, enter the https address on the Record page, scan the QR with the phone, allow the microphone, press Start, talk for a minute, Stop, wait for the phone to say "Done", *Combine and process*. **Success:** the host list shows the phone's level moving, each phone shows parts uploaded, the result panel lists each phone ("aligned (shift … clock drift … ppm)") and a meeting appears. **Failure looks like:** the phone never leaves "Waiting for the host" (the https address is wrong or blocked), the microphone level stays flat (permission, or another app has the microphone), "N uploading" never reaches 0 (connection), or the combined meeting says "aligned by timestamps only" (the phones heard too little in common).
@@ -95,12 +96,12 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 
 - Scores of voices that were *not* the same person: 16–48.
 - **Spend tonight:** Gemini new calls **0** (budget 6). pyannote: 8 diarizations (about 5 h of audio), 10 voiceprints, 3 identifications (budget: 3 full-meeting jobs). Deepgram: 4 whole-file requests (budget 6), about $0.62. Summaries: 3, by a subagent, no Anthropic API.
-- Tests: see the last line of `docs/PHASE2_REPORT.md` §6.
+- Tests: 180 (pipeline) + 71 (API) + 21 (web); lint and typecheck clean. Details in `docs/PHASE2_REPORT.md` §6.
 
 ## 7. Known defects and risks, most likely first
 
 1. **Prachar** shows as "processing" in the demo copy until the Phase 1 queue finishes it (see the end of this file for what I did about it).
-2. **The screens were never viewed in a browser by me.** Data and endpoints are checked (`demo:check`) and the web app builds, but layout or script glitches are possible. Click through once before the client does.
+2. **I could not open a real browser, so nobody has looked at the screens.** Their behaviour is tested (21 tests drive them in a simulated browser, and `demo:check` walks the same endpoints a browser uses) but layout, spacing and phone-sized views are unseen. Click through once before the client does.
 3. **Some voice links are only as sure as their score.** AOM Speaker B = 21/9 Speaker D is 78, and the same voice scored 67 against 21/9 Speaker B (margin 11). Confirm by ear before naming. Small voices (E/F/G, under a minute) may be fragments of someone else; *Same person as…* merges them.
 4. **After naming, the summary text still has the old labels** until someone answers the summary request (testing setup). The page says so.
 5. **Re-identify and enrolling new voiceprints are unavailable** until pyannote has credit.

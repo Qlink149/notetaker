@@ -80,7 +80,8 @@ Every non-match scored 16–48 (21 speakers across the three runs; median about 
 ## 6. Tests
 
 - `packages/pipeline`: 180 tests, including join methods (speaker change mid-turn, overlap, drifted times, words outside any segment), name resolution (two voices claiming one person, margin failure, no voiceprints, several voiceprints), clip selection, loose duplicate names, audit sampling and tally, and the multi-phone signal code (offsets of 0.3 s, 4 s and 20 s found within 50 ms; 0.1 % clock drift recovered and removed; best-channel mix; attribution).
-- `apps/api`: 70+ tests, including the pipeline with pyannote mocked (diarize beside transcription, expired result resubmitted, a job older than 24 h resubmitted, rate limit retried, 402 falls back to Phase 1's text linking), speaker review edits, the audit, the Word export (unzipped and inspected), the dashboard, and the multi-phone flow end to end with three synthetic phones.
+- `apps/web`: 21 tests render the real components in a simulated browser with the API mocked: speaker cards (match, where else heard, closest phone, name, near-duplicate prompt, merge, re-identify failure), transcript line editing, the blind audit (method never shown), insights, the host panel (waits for uploads), the phone's join page end to end, the meeting page after naming, and the routing (join page public, everything else behind the access code). They caught one crash in the host panel that lint and the build had passed.
+- `apps/api`: 71 tests, including the pipeline with pyannote mocked (diarize beside transcription, expired result resubmitted, a job older than 24 h resubmitted, rate limit retried, 402 falls back to Phase 1's text linking), speaker review edits, the audit, the Word export (unzipped and inspected), the dashboard, and the multi-phone flow end to end with three synthetic phones.
 - Lint, typecheck and tests pass at the commit that carries this report.
 
 ## 7. Known defects
