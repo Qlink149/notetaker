@@ -1,16 +1,10 @@
-import {
-  AnonymousResolver,
-  assembleChunks,
-  computeCoverage,
-  turnsToLines,
-} from '@meetingid/pipeline';
-import type { Turn } from '@meetingid/shared';
+import { AnonymousResolver } from '@meetingid/pipeline';
 import { env } from '../config/env.js';
 import { connectMongo, disconnectMongo } from '../db/mongo.js';
 import { MeetingDataModel, MeetingModel } from '../models/index.js';
-import { MAX_LINE_SEC, PAUSE_SEC } from '../pipeline/stages/30-assemble.js';
+import { rebuildTranscript } from '../pipeline/transcript.js';
 
-// Re-run assembly from stored chunk turns (no engine calls) and keep the existing summary:
+// Re-run assembly (chunks + stored gap fills) without engine calls and keep the existing summary:
 //   npm run reassemble -w @meetingid/api -- <meetingId> [...]
 // Prints speakers / lines / coverage before and after.
 async function main(): Promise<void> {
@@ -25,30 +19,18 @@ async function main(): Promise<void> {
       lines: d.lines.length,
       coverage: m.coverage?.ratio,
     };
-    const done = d.chunks.filter((c) => c.status === 'done');
-    const { turns, speakerCount, seams } = assembleChunks(
-      done.map((c) => ({ startSec: c.startSec, endSec: c.endSec, turns: c.rawTurns as Turn[] })),
-    );
-    const res = await new AnonymousResolver().resolve({ turns, analysisUrl: null });
-    const lines = turnsToLines(turns, res.speakerMap, {
-      maxLineSec: MAX_LINE_SEC,
-      pauseSec: PAUSE_SEC,
-    });
-    const coverage = computeCoverage(d.speechSegments, turns);
-    await MeetingDataModel.updateOne(
-      { meetingId: m._id },
-      { $set: { turns, lines, speakerMap: res.speakerMap } },
-    );
-    await MeetingModel.updateOne(
-      { _id: m._id },
-      { $set: { coverage, unknownCount: res.unknownCount } },
-    );
+    const built = await rebuildTranscript(m, d, new AnonymousResolver());
     console.log(
       JSON.stringify({
         meeting: m.title,
         before,
-        after: { speakers: speakerCount, lines: lines.length, coverage: coverage.ratio },
-        seams: seams.map((s) => ({ drift: s.driftSec, anchors: s.anchors })),
+        after: {
+          speakers: built.speakerCount,
+          lines: built.lines.length,
+          coverage: built.coverage.ratio,
+        },
+        gapFills: (d.gapFills ?? []).filter((g) => g.status === 'done').length,
+        seams: built.seams.map((s) => ({ drift: s.driftSec, anchors: s.anchors })),
       }),
     );
   }

@@ -235,6 +235,18 @@ export interface MeetingDataDoc {
   lines: Line[];
   speechSegments: Segment[];
   speakerMap: Record<string, string>;
+  /** Gap-fill calls: transcripts of speech the chunk calls missed (labels are gap-local). */
+  gapFills: GapFillDoc[];
+}
+export interface GapFillDoc {
+  start: number;
+  end: number;
+  cutStart: number;
+  cutEnd: number;
+  status: 'done' | 'failed';
+  model: string | null;
+  error: string | null;
+  turns: Turn[];
 }
 const meetingDataSchema = new Schema<MeetingDataDoc>(
   {
@@ -267,6 +279,24 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
     lines: { type: [lineSchema], default: [] },
     speechSegments: { type: [new Schema({ start: Number, end: Number }, opts)], default: [] },
     speakerMap: { type: Schema.Types.Mixed, default: {} },
+    gapFills: {
+      type: [
+        new Schema(
+          {
+            start: Number,
+            end: Number,
+            cutStart: Number,
+            cutEnd: Number,
+            status: { type: String, enum: ['done', 'failed'] },
+            model: { type: String, default: null },
+            error: { type: String, default: null },
+            turns: { type: [turnSchema], default: [] },
+          },
+          opts,
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true, minimize: false },
 );

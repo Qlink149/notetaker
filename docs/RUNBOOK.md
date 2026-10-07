@@ -45,8 +45,11 @@ db.jobs.insertOne({ meetingId: ObjectId("…"), stage: "assemble", step: null, s
 db.meetings.updateOne({ _id: ObjectId("…") }, { $set: { status: "processing", stage: "assemble", error: null } })
 ```
 
+Or from a shell: `npm run requeue -w @meetingid/api -- <stage> <meetingId> [...]`.
+
 Stages are idempotent: re-running `assemble` rebuilds turns and lines from the stored chunk turns at
-no API cost; re-running `summarise` costs one Claude call; re-running `ingest` re-cuts and
+no API cost (stored gap fills are re-applied); re-running `gapfill` spends at most the calls left
+under the 6-per-meeting cap on gaps not yet tried; re-running `summarise` costs one Claude call; re-running `ingest` re-cuts and
 re-uploads everything and resets all chunks (Gemini is paid again for every chunk).
 
 ## Force a summary on a low-coverage meeting

@@ -17,11 +17,26 @@ export const MeetingStatus = z.enum(['uploaded', 'processing', 'partial', 'compl
 export type MeetingStatus = z.infer<typeof MeetingStatus>;
 
 /** Pipeline stages, in execution order. `done` is terminal. */
-export const Stage = z.enum(['ingest', 'transcribe', 'assemble', 'summarise', 'finalise', 'done']);
+export const Stage = z.enum([
+  'ingest',
+  'transcribe',
+  'assemble',
+  'gapfill',
+  'summarise',
+  'finalise',
+  'done',
+]);
 export type Stage = z.infer<typeof Stage>;
 
 /** Stages a user may re-queue from the UI or the API. */
-export const RetryableStage = z.enum(['ingest', 'transcribe', 'assemble', 'summarise', 'finalise']);
+export const RetryableStage = z.enum([
+  'ingest',
+  'transcribe',
+  'assemble',
+  'gapfill',
+  'summarise',
+  'finalise',
+]);
 export type RetryableStage = z.infer<typeof RetryableStage>;
 
 export const SummaryStatus = z.enum(['pending', 'completed', 'failed', 'skipped_low_coverage']);

@@ -18,14 +18,14 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-const STAGES = ["ingest", "transcribe", "assemble", "summarise", "finalise", "done"];
+const STAGES = ["ingest", "transcribe", "assemble", "gapfill", "summarise", "finalise", "done"];
 const STEPS = [
   { key: "ingest", label: "Preparing audio", icon: Upload },
   { key: "transcribe", label: "Transcribing", icon: FileText },
   { key: "assemble", label: "Assembling transcript", icon: GitMerge },
   { key: "summarise", label: "Summarising", icon: Sparkles },
 ];
-const STAGE_LABEL = { ingest: "preparing audio", transcribe: "transcription", assemble: "assembly", summarise: "summary", finalise: "finishing" };
+const STAGE_LABEL = { ingest: "preparing audio", transcribe: "transcription", assemble: "assembly", gapfill: "filling gaps", summarise: "summary", finalise: "finishing" };
 
 const stageIdx = (s) => Math.max(0, STAGES.indexOf(s));
 

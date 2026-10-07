@@ -114,6 +114,33 @@ describe('worker state machine', () => {
     expect(summariser.calls).toBe(0);
   });
 
+  it('re-transcribes skipped speech with padding and merges it in', async () => {
+    // The chunk call skips 20–50 s of the fixture's speech (0–50 s, 60–120 s).
+    const engine = fakeEngine((input) =>
+      input.startSec === 0 && input.audio.kind === 'gemini-file'
+        ? okResult([...turnsCovering(0, 20), ...turnsCovering(60, 120)])
+        : okResult(turnsCovering(0, input.endSec - input.startSec)),
+    );
+    const runner = new Runner(
+      testDeps({ storage: await fakeStorage(), engine: () => engine }),
+      stages,
+    );
+    const id = await createMeeting();
+
+    await runner.drain();
+
+    const m = await MeetingModel.findById(id).lean();
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(engine.calls).toHaveLength(2);
+    expect(engine.calls[1]!.startSec).toBe(15.5); // gap from 20.5 s, minus 5 s of padding
+    expect(data?.gapFills).toHaveLength(1);
+    expect(data?.gapFills[0]?.status).toBe('done');
+    expect(data?.turns.some((t) => t.start > 25 && t.start < 45)).toBe(true);
+    expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
+    expect(m?.status).toBe('completed');
+    expect(m?.cost.geminiInputTokens).toBe(2000);
+  });
+
   it('retries truncated output with backoff and does not restart from zero', async () => {
     let clock = Date.now() + 5_000; // ahead of the real-time runAfter stamped by enqueue
     const engine = fakeEngine((input, call) =>

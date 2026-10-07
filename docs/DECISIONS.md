@@ -166,3 +166,21 @@ Rescaled times are still the engine's relative timing, corrected for a clock err
 are not engine timing at all. Phase 2 should prefer unflagged turns when choosing voiceprint clips.
 Meetings transcribed before this change carry flags only from assembly (seam alignment, splits);
 normalisation-stage flags appear for chunks transcribed from now on.
+
+## 23. Gap fill: re-transcribe speech the chunk calls skipped
+
+Measured on the finished meetings, Gemini sometimes leaves detected speech untranscribed: AOM had
+3 stretches over 5 s (145 s, all at chunk seams), Meeting 21-9 had 5 (63 s, four mid-chunk). A new
+`gapfill` stage runs between `assemble` and `summarise`:
+
+- `findTranscriptGaps` lists detected speech not covered by any turn (turns widened by 1 s, as in the
+  coverage metric; pieces < 2 s apart joined), keeping gaps with ≥ 5 s of speech, longest first.
+- Each gap is cut from the original with 5 s of padding either side and sent with the same prompt
+  and glossary as a chunk. At most **6 calls per meeting**, failed ones included; gaps already
+  tried are never retried, so a re-run cannot pay twice for the same audio.
+- Each call is stored in `MeetingData.gapFills` as soon as it returns (gap-local speaker labels).
+  Assembly re-applies them: labels are linked to the meeting's through the padding (both
+  transcripts cover it); unmatched labels become new speakers; only turns whose midpoint lies in
+  the gap (±2 s) are kept, and repeats of existing turns within ±8 s are dropped.
+- Out-of-quota errors pause the stage (the job waits for the reset); other failures mark that gap
+  `failed` and move on. The spend cap applies as for chunks.

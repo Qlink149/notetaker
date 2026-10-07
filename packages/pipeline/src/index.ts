@@ -13,3 +13,4 @@ export * from './assemble.js';
 export * from './speakers.js';
 export * from './silence.js';
 export * from './align.js';
+export * from './gaps.js';

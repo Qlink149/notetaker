@@ -19,7 +19,8 @@
     "acceptance": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/acceptance.ts",
     "start:all": "node dist/all.js",
     "dev:all": "tsx watch --conditions=source --env-file-if-exists=../../.env src/all.ts",
-    "reassemble": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/reassemble.ts"
+    "reassemble": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/reassemble.ts",
+    "requeue": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/requeue.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
