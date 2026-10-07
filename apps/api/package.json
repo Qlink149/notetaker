@@ -34,7 +34,8 @@
     "demo:synthetic-phones": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/syntheticPhones.ts",
     "demo:check": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/check.ts",
     "demo:snapshot": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/snapshot.ts",
-    "demo:reset": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/reset.ts"
+    "demo:reset": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/reset.ts",
+    "demo:refresh": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/refresh.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
