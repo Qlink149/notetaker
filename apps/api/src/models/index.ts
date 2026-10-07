@@ -578,7 +578,8 @@ export interface EngineResponseDoc {
   text: string | null;
   response: unknown;
   usage: { inputTokens: number; outputTokens: number; audioSec: number };
-  keyId: string | null;
+  /** Env variable name of the key used (e.g. GEMINI_API_KEY1); never the key or a hash of it. */
+  keyLabel: string | null;
   /** Why the reply was not used (invalid JSON, truncated, …); null when it was accepted. */
   error: string | null;
   receivedAt: Date;
@@ -599,7 +600,7 @@ const engineResponseSchema = new Schema<EngineResponseDoc>({
   text: { type: String, default: null },
   response: { type: Schema.Types.Mixed, default: null },
   usage: { inputTokens: Number, outputTokens: Number, audioSec: Number },
-  keyId: { type: String, default: null },
+  keyLabel: { type: String, default: null },
   error: { type: String, default: null },
   receivedAt: Date,
 });

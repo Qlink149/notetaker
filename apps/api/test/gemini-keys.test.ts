@@ -3,7 +3,7 @@ import type { GoogleGenAI } from '@google/genai';
 import { resetEnvCache } from '../src/config/env.js';
 import { QuotaModel } from '../src/models/index.js';
 import { RetryableError } from '../src/pipeline/errors.js';
-import { GeminiEngine } from '../src/services/engines/gemini.js';
+import { GeminiEngine, storableResponse } from '../src/services/engines/gemini.js';
 import { TRANSCRIBE_PROMPT_VERSION } from '../src/services/engines/prompt.js';
 import { rawOf } from '../src/services/engines/types.js';
 import {
@@ -43,6 +43,8 @@ function fakeKey(
       ],
     }),
     usage: { total_input_tokens: 100, total_output_tokens: 20 },
+    // attached by the real SDK to every non-streaming reply
+    sdkHttpResponse: { headers: { 'content-type': 'application/json' } },
   };
   const client = {
     files: {
@@ -134,7 +136,23 @@ describe('gemini key pool', () => {
     expect(r.raw?.prompt).toContain('01:00.0'); // the chunk length is part of the stored prompt
     expect(JSON.parse(r.raw!.text!).turns[0].text_roman).toBe('namaste');
     expect((r.raw?.response as { status: string }).status).toBe('completed');
-    expect(r.raw?.keyId).toBe('a');
+    expect(r.raw?.keyLabel).toBe('KEY_a'); // the label, never the key
+    expect(JSON.stringify(r.raw?.response)).not.toContain('sdkHttpResponse');
+  });
+
+  it('stores the body only: SDK HTTP metadata dropped, any key value masked', () => {
+    const secret = 'AIzaFAKE-not-a-real-key-000';
+    const stored = storableResponse(
+      {
+        id: 'int-1',
+        status: 'completed',
+        output_text: `echo ${secret}`,
+        sdkHttpResponse: { headers: { 'x-goog-api-key': secret, date: 'today' } },
+      },
+      [secret],
+    );
+    expect(stored).toEqual({ id: 'int-1', status: 'completed', output_text: 'echo [redacted]' });
+    expect(JSON.stringify(stored)).not.toContain(secret);
   });
 
   it('keeps an unparseable reply on the error it throws', async () => {

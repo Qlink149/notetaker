@@ -187,7 +187,7 @@ export const okResult = (turns: RawTurn[]): ChunkResult => {
       text,
       response: { status: 'completed', output_text: text },
       usage,
-      keyId: null,
+      keyLabel: null,
       receivedAt: new Date(),
     },
   };

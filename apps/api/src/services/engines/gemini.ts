@@ -3,7 +3,7 @@ import { FileState, type GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { TurnLang } from '@meetingid/shared';
 import { parseTimestamp, type RawTurn } from '@meetingid/pipeline';
-import { MissingConfigError, env } from '../../config/env.js';
+import { MissingConfigError, env, geminiKeyEntries } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
 import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
 import {
@@ -286,10 +286,10 @@ export class GeminiEngine implements TranscriptionEngine {
       prompt: system,
       userText: TRANSCRIBE_USER_TEXT,
       status: String(interaction.status),
-      text: interaction.output_text ?? null,
-      response: JSON.parse(JSON.stringify(interaction)) as unknown,
+      text: maskSecrets(interaction.output_text ?? null, secretValues()),
+      response: storableResponse(interaction, secretValues()),
       usage,
-      keyId: key.id,
+      keyLabel: key.label,
       receivedAt: new Date(),
     };
     if (interaction.status === 'incomplete' || interaction.status === 'budget_exceeded') {
@@ -325,4 +325,25 @@ export function promptHash(system: string): string {
     .update(JSON.stringify(TRANSCRIPT_JSON_SCHEMA))
     .digest('hex')
     .slice(0, 16);
+}
+
+const secretValues = (): string[] => geminiKeyEntries().map((e) => e.value);
+
+/** Replace any occurrence of a secret with "[redacted]" (a last guard; replies never contain keys). */
+export function maskSecrets<T extends string | null>(text: T, secrets: string[]): T {
+  if (text === null) return text;
+  let out: string = text;
+  for (const s of secrets) if (s && out.includes(s)) out = out.split(s).join('[redacted]');
+  return out as T;
+}
+
+/**
+ * The reply body for storage. The SDK attaches `sdkHttpResponse` (Google's HTTP response headers and
+ * the raw Response object) to the parsed body; that is dropped, so only the JSON body Google sent is
+ * kept. Request headers (where the API key travels) are never part of the returned object.
+ */
+export function storableResponse(interaction: unknown, secrets: string[]): unknown {
+  if (interaction === null || typeof interaction !== 'object') return interaction ?? null;
+  const { sdkHttpResponse: _http, ...body } = interaction as Record<string, unknown>;
+  return JSON.parse(maskSecrets(JSON.stringify(body), secrets)) as unknown;
 }

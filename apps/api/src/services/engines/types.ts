@@ -54,10 +54,11 @@ export interface EngineRawResponse {
   status: string;
   /** The model's output text (the transcript JSON) before any parsing. */
   text: string | null;
-  /** The full response object as returned by the API. */
+  /** The response body as returned by the API, without the SDK's HTTP metadata (storableResponse). */
   response: unknown;
   usage: EngineUsage;
-  keyId: string | null;
+  /** Name of the env variable holding the key (e.g. GEMINI_API_KEY1). Never the key or a hash of it. */
+  keyLabel: string | null;
   receivedAt: Date;
 }
 

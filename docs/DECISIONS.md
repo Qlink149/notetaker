@@ -204,7 +204,8 @@ From 2026-10-07 (before Prachar's remaining chunks), every Gemini reply is saved
 - What produced it: `model`, `promptVersion` (`TRANSCRIBE_PROMPT_VERSION`, bumped whenever the
   template or schema changes), `promptHash`, and the full `prompt` and `userText`.
 - Where the audio came from: `startSec`/`endSec` of the audio sent, `chunkIndex`, `kind` (`chunk`, `gapfill` or `benchmark`).
-- Billing: `usage` and `keyId`.
+- Billing: `usage` and `keyLabel`, the env variable name of the key used (e.g. `GEMINI_API_KEY1`).
+  Never the key, part of it, or a hash of it.
 - Outcome: `error` is null when the reply was used; otherwise the reason it was not (`truncated`,
   `repetitive`, invalid JSON, bad status).
 
@@ -218,3 +219,8 @@ Deleting a meeting deletes its replies. Deepgram replies are not stored, because
 
 Meetings transcribed before this change (21-9, 200, AOM, and Prachar chunk 0) have no stored
 replies. Their only engine output is the cleaned `rawTurns`.
+
+`response` is the JSON body Google returned. The SDK attaches `sdkHttpResponse` to every reply: the
+HTTP *response* headers plus the raw `Response` object. `storableResponse()` drops it before saving.
+The API key travels only in the request header, which the SDK never returns. As a last guard, any
+configured Gemini key value found in `response` or `text` is replaced with `[redacted]` (tested).
