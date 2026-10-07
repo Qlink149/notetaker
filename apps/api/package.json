@@ -15,7 +15,8 @@
     "lint": "eslint src test",
     "test": "vitest run",
     "probe": "tsx --conditions=source src/scripts/probe-files.ts",
-    "handoff": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/handoff.ts"
+    "handoff": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/handoff.ts",
+    "acceptance": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/acceptance.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

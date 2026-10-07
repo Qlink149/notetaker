@@ -45,3 +45,8 @@ scripts/eval/out/
 
 # Local scratch clips
 /scratch/
+
+# local helper scripts
+*.tmp.mjs
+*.tmp.ts
+*.tmp.cjs

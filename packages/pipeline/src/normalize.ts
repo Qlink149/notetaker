@@ -29,6 +29,37 @@ export function looksLikeMinuteSeconds(turns: RawTurn[], chunkDurationSec: numbe
   });
 }
 
+/**
+ * Parse an engine timestamp: seconds as a number or numeric string, or "MM:SS(.s)" / "H:MM:SS(.s)".
+ * Returns NaN when it cannot be read.
+ */
+export function parseTimestamp(v: number | string): number {
+  if (typeof v === 'number') return v;
+  const t = v.trim();
+  const NUM = /^\d+(\.\d+)?$/;
+  if (NUM.test(t)) return Number(t);
+  const parts = t.split(':');
+  if (parts.length < 2 || parts.length > 3 || parts.some((p) => !NUM.test(p))) return Number.NaN;
+  return parts.reduce((acc, p) => acc * 60 + Number(p), 0);
+}
+
+/**
+ * Engines sometimes run their clock fast over a long chunk: timestamps reach the end of the audio
+ * before the speech does and later turns land past it (measured on gemini-3.5-flash: up to 38 % of a
+ * 10-minute chunk's words). When the latest timestamp overshoots the chunk by more than 3 %, the
+ * factor to rescale every timestamp linearly back into the chunk; otherwise 1.
+ */
+export function overshootScale(
+  turns: { start: number; end: number }[],
+  chunkDurationSec: number,
+): number {
+  const max = Math.max(
+    0,
+    ...turns.flatMap((t) => [t.start, t.end]).filter((v) => Number.isFinite(v)),
+  );
+  return max > chunkDurationSec * 1.03 ? chunkDurationSec / max : 1;
+}
+
 const minuteSecondsToSec = (v: number): number => {
   const m = Math.floor(v);
   return m * 60 + Math.round((v - m) * 100);
@@ -36,7 +67,8 @@ const minuteSecondsToSec = (v: number): number => {
 
 /**
  * Clean one chunk's engine turns and re-base them to absolute meeting time:
- * drop empty text, repair minute.second timestamps, clamp into the chunk, force non-decreasing
+ * drop empty text, repair minute.second timestamps, rescale an overshooting clock, clamp into the
+ * chunk, force non-decreasing
  * starts and a positive length, then add `offsetSec`.
  */
 export function normalizeChunkTurns(
@@ -45,14 +77,20 @@ export function normalizeChunkTurns(
   offsetSec: number,
 ): Turn[] {
   const fixMs = looksLikeMinuteSeconds(raw, chunkDurationSec);
+  const repaired = raw.map((t) => ({
+    ...t,
+    start: fixMs ? minuteSecondsToSec(t.start) : t.start,
+    end: fixMs ? minuteSecondsToSec(t.end) : t.end,
+  }));
+  const scale = overshootScale(repaired, chunkDurationSec);
   const clamp = (v: number): number =>
-    Math.min(Math.max(Number.isFinite(v) ? v : 0, 0), chunkDurationSec);
+    Math.min(Math.max(Number.isFinite(v) ? v * scale : 0, 0), chunkDurationSec);
 
-  const kept = raw
+  const kept = repaired
     .map((t) => ({
       ...t,
-      start: clamp(fixMs ? minuteSecondsToSec(t.start) : t.start),
-      end: clamp(fixMs ? minuteSecondsToSec(t.end) : t.end),
+      start: clamp(t.start),
+      end: clamp(t.end),
       text_native: (t.text_native ?? '').trim(),
       text_roman: (t.text_roman ?? '').trim(),
     }))

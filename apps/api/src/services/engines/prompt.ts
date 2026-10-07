@@ -13,10 +13,13 @@ export const TRANSCRIPT_JSON_SCHEMA = {
         properties: {
           speaker: { type: 'string', description: 'S1, S2, … in order of first appearance' },
           start: {
-            type: 'number',
-            description: 'Start time in seconds from the start of this audio',
+            type: 'string',
+            description: 'Start time as MM:SS.s from the start of this audio, e.g. "07:41.5"',
           },
-          end: { type: 'number', description: 'End time in seconds from the start of this audio' },
+          end: {
+            type: 'string',
+            description: 'End time as MM:SS.s from the start of this audio, e.g. "07:44.0"',
+          },
           text_native: { type: 'string' },
           text_roman: { type: 'string' },
           lang: { type: 'string', enum: ['hi', 'gu', 'en', 'mixed'] },
@@ -32,6 +35,7 @@ export const TRANSCRIPT_JSON_SCHEMA = {
 export function buildTranscriptionInstruction(
   languages: Language[],
   glossary: Glossary | null,
+  durationSec = 600,
 ): string {
   const langs = (languages.length ? languages : (['hi', 'gu', 'en'] as Language[]))
     .map((l) => LANGUAGE_NAMES[l])
@@ -46,7 +50,9 @@ export function buildTranscriptionInstruction(
     '4. text_native: Devanagari for Hindi, Gujarati script for Gujarati, Latin script for English words, mixed within a sentence exactly as spoken.',
     '5. text_roman: the same content entirely in Latin script. Keep English words unchanged; romanise Hindi and Gujarati words phonetically (e.g. "aapne report bheji?"). Preserve punctuation. Never translate.',
     '6. Do not translate. Do not summarise. Do not skip or shorten low-volume or overlapping speech. Do not repeat text that was not spoken again.',
-    '7. start and end are in seconds from the start of THIS audio file (e.g. 754.2 for 12 minutes 34.2 seconds), decimals allowed, and start values never decrease.',
+    '7. start and end are timestamps "MM:SS.s" measured from the start of THIS audio file (e.g. "07:34.2" for 7 minutes 34.2 seconds). This audio is exactly ' +
+      formatDuration(durationSec) +
+      ' long: no timestamp may exceed that. Track the time carefully all the way to the end; start values never decrease.',
     '8. lang: "hi", "gu" or "en" when a turn is in one language, "mixed" when it mixes languages.',
     '9. If a stretch is unintelligible, write [inaudible] for it rather than guessing.',
   ];
@@ -56,4 +62,11 @@ export function buildTranscriptionInstruction(
     );
   }
   return rules.join('\n');
+}
+
+/** 600 → "10:00.0" */
+export function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return `${String(m).padStart(2, '0')}:${s.toFixed(1).padStart(4, '0')}`;
 }

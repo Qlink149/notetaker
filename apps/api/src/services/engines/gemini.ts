@@ -1,7 +1,7 @@
 import { FileState, type GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { TurnLang } from '@meetingid/shared';
-import type { RawTurn } from '@meetingid/pipeline';
+import { parseTimestamp, type RawTurn } from '@meetingid/pipeline';
 import { MissingConfigError, env } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
 import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
@@ -27,8 +27,9 @@ const REQUEST_TIMEOUT_MS = 4 * 60_000;
 
 const RawTurnSchema = z.object({
   speaker: z.string(),
-  start: z.coerce.number(),
-  end: z.coerce.number(),
+  // "MM:SS.s" strings (what the schema asks for) or plain seconds
+  start: z.union([z.number(), z.string()]).transform(parseTimestamp),
+  end: z.union([z.number(), z.string()]).transform(parseTimestamp),
   text_native: z.string(),
   text_roman: z.string(),
   lang: TurnLang.catch('mixed'),
@@ -230,7 +231,11 @@ export class GeminiEngine implements TranscriptionEngine {
     const interaction = await key.client.interactions.create(
       {
         model,
-        system_instruction: buildTranscriptionInstruction(input.languages, input.glossary),
+        system_instruction: buildTranscriptionInstruction(
+          input.languages,
+          input.glossary,
+          input.endSec - input.startSec,
+        ),
         input: [
           {
             type: 'text',

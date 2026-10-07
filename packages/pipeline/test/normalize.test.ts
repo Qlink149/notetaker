@@ -23,7 +23,7 @@ describe('normalizeChunkTurns', () => {
 
   it('clamps times into the chunk and forces non-decreasing starts', () => {
     const turns = normalizeChunkTurns(
-      [raw('S1', 10, 20), raw('S1', 8, 12), raw('S2', 590, 700)],
+      [raw('S1', 10, 20), raw('S1', 8, 12), raw('S2', 590, 612)],
       600,
       0,
     );
@@ -93,5 +93,41 @@ describe('summary input', () => {
     const parts = chunkTranscript(text, 100);
     expect(parts.every((p) => p.length <= 100)).toBe(true);
     expect(parts.join('\n')).toBe(text);
+  });
+});
+
+describe('timestamps', () => {
+  it('parses seconds and MM:SS / H:MM:SS strings', async () => {
+    const { parseTimestamp } = await import('../src/normalize.js');
+    expect(parseTimestamp(12.5)).toBe(12.5);
+    expect(parseTimestamp('12.5')).toBe(12.5);
+    expect(parseTimestamp('09:14.2')).toBeCloseTo(554.2);
+    expect(parseTimestamp('1:02:03')).toBe(3723);
+    expect(parseTimestamp('soon')).toBeNaN();
+    expect(parseTimestamp('1:xx')).toBeNaN();
+  });
+
+  it('rescales a clock that runs past the end of the chunk instead of piling turns on the last second', async () => {
+    const { normalizeChunkTurns, overshootScale } = await import('../src/normalize.js');
+    // model clock 1.5x fast: true 0..600 s reported as 0..900 s
+    const raw = Array.from({ length: 10 }, (_, i) => ({
+      speaker: 'S1',
+      start: i * 90,
+      end: i * 90 + 80,
+      text_native: `t${i}`,
+      text_roman: `t${i}`,
+      lang: 'hi' as const,
+    }));
+    expect(overshootScale(raw, 600)).toBeCloseTo(600 / 890);
+    const turns = normalizeChunkTurns(raw, 600, 0);
+    const piled = turns.filter((t) => t.start === 600).length;
+    expect(piled).toBe(0);
+    expect(turns.at(-1)!.end).toBeCloseTo(600, 0);
+    expect(turns[5]!.start).toBeCloseTo(450 * (600 / 890), 1);
+  });
+
+  it('leaves a clock within 3 % of the chunk alone', async () => {
+    const { overshootScale } = await import('../src/normalize.js');
+    expect(overshootScale([{ start: 0, end: 610 }], 600)).toBe(1);
   });
 });
