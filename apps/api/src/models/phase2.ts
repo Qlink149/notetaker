@@ -71,4 +71,30 @@ export const P2MediaModel = mongoose.model<P2MediaDoc>('P2Media', mediaSchema, '
 /** pyannote keeps uploads "at least 24 hours"; re-upload anything older than this. */
 export const MEDIA_FRESH_MS = 20 * 3600_000;
 
-export const phase2Models = [P2PyannoteResponseModel, P2MediaModel];
+// ---------- Join output per meeting and method (Stage B / Block 1) ----------
+export interface P2JoinDoc {
+  _id: Types.ObjectId;
+  meetingId: Types.ObjectId;
+  /** "m1" (time overlap only), "m3" (word clock only) or "joined" (per-chunk chooser). */
+  method: 'm1' | 'm3' | 'joined';
+  /** Turns carrying pyannote speaker ids. */
+  turns: unknown[];
+  /** Lines (<= 45 s) with "Speaker A…" names. */
+  lines: unknown[];
+  speakerMap: Record<string, string>;
+  stats: Record<string, unknown>;
+  createdAt: Date;
+}
+const joinSchema = new Schema<P2JoinDoc>({
+  meetingId: { type: Schema.Types.ObjectId, required: true },
+  method: { type: String, enum: ['m1', 'm3', 'joined'], required: true },
+  turns: { type: [Schema.Types.Mixed], default: [] },
+  lines: { type: [Schema.Types.Mixed], default: [] },
+  speakerMap: { type: Schema.Types.Mixed, default: {} },
+  stats: { type: Schema.Types.Mixed, default: {} },
+  createdAt: { type: Date, default: () => new Date() },
+});
+joinSchema.index({ meetingId: 1, method: 1 }, { unique: true });
+export const P2JoinModel = mongoose.model<P2JoinDoc>('P2Join', joinSchema, 'p2_join_lines');
+
+export const phase2Models = [P2PyannoteResponseModel, P2MediaModel, P2JoinModel];

@@ -17,3 +17,5 @@ export * from './gaps.js';
 export * from './romanize.js';
 export * from './diarization.js';
 export * from './join/index.js';
+export * from './voiceprintClips.js';
+export * from './resolveNames.js';

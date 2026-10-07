@@ -140,3 +140,58 @@ export class DeepgramEngine implements TranscriptionEngine {
     };
   }
 }
+
+export interface DeepgramWords {
+  words: { text: string; start: number; end: number }[];
+  durationSec: number;
+  language: string;
+  /** The reply exactly as Deepgram returned it. */
+  raw: unknown;
+}
+
+/** Words with their own timestamps from a Deepgram reply (the Phase 2 word clock). */
+export function deepgramWordList(data: DgResponse): DeepgramWords['words'] {
+  const words = data.results?.channels?.[0]?.alternatives?.[0]?.words ?? [];
+  return words
+    .filter((w) => (w.punctuated_word ?? w.word)?.trim())
+    .map((w) => ({ text: (w.punctuated_word ?? w.word).trim(), start: w.start, end: w.end }));
+}
+
+/**
+ * Transcribe a whole audio file for its word timestamps only (no diarization: pyannote supplies
+ * speakers). One language per request, set by the caller.
+ */
+export async function deepgramWordClock(
+  path: string,
+  mimeType: string,
+  language: 'hi' | 'gu' | 'en',
+): Promise<DeepgramWords> {
+  const params = new URLSearchParams({
+    model: MODEL,
+    language,
+    smart_format: 'true',
+    punctuate: 'true',
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${DEEPGRAM_URL}?${params}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Token ${requireEnv('DEEPGRAM_API_KEY')}`,
+        'Content-Type': mimeType,
+      },
+      body: new Uint8Array(await readFile(path)),
+      signal: AbortSignal.timeout(20 * 60_000),
+    });
+  } catch (err) {
+    throw classify(err);
+  }
+  if (!res.ok) throw errorForStatus('deepgram', res.status, await res.text());
+  const data = (await res.json()) as DgResponse;
+  return {
+    words: deepgramWordList(data),
+    durationSec: data.metadata?.duration ?? 0,
+    language,
+    raw: data,
+  };
+}

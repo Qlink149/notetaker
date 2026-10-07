@@ -562,7 +562,7 @@ export const HandoffModel = mongoose.model<HandoffDoc>(
 export interface EngineResponseDoc {
   _id: Types.ObjectId;
   meetingId: Types.ObjectId;
-  kind: 'chunk' | 'gapfill' | 'benchmark';
+  kind: 'chunk' | 'gapfill' | 'benchmark' | 'words';
   /** Chunk index for kind "chunk" and "benchmark"; null for gap fills. */
   chunkIndex: number | null;
   /** Absolute position of the audio sent; engine times are relative to startSec. */
@@ -586,7 +586,7 @@ export interface EngineResponseDoc {
 }
 const engineResponseSchema = new Schema<EngineResponseDoc>({
   meetingId: { type: Schema.Types.ObjectId, required: true },
-  kind: { type: String, enum: ['chunk', 'gapfill', 'benchmark'], required: true },
+  kind: { type: String, enum: ['chunk', 'gapfill', 'benchmark', 'words'], required: true },
   chunkIndex: { type: Number, default: null },
   startSec: Number,
   endSec: Number,
