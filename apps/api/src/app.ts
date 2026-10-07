@@ -7,6 +7,7 @@ import { requireAuth } from './lib/auth.js';
 import { errorHandler } from './lib/http.js';
 import { logger } from './lib/logger.js';
 import { HeartbeatModel } from './models/index.js';
+import { auditRouter } from './routes/audit.js';
 import { benchmarkRouter } from './routes/benchmark.js';
 import type { ApiDeps } from './routes/deps.js';
 import { meetingSpeakersRouter } from './routes/meetingSpeakers.js';
@@ -58,6 +59,7 @@ export function createApp(deps: ApiDeps): Express {
   authed.use(requireAuth);
   authed.use(meetingsRouter(deps));
   authed.use(meetingSpeakersRouter(deps));
+  authed.use(auditRouter());
   authed.use(speakersRouter(deps));
   authed.use(benchmarkRouter());
   v1.use(authed);

@@ -97,6 +97,46 @@ export interface SpeakerCard {
   appearsIn: { meetingId: string; title: string; label: string; displayName: string; score: number | null }[];
 }
 
+export interface AuditClip {
+  start: number;
+  end: number;
+  quality: number | null;
+}
+export interface AuditCluster {
+  diar: string;
+  label: string;
+  seconds: number;
+  name: string;
+  sameAs: string;
+  clips: AuditClip[];
+}
+export interface AuditItemView {
+  id: string;
+  start: number;
+  end: number;
+  assigned: string;
+  textRoman: string;
+  textNative: string;
+  speaker: 'right' | 'wrong' | 'unsure' | null;
+  text: 'match' | 'partly' | 'no' | null;
+}
+export interface AuditTally {
+  method: string;
+  items: number;
+  answered: number;
+  right: number;
+  wrong: number;
+  unsure: number;
+  speakerCorrectRate: number | null;
+  speakerCorrectRateDecided: number | null;
+  wrongNameRate: number | null;
+  textAnswered: number;
+  textMatch: number;
+  textPartly: number;
+  textNo: number;
+  textMatchRate: number | null;
+}
+
 export interface SimilarName {
   id: string;
   name: string;
@@ -197,6 +237,25 @@ export const api = {
       return request<{ speaker: Speaker }>('POST', '/speakers/enrol', form).then((r) => r.speaker);
     },
     remove: (id: string) => request<void>('DELETE', `/speakers/${id}`),
+  },
+  audit: {
+    list: () =>
+      request<{
+        meetings: { id: string; title: string; seeded: boolean; items: number; answered: number; named: number }[];
+      }>('GET', '/audit').then((r) => r.meetings),
+    seed: (id: string) => request<{ seeded: boolean; items: number }>('POST', `/audit/${id}/seed`, {}),
+    get: (id: string) =>
+      request<{
+        meeting: { id: string; title: string; playbackUrl: string | null };
+        clusters: AuditCluster[];
+        items: AuditItemView[];
+      }>('GET', `/audit/${id}`),
+    saveNaming: (id: string, names: Record<string, string>, sameAs: Record<string, string>) =>
+      request<{ ok: boolean }>('PUT', `/audit/${id}/naming`, { names, sameAs }),
+    answer: (id: string, itemId: string, answer: { speaker?: string; text?: string }) =>
+      request<{ ok: boolean }>('PATCH', `/audit/${id}/items/${itemId}`, answer),
+    results: () =>
+      request<{ methods: AuditTally[]; shortLines: AuditTally[]; note: string }>('GET', '/audit/results/all'),
   },
   benchmark: {
     run: (meetingIds: string[], engines: BenchmarkEngineName[], evalSetName?: string) =>

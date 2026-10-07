@@ -132,7 +132,49 @@ export const P2IdentityRunModel = mongoose.model<P2IdentityRunDoc>(
   'p2_identity_runs',
 );
 
+// ---------- Blind audit (the only real measure of speaker accuracy) ----------
+export interface AuditItem {
+  id: string;
+  /** Hidden from the person auditing. */
+  method: 'm1' | 'm3';
+  start: number;
+  end: number;
+  /** pyannote speaker the method gave this line. */
+  diar: string;
+  textRoman: string;
+  textNative: string;
+  /** Under 3 s: sampled as a separate stratum. */
+  short: boolean;
+  speaker: 'right' | 'wrong' | 'unsure' | null;
+  text: 'match' | 'partly' | 'no' | null;
+  answeredAt: Date | null;
+}
+export interface P2AuditDoc {
+  _id: Types.ObjectId;
+  meetingId: Types.ObjectId;
+  workspaceId: Types.ObjectId;
+  /** pyannote speaker to the name typed by the auditor. */
+  naming: Record<string, string>;
+  /** pyannote speaker to the speaker it is the same person as. */
+  sameAs: Record<string, string>;
+  items: AuditItem[];
+  perMethod: number;
+  createdAt: Date;
+}
+const auditSchema = new Schema<P2AuditDoc>({
+  meetingId: { type: Schema.Types.ObjectId, required: true, unique: true },
+  workspaceId: { type: Schema.Types.ObjectId, required: true },
+  naming: { type: Schema.Types.Mixed, default: {} },
+  sameAs: { type: Schema.Types.Mixed, default: {} },
+  items: { type: Schema.Types.Mixed, default: [] },
+  perMethod: Number,
+  createdAt: { type: Date, default: () => new Date() },
+});
+export const P2AuditModel = mongoose.model<P2AuditDoc>('P2Audit', auditSchema, 'p2_audits');
+
 export const phase2Models = [
+  P2AuditModel,
+
   P2PyannoteResponseModel,
   P2MediaModel,
   P2JoinModel,
