@@ -6,7 +6,7 @@ export type ChunkAudio =
   | { kind: 'path'; path: string; mimeType: string }
   | { kind: 'url'; url: string; mimeType: string }
   /** A file already uploaded to the Gemini Files API. */
-  | { kind: 'gemini-file'; uri: string; mimeType: string };
+  | { kind: 'gemini-file'; uri: string; mimeType: string; keyId?: string | null };
 
 export interface ChunkInput {
   audio: ChunkAudio;
@@ -16,6 +16,8 @@ export interface ChunkInput {
   languages: Language[];
   glossary: Glossary | null;
   signal?: AbortSignal;
+  /** Produces the chunk as a local file when the engine has to (re-)upload it. */
+  localPath?: () => Promise<string>;
 }
 
 export interface EngineUsage {
@@ -32,6 +34,8 @@ export interface ChunkResult {
   model: string;
   /** `truncated` when the engine stopped at its output limit. */
   finish: 'complete' | 'truncated';
+  /** Set when the engine uploaded the chunk itself (e.g. under a different Gemini key). */
+  uploaded?: { uri: string; name: string; keyId: string };
 }
 
 export interface TranscriptionEngine {

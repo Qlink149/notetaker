@@ -95,3 +95,21 @@ recordings (speech share at fixed −35 → with this rule): 200 85 % → 85 %, 
 21-9-2026 85 % → 85 %, Prachar 100 % (one segment) → 93 % (117 segments). The brief's
 `mean − 18 dB` rule was tried first and rejected: it lowers the threshold below −35 dB on these
 files and turned 200 and AOM into 100 % "speech" while leaving Prachar unchanged.
+
+### 15. Several Gemini keys, persisted quota state, one fallback attempt
+Phase 1 runs on free-tier Gemini keys (20 requests per model per day per key). Keys are read from
+`GEMINI_API_KEY` and `GEMINI_API_KEY1..9`. A daily-quota 429 marks that key exhausted for that
+model in MongoDB (`geminiquotas`) until Google's stated reset, so no process spends another request
+on it; the job moves to the next key at once. Gemini files belong to one project, so a chunk is
+re-uploaded only when its key changes (`chunks.geminiKeyId`). A 503 / timeout on the primary model
+gets exactly one request on `GEMINI_FALLBACK_MODEL` (default `gemini-3.5-flash`, its own quota); the
+model that produced each chunk is stored (`chunks.model`). When every key is exhausted the job waits
+for the reset without spending an attempt. SDK auto-retries are off (each retry is a request).
+
+### 16. $5 spending cap
+`SPEND_CAP_USD` (default 5) is a hard cap on recorded spend across all meetings and benchmarks,
+checked before every paid call with a conservative estimate and recorded after it in the `spend`
+collection. It counts Claude, and Gemini only when `GEMINI_PAID=true` (free-tier calls cost nothing);
+Deepgram is not capped (owner's decision, 2026-10-07). A blocked call fails the job with a clear
+"Spending cap reached" message. Each meeting also records `cost.usd` at published paid-tier prices
+for reporting.

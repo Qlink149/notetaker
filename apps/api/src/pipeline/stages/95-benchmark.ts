@@ -6,8 +6,9 @@ import {
   normalizeChunkTurns,
   turnsToLines,
 } from '@meetingid/pipeline';
-import { EvalRunModel, MeetingDataModel } from '../../models/index.js';
-import type { ChunkAudio } from '../../services/engines/types.js';
+import { env } from '../../config/env.js';
+import { EvalRunModel, MeetingDataModel, MeetingModel } from '../../models/index.js';
+import { assertBudget, estimateGeminiChunkUsd, recordSpend, usdFor } from '../budget.js';
 import { materializeChunk } from '../chunkAudio.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, humanizeError } from '../errors.js';
@@ -55,10 +56,7 @@ export const benchmarkStage: StageHandler = {
     const { evalRunId, engine: engineName } = payloadOf(ctx);
     const meeting = await loadMeeting(job.meetingId);
     const { workspace, glossary } = await loadWorkspaceContext(meeting.workspaceId);
-    const data = await MeetingDataModel.findOne(
-      { meetingId: meeting._id },
-      { chunks: 1, speechSegments: 1 },
-    ).lean();
+    const data = await MeetingDataModel.findOne({ meetingId: meeting._id }).lean();
     const chunks = (data?.chunks ?? []).filter((c) => c.parent === null || c.parent === undefined);
     if (!chunks.length) throw new FatalError('Meeting has not been ingested yet');
 
@@ -68,35 +66,46 @@ export const benchmarkStage: StageHandler = {
     const usage = { input: 0, output: 0, audioSec: 0 };
     const perChunk = [];
     let model = '';
-    for (const c of chunks) {
-      let audio: ChunkAudio;
-      {
-        const path = await materializeChunk(
-          deps,
-          tmpDir,
-          meeting.audio.originalUrl,
-          c.startSec,
-          c.endSec,
-          `bench-${c.index}`,
-        );
-        audio = engine.accepts.includes('gemini-file')
-          ? {
-              kind: 'gemini-file',
-              ...(await deps.geminiFiles.upload(
-                path,
-                FLAC,
-                `bench-${String(meeting._id)}-${c.index}`,
-              )),
-            }
-          : { kind: 'path', path, mimeType: FLAC };
-      }
+    // The pipeline already transcribed this meeting with Gemini: reuse that instead of spending quota.
+    const pipelineDone = (data?.chunks ?? []).filter((c) => c.status === 'done');
+    const reuse =
+      engineName === 'gemini' &&
+      pipelineDone.length > 0 &&
+      (data?.chunks ?? []).every((c) => c.status === 'done' || c.status === 'superseded') &&
+      pipelineDone.every((c) => (c.model ?? '').startsWith('gemini'));
+    if (reuse) {
+      model = `${[...new Set(pipelineDone.map((c) => c.model))].join('+')} (pipeline run)`;
+      for (const c of pipelineDone)
+        perChunk.push({ startSec: c.startSec, endSec: c.endSec, turns: c.rawTurns });
+      const m = await MeetingModel.findById(meeting._id, { cost: 1 }).lean();
+      usage.input = m?.cost.geminiInputTokens ?? 0;
+      usage.output = m?.cost.geminiOutputTokens ?? 0;
+    }
+    const provider = engineName === 'deepgram' ? 'deepgram' : 'gemini';
+    for (const c of reuse ? [] : chunks) {
+      const path = await materializeChunk(
+        deps,
+        tmpDir,
+        meeting.audio.originalUrl,
+        c.startSec,
+        c.endSec,
+        `bench-${c.index}`,
+      );
+      await assertBudget(
+        provider,
+        estimateGeminiChunkUsd(env().GEMINI_MODEL, c.endSec - c.startSec),
+      );
       const r = await engine.transcribeChunk({
-        audio,
+        audio: { kind: 'path', path, mimeType: FLAC },
+        localPath: async () => path,
         startSec: c.startSec,
         endSec: c.endSec,
         languages,
         glossary,
       });
+      await recordSpend(provider, usdFor(provider, r.model, r.usage));
+      if (r.uploaded)
+        await deps.geminiFiles.delete(r.uploaded.name, r.uploaded.keyId).catch(() => undefined);
       model = r.model;
       usage.input += r.usage.inputTokens;
       usage.output += r.usage.outputTokens;

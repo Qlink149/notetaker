@@ -1,6 +1,7 @@
 import type { Line } from '@meetingid/shared';
 import { MeetingDataModel, MeetingModel } from '../../models/index.js';
 import type { StageContext, StageHandler } from '../context.js';
+import { assertBudget, estimateClaudeUsd, recordSpend, usdFor } from '../budget.js';
 import { humanizeError } from '../errors.js';
 import { addCost, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
@@ -35,6 +36,8 @@ export const summariseStage: StageHandler = {
     }
 
     const { workspace, glossary } = await loadWorkspaceContext(meeting.workspaceId);
+    const chars = lines.reduce((n, l) => n + l.textRoman.length + 20, 0);
+    await assertBudget('claude', estimateClaudeUsd(workspace.settings.summaryModel, chars));
     const { result, usage, error } = await deps.summariser.summarise({
       lines,
       glossary,
@@ -42,7 +45,10 @@ export const summariseStage: StageHandler = {
       includeNative: workspace.settings.scriptPreference === 'native',
       model: workspace.settings.summaryModel,
     });
+    const usd = usdFor('claude', workspace.settings.summaryModel, usage);
+    await recordSpend('claude', usd);
     await addCost(meeting._id, {
+      usd,
       claudeInputTokens: usage.inputTokens,
       claudeOutputTokens: usage.outputTokens,
     });

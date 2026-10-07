@@ -171,7 +171,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
     const m = await own(req);
     const data = await MeetingDataModel.findOne(
       { meetingId: m._id },
-      { 'chunks.geminiFileName': 1 },
+      { 'chunks.geminiFileName': 1, 'chunks.geminiKeyId': 1 },
     ).lean();
     await Promise.all([
       MeetingModel.deleteOne({ _id: m._id }),
@@ -182,7 +182,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
     void (async () => {
       for (const c of data?.chunks ?? [])
         if (c.geminiFileName)
-          await deps.geminiFiles.delete(c.geminiFileName).catch(() => undefined);
+          await deps.geminiFiles.delete(c.geminiFileName, c.geminiKeyId).catch(() => undefined);
       await deps.storage
         .deleteFolder(meetingFolder(ws(req).slug, String(m._id)))
         .catch((err: unknown) => logger.warn({ err }, 'storage cleanup failed'));

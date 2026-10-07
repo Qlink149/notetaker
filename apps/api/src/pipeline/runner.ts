@@ -5,7 +5,7 @@ import type { Stage } from '@meetingid/shared';
 import { jobLogger, logger } from '../lib/logger.js';
 import { HeartbeatModel, type JobDoc } from '../models/index.js';
 import type { Deps, StageRegistry } from './context.js';
-import { FatalError, backoffMs, classify } from './errors.js';
+import { FatalError, RetryableError, backoffMs, classify } from './errors.js';
 import { failMeeting } from './meetings.js';
 import { claimNext, markDone, markFailed, release, renewLease, scheduleRetry } from './queue.js';
 
@@ -109,7 +109,8 @@ export class Runner {
       log.info({ ms: Date.now() - started }, 'job done');
     } catch (raw) {
       const err = classify(raw);
-      const giveUp = err instanceof FatalError || job.attempts >= job.maxAttempts;
+      const quota = err instanceof RetryableError && err.reason === 'quota';
+      const giveUp = err instanceof FatalError || (!quota && job.attempts >= job.maxAttempts);
       log.warn({ err: err.message, attempt: job.attempts, giveUp }, 'job failed');
       if (giveUp) {
         await markFailed(job._id, this.workerId, err.message);
@@ -122,8 +123,9 @@ export class Runner {
           log.error({ err: hookErr }, 'give-up handler failed');
         }
       } else {
-        const runAfter = new Date(this.deps.now().getTime() + backoffMs(job.attempts));
-        await scheduleRetry(job._id, this.workerId, runAfter, err.message);
+        const wait = (err instanceof RetryableError && err.retryAfterMs) || backoffMs(job.attempts);
+        const runAfter = new Date(this.deps.now().getTime() + wait);
+        await scheduleRetry(job._id, this.workerId, runAfter, err.message, quota);
       }
     } finally {
       clearInterval(lease);

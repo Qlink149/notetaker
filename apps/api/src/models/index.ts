@@ -165,6 +165,7 @@ const meetingSchema = new Schema<MeetingDoc>(
     cost: {
       type: new Schema(
         {
+          usd: { type: Number, default: 0 },
           geminiInputTokens: { type: Number, default: 0 },
           geminiOutputTokens: { type: Number, default: 0 },
           deepgramSec: { type: Number, default: 0 },
@@ -206,7 +207,11 @@ export interface ChunkDoc {
   audioPublicId: string | null;
   geminiFileUri: string | null;
   geminiFileName: string | null;
+  /** Which Gemini key holds the uploaded file (files are per project). */
+  geminiKeyId: string | null;
   uploadedAt: Date | null;
+  /** Model that produced rawTurns. */
+  model: string | null;
   status: ChunkStatusT;
   attempts: number;
   parent: number | null;
@@ -235,7 +240,9 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
             audioPublicId: { type: String, default: null },
             geminiFileUri: { type: String, default: null },
             geminiFileName: { type: String, default: null },
+            geminiKeyId: { type: String, default: null },
             uploadedAt: { type: Date, default: null },
+            model: { type: String, default: null },
             status: { type: String, enum: ChunkStatus.options, default: 'pending' },
             attempts: { type: Number, default: 0 },
             parent: { type: Number, default: null },
@@ -437,6 +444,37 @@ const evalRunSchema = new Schema<EvalRunDoc>(
 );
 export const EvalRunModel = mongoose.model<EvalRunDoc>('EvalRun', evalRunSchema);
 
+// ---------- Gemini key quota (free-tier daily limits) ----------
+export interface QuotaDoc {
+  /** `<keyId>:<model>` */
+  _id: string;
+  keyLabel: string;
+  model: string;
+  exhaustedUntil: Date;
+}
+const quotaSchema = new Schema<QuotaDoc>({
+  _id: { type: String },
+  keyLabel: String,
+  model: String,
+  exhaustedUntil: { type: Date, required: true },
+});
+export const QuotaModel = mongoose.model<QuotaDoc>('GeminiQuota', quotaSchema, 'geminiquotas');
+
+// ---------- Spend ledger (hard cap) ----------
+export interface SpendDoc {
+  _id: string;
+  usd: number;
+  byProvider: Record<string, number>;
+  updatedAt: Date;
+}
+const spendSchema = new Schema<SpendDoc>({
+  _id: { type: String },
+  usd: { type: Number, default: 0 },
+  byProvider: { type: Schema.Types.Mixed, default: {} },
+  updatedAt: { type: Date, default: () => new Date() },
+});
+export const SpendModel = mongoose.model<SpendDoc>('Spend', spendSchema, 'spend');
+
 export const allModels: Model<never>[] = [
   WorkspaceModel,
   GlossaryModel,
@@ -447,4 +485,6 @@ export const allModels: Model<never>[] = [
   SpeakerModel,
   EvalSetModel,
   EvalRunModel,
+  QuotaModel,
+  SpendModel,
 ] as unknown as Model<never>[];

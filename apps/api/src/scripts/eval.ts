@@ -30,61 +30,77 @@ const { values, positionals } = parseArgs({
     duration: { type: 'string' },
     workspace: { type: 'string', default: 'kisna' },
     'no-run': { type: 'boolean', default: false },
+    /** Queue, then poll until a separately running worker finishes (production-like). */
+    wait: { type: 'boolean', default: false },
+    /** Attach to an existing meeting id instead of uploading (implies --wait). */
+    meeting: { type: 'string' },
   },
 });
 
 async function main(): Promise<void> {
-  const file = positionals[0];
+  const file = positionals[0] ?? (values.meeting ? 'existing' : undefined);
   if (!file)
     throw new Error(
-      'usage: eval <audio file> [--start s --duration s] [--engine gemini|deepgram] [--no-run]',
+      'usage: eval <audio file> [--start s --duration s] [--engine gemini|deepgram] [--no-run | --wait]',
     );
   const cfg = env();
   await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
-  const workspace = await WorkspaceModel.findOne({ slug: values.workspace }).lean();
+  const ws = await WorkspaceModel.findOne({ slug: values.workspace }).lean();
+  const workspace = ws;
   if (!workspace)
     throw new Error(`workspace "${values.workspace}" not found; run npm run seed first`);
 
-  const meetingId = new Types.ObjectId();
-  const folder = meetingFolder(workspace.slug, String(meetingId));
-  const tmp = await mkdtemp(join(tmpdir(), 'mid-eval-'));
-  let source = resolve(file);
-  if (values.start || values.duration) {
-    const start = Number(values.start ?? 0);
-    const flac = join(tmp, 'full.flac');
-    await toAnalysisFlac(source, flac);
-    source = join(tmp, 'cut.flac');
-    await cutFlac(flac, source, start, start + Number(values.duration ?? 120));
-  }
-  console.log(`Uploading ${basename(file)} …`);
-  const up = await cloudinaryStorage.uploadAudio(source, `${folder}/original`);
-  await rm(tmp, { recursive: true, force: true });
+  const meetingId = values.meeting ? new Types.ObjectId(values.meeting) : new Types.ObjectId();
+  if (values.meeting) values.wait = true;
+  else await startMeeting(file, workspace);
 
-  const engine = EngineName.parse(values.engine ?? workspace.settings.engine);
-  const title =
-    values.title ??
-    `eval: ${basename(file, extname(file))}${values.start ? ` @${values.start}s` : ''}`;
-  await MeetingModel.create({
-    _id: meetingId,
-    workspaceId: workspace._id,
-    title,
-    status: 'processing',
-    stage: 'ingest',
-    engine,
-    languages: workspace.settings.languages,
-    audio: { originalUrl: up.url, originalPublicId: up.publicId },
-  });
-  await enqueue({ meetingId, stage: 'ingest' });
-  console.log(`Meeting ${String(meetingId)} queued (engine ${engine}).`);
+  async function startMeeting(file: string, workspace: NonNullable<typeof ws>): Promise<void> {
+    const folder = meetingFolder(workspace.slug, String(meetingId));
+    const tmp = await mkdtemp(join(tmpdir(), 'mid-eval-'));
+    let source = resolve(file);
+    if (values.start || values.duration) {
+      const start = Number(values.start ?? 0);
+      const flac = join(tmp, 'full.flac');
+      await toAnalysisFlac(source, flac);
+      source = join(tmp, 'cut.flac');
+      await cutFlac(flac, source, start, start + Number(values.duration ?? 120));
+    }
+    console.log(`Uploading ${basename(file)} …`);
+    const up = await cloudinaryStorage.uploadAudio(source, `${folder}/original`);
+    await rm(tmp, { recursive: true, force: true });
+
+    const engine = EngineName.parse(values.engine ?? workspace.settings.engine);
+    const title =
+      values.title ??
+      `eval: ${basename(file, extname(file))}${values.start ? ` @${values.start}s` : ''}`;
+    await MeetingModel.create({
+      _id: meetingId,
+      workspaceId: workspace._id,
+      title,
+      status: 'processing',
+      stage: 'ingest',
+      engine,
+      languages: workspace.settings.languages,
+      audio: { originalUrl: up.url, originalPublicId: up.publicId },
+    });
+    await enqueue({ meetingId, stage: 'ingest' });
+    console.log(`Meeting ${String(meetingId)} queued (engine ${engine}).`);
+  }
   if (values['no-run']) return disconnectMongo();
 
   const started = Date.now();
-  const runner = new Runner(defaultDeps(), stages, { workerId: `eval-${process.pid}` });
-  // Drain repeatedly: retries are scheduled in the future, so wait for them.
+  const runner = values.wait
+    ? null
+    : new Runner(defaultDeps(), stages, { workerId: `eval-${process.pid}` });
+  // Drain repeatedly (or just poll, with --wait): retries are scheduled in the future.
+  let lastStage = '';
   for (;;) {
-    await runner.drain();
+    if (runner) await runner.drain();
     const m = await MeetingModel.findById(meetingId).lean();
     if (!m || m.stage === 'done' || m.status === 'failed') break;
+    const now = `${m.stage} ${m.progress.chunksDone}/${m.progress.chunksTotal}`;
+    if (now !== lastStage) console.log(`[${Math.round((Date.now() - started) / 1000)}s] ${now}`);
+    lastStage = now;
     await new Promise((r) => setTimeout(r, 5000));
   }
 
@@ -99,7 +115,7 @@ async function main(): Promise<void> {
   await writeFile(
     out,
     [
-      `# ${title}`,
+      `# ${meeting?.title}`,
       `status=${meeting?.status} coverage=${JSON.stringify(meeting?.coverage)} summary=${meeting?.summaryStatus}`,
       '',
       ...lines.map(

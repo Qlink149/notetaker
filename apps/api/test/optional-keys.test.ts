@@ -48,7 +48,7 @@ describe('optional provider keys', () => {
     const app = createApp({
       storage: await fakeStorage(),
       geminiFiles: {
-        upload: async () => ({ uri: 'u', name: 'n', mimeType: 'audio/flac' }),
+        upload: async () => ({ uri: 'u', name: 'n', mimeType: 'audio/flac', keyId: 'k1' }),
         delete: async () => undefined,
       },
       createVoiceprint: async () => 'vp',

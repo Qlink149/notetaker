@@ -34,6 +34,15 @@ const EnvSchema = z.object({
 
   GEMINI_API_KEY: optional,
   GEMINI_MODEL: z.string().default('gemini-3.8-flash'),
+  /** Tried once when the primary model is overloaded (503/timeout) or out of quota on every key. Empty = none. */
+  GEMINI_FALLBACK_MODEL: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().default('gemini-3.5-flash'),
+  ),
+  /** Set to "true" when the Gemini keys are on a paid tier; free-tier usage costs nothing and is not counted against the cap. */
+  GEMINI_PAID: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
+  /** Hard cap in USD on recorded Gemini (if paid) + Claude spend across all meetings and benchmarks. */
+  SPEND_CAP_USD: z.coerce.number().positive().default(5),
   GEMINI_TRANSCRIBE_MODEL: z.string().default('gemini-3.5-transcribe'),
   DEEPGRAM_API_KEY: optional,
   ANTHROPIC_API_KEY: optional,
@@ -97,9 +106,29 @@ export function engineStatus(): Record<EngineId, { enabled: boolean; reason?: st
   const key = (v: string | undefined, name: string) =>
     v ? { enabled: true } : { enabled: false, reason: `${name} is not set` };
   return {
-    gemini: key(e.GEMINI_API_KEY, 'GEMINI_API_KEY'),
+    gemini: key(geminiKeyEntries()[0]?.value, 'GEMINI_API_KEY (or GEMINI_API_KEY1..9)'),
     deepgram: key(e.DEEPGRAM_API_KEY, 'DEEPGRAM_API_KEY'),
-    'gemini-transcribe': key(e.GEMINI_API_KEY, 'GEMINI_API_KEY'),
+    'gemini-transcribe': key(
+      geminiKeyEntries()[0]?.value,
+      'GEMINI_API_KEY (or GEMINI_API_KEY1..9)',
+    ),
     sarvam: { enabled: false, reason: 'Sarvam is not implemented in Phase 1' },
   };
+}
+
+/** Gemini keys from GEMINI_API_KEY and GEMINI_API_KEY1..GEMINI_API_KEY9, in that order, de-duplicated. */
+export function geminiKeyEntries(): { name: string; value: string }[] {
+  const names = [
+    'GEMINI_API_KEY',
+    ...Array.from({ length: 9 }, (_, i) => `GEMINI_API_KEY${i + 1}`),
+  ];
+  const seen = new Set<string>();
+  const out: { name: string; value: string }[] = [];
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    out.push({ name, value });
+  }
+  return out;
 }

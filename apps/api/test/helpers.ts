@@ -198,7 +198,12 @@ export function testDeps(over: Partial<Deps> & Pick<Deps, 'storage' | 'engine'>)
     geminiFiles: {
       upload: async () => {
         fileId++;
-        return { uri: `gemini://file-${fileId}`, name: `files/${fileId}`, mimeType: 'audio/flac' };
+        return {
+          uri: `gemini://file-${fileId}`,
+          name: `files/${fileId}`,
+          mimeType: 'audio/flac',
+          keyId: 'k1',
+        };
       },
       delete: async () => undefined,
     },

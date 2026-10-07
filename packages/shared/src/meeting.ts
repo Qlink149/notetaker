@@ -71,6 +71,8 @@ export const MeetingAudio = z.object({
 export type MeetingAudio = z.infer<typeof MeetingAudio>;
 
 export const MeetingCost = z.object({
+  /** Estimated USD at published paid-tier prices (free-tier usage is not billed). */
+  usd: z.number(),
   geminiInputTokens: z.number(),
   geminiOutputTokens: z.number(),
   deepgramSec: z.number(),
@@ -80,6 +82,7 @@ export const MeetingCost = z.object({
 export type MeetingCost = z.infer<typeof MeetingCost>;
 
 export const emptyCost = (): MeetingCost => ({
+  usd: 0,
   geminiInputTokens: 0,
   geminiOutputTokens: 0,
   deepgramSec: 0,
@@ -133,7 +136,9 @@ export const ChunkRecord = z.object({
   audioPublicId: z.string().nullable(),
   geminiFileUri: z.string().nullable(),
   geminiFileName: z.string().nullable(),
+  geminiKeyId: z.string().nullable(),
   uploadedAt: z.string().nullable(),
+  model: z.string().nullable(),
   status: ChunkStatus,
   attempts: z.number(),
   /** Index of the chunk this one was split from, if any. */

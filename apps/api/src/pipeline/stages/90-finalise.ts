@@ -12,7 +12,12 @@ export const finaliseStage: StageHandler = {
     const meeting = await loadMeeting(job.meetingId);
     const data = await MeetingDataModel.findOne(
       { meetingId: meeting._id },
-      { 'chunks.index': 1, 'chunks.status': 1, 'chunks.geminiFileName': 1 },
+      {
+        'chunks.index': 1,
+        'chunks.status': 1,
+        'chunks.geminiFileName': 1,
+        'chunks.geminiKeyId': 1,
+      },
     ).lean();
     const chunks = data?.chunks ?? [];
     const failedChunks = chunks.filter((c) => c.status === 'failed').length;
@@ -35,7 +40,7 @@ export const finaliseStage: StageHandler = {
     for (const c of chunks) {
       if (!c.geminiFileName) continue;
       try {
-        await deps.geminiFiles.delete(c.geminiFileName);
+        await deps.geminiFiles.delete(c.geminiFileName, c.geminiKeyId);
         deleted++;
       } catch {
         // best effort

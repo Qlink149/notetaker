@@ -2,6 +2,8 @@ import type { Types } from 'mongoose';
 import { looksRepetitive, normalizeChunkTurns, splitChunk } from '@meetingid/pipeline';
 import { MeetingDataModel, MeetingModel } from '../../models/index.js';
 import type { ChunkAudio } from '../../services/engines/types.js';
+import { env } from '../../config/env.js';
+import { assertBudget, estimateGeminiChunkUsd, recordSpend, usdFor } from '../budget.js';
 import { materializeChunk } from '../chunkAudio.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, RetryableError } from '../errors.js';
@@ -73,42 +75,54 @@ export const transcribeStage: StageHandler = {
       chunk.uploadedAt &&
       deps.now().getTime() - new Date(chunk.uploadedAt).getTime() < GEMINI_FILE_TTL_MS;
     if (engine.accepts.includes('gemini-file') && fresh) {
-      audio = { kind: 'gemini-file', uri: chunk.geminiFileUri!, mimeType: FLAC };
-    } else if (engine.accepts.includes('gemini-file')) {
-      const up = await deps.geminiFiles.upload(
-        await ensureLocal(),
-        FLAC,
-        `${String(meeting._id)}-${index}`,
-      );
-      await MeetingDataModel.updateOne(
-        { meetingId: meeting._id, 'chunks.index': index },
-        {
-          $set: {
-            'chunks.$.geminiFileUri': up.uri,
-            'chunks.$.geminiFileName': up.name,
-            'chunks.$.uploadedAt': deps.now(),
-          },
-        },
-      );
-      audio = { kind: 'gemini-file', uri: up.uri, mimeType: FLAC };
+      audio = {
+        kind: 'gemini-file',
+        uri: chunk.geminiFileUri!,
+        mimeType: FLAC,
+        keyId: chunk.geminiKeyId,
+      };
     } else {
+      // The engine uploads it (Gemini) or reads it (Deepgram).
       audio = { kind: 'path', path: await ensureLocal(), mimeType: FLAC };
     }
+
+    const provider = engine.name === 'deepgram' ? 'deepgram' : 'gemini';
+    await assertBudget(
+      provider,
+      estimateGeminiChunkUsd(env().GEMINI_MODEL, chunk.endSec - chunk.startSec),
+    );
 
     const started = Date.now();
     const result = await engine.transcribeChunk({
       audio,
+      localPath: ensureLocal,
       startSec: chunk.startSec,
       endSec: chunk.endSec,
       languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
       glossary,
     });
+    if (result.uploaded) {
+      await MeetingDataModel.updateOne(
+        { meetingId: meeting._id, 'chunks.index': index },
+        {
+          $set: {
+            'chunks.$.geminiFileUri': result.uploaded.uri,
+            'chunks.$.geminiFileName': result.uploaded.name,
+            'chunks.$.geminiKeyId': result.uploaded.keyId,
+            'chunks.$.uploadedAt': deps.now(),
+          },
+        },
+      );
+    }
     // Paid for whatever the outcome.
+    const usd = usdFor(provider, result.model, result.usage);
     await addCost(meeting._id, {
+      usd,
       geminiInputTokens: result.usage.inputTokens,
       geminiOutputTokens: result.usage.outputTokens,
       deepgramSec: result.usage.audioSec,
     });
+    await recordSpend(provider, usd);
 
     const text = result.turns.map((t) => t.text_roman || t.text_native).join('\n');
     const bad =
@@ -133,7 +147,13 @@ export const transcribeStage: StageHandler = {
     const turns = normalizeChunkTurns(result.turns, duration, chunk.startSec);
     const saved = await MeetingDataModel.updateOne(
       { meetingId: meeting._id, chunks: { $elemMatch: { index, status: 'pending' } } },
-      { $set: { 'chunks.$.status': 'done', 'chunks.$.rawTurns': turns } },
+      {
+        $set: {
+          'chunks.$.status': 'done',
+          'chunks.$.rawTurns': turns,
+          'chunks.$.model': result.model,
+        },
+      },
     );
     if (saved.modifiedCount === 1) {
       await MeetingModel.updateOne({ _id: meeting._id }, { $inc: { 'progress.chunksDone': 1 } });
@@ -170,7 +190,9 @@ async function splitAndRequeue(
     audioPublicId: null,
     geminiFileUri: null,
     geminiFileName: null,
+    geminiKeyId: null,
     uploadedAt: null,
+    model: null,
     status: 'pending' as const,
     attempts: 0,
     parent: chunk.index,

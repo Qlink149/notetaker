@@ -10,11 +10,15 @@ export class RetryableError extends Error {
       | 'truncated'
       | 'invalid_output'
       | 'timeout'
+      | 'quota'
       | 'other' = 'other',
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; retryAfterMs?: number },
   ) {
     super(message, options);
+    this.retryAfterMs = options?.retryAfterMs;
   }
+  /** Wait this long before the retry instead of the backoff schedule (e.g. a quota reset). */
+  readonly retryAfterMs: number | undefined;
 }
 
 /** A failure retrying cannot fix: bad request, auth, missing audio, schema violations after retry. */

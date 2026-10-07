@@ -85,10 +85,15 @@ export async function scheduleRetry(
   workerId: string,
   runAfter: Date,
   error: string,
+  /** Hand back the attempt (waiting for a quota reset is not a failure of the job). */
+  refundAttempt = false,
 ): Promise<void> {
   await JobModel.updateOne(
     { _id: jobId, lockedBy: workerId },
-    { $set: { status: 'queued', runAfter, lockedBy: null, lockedAt: null, lastError: error } },
+    {
+      $set: { status: 'queued', runAfter, lockedBy: null, lockedAt: null, lastError: error },
+      ...(refundAttempt ? { $inc: { attempts: -1 } } : {}),
+    },
   );
 }
 

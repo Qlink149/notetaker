@@ -1,7 +1,8 @@
 import type { RawTurn } from '@meetingid/pipeline';
 import { env } from '../../config/env.js';
 import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
-import { geminiClient, uploadToGeminiFiles } from './gemini.js';
+import { uploadWith } from './gemini.js';
+import { pickKey } from './geminiKeys.js';
 import {
   LANGUAGE_BCP47,
   type ChunkInput,
@@ -76,16 +77,28 @@ export class GeminiTranscribeEngine implements TranscriptionEngine {
     if (input.endSec - input.startSec > 30 * 60) {
       throw new FatalError('gemini-transcribe is limited to 30 minutes with diarization');
     }
+    const picked = await pickKey(
+      this.model,
+      input.audio.kind === 'gemini-file' ? input.audio.keyId : null,
+    );
+    if (!picked.key) {
+      throw new RetryableError(`${this.model} daily quota used up on every key`, 'quota', {
+        retryAfterMs: picked.resetAt ? picked.resetAt.getTime() - Date.now() : 3600_000,
+      });
+    }
+    const key = picked.key;
     let audio: { uri: string; mimeType: string };
-    if (input.audio.kind === 'gemini-file') audio = input.audio;
-    else if (input.audio.kind === 'path') {
-      audio = await uploadToGeminiFiles(input.audio.path, input.audio.mimeType, 'chunk');
+    if (input.audio.kind === 'gemini-file' && (input.audio.keyId ?? key.id) === key.id)
+      audio = input.audio;
+    else if (input.audio.kind === 'path' || input.localPath) {
+      const path = input.audio.kind === 'path' ? input.audio.path : await input.localPath!();
+      audio = await uploadWith(key, path, 'audio/flac', 'chunk');
     } else
       throw new FatalError('GeminiTranscribeEngine needs a local file or an uploaded Gemini file');
 
     let interaction;
     try {
-      interaction = await geminiClient().interactions.create(
+      interaction = await key.client.interactions.create(
         {
           model: this.model,
           input: [{ type: 'audio', uri: audio.uri, mime_type: audio.mimeType }],
@@ -100,8 +113,8 @@ export class GeminiTranscribeEngine implements TranscriptionEngine {
             },
           },
           store: false,
-        } as Parameters<ReturnType<typeof geminiClient>['interactions']['create']>[0],
-        { timeout: 7 * 60_000, maxRetries: 1 },
+        } as Parameters<typeof key.client.interactions.create>[0],
+        { timeout: 7 * 60_000, maxRetries: 0 },
       );
     } catch (err) {
       throw classify(err);

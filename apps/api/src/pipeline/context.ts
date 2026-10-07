@@ -23,7 +23,7 @@ export interface AudioTools {
 
 export interface GeminiFiles {
   upload(path: string, mimeType: string, displayName: string): Promise<UploadedFile>;
-  delete(name: string): Promise<void>;
+  delete(name: string, keyId?: string | null): Promise<void>;
 }
 
 /** Everything a stage touches outside MongoDB. Tests swap in fakes. */
