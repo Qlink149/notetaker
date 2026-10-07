@@ -16,7 +16,9 @@
     "test": "vitest run",
     "probe": "tsx --conditions=source src/scripts/probe-files.ts",
     "handoff": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/handoff.ts",
-    "acceptance": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/acceptance.ts"
+    "acceptance": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/acceptance.ts",
+    "start:all": "node dist/all.js",
+    "dev:all": "tsx watch --conditions=source --env-file-if-exists=../../.env src/all.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

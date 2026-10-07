@@ -1,16 +1,46 @@
-# Render blueprint: one codebase (apps/api), two services.
-# Secrets live in the "meetingid-shared" env group (create it once in the dashboard;
-# values marked sync: false are entered there, never committed).
-envVarGroups:
-  - name: meetingid-shared
+# Render blueprint — Phase 1 testing deployment: ONE Free web service running the API and the
+# worker in one process (Render has no free background workers). Region Singapore: closest to the
+# Atlas cluster (AWS ap-south-1, Mumbai). Free instances: 512 MB, 0.1 CPU, sleep after 15 min
+# without inbound traffic, 750 free hours per workspace per month — so point an uptime pinger
+# (e.g. cron-job.org) at /api/v1/health every 10 minutes. render.paid.yaml has the
+# two-service layout (api + Starter background worker) for production.
+# Secrets are set in the dashboard or through the Render API, never committed.
+services:
+  - type: web
+    name: meetingid
+    runtime: node
+    plan: free
+    region: singapore
+    branch: phase-1-gemini-rebuild
+    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+    startCommand: npm run start:all -w @meetingid/api
+    healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
         value: "20.18.1"
+      - key: SERVICE_NAME
+        value: meetingid
+      - key: WORKER_CONCURRENCY
+        value: "1"
+      - key: SUMMARY_PROVIDER
+        value: anthropic
+      - key: SPEND_CAP_USD
+        value: "5"
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_FALLBACK_MODEL
+        value: gemini-3.5-flash
       - key: MONGODB_URI
         sync: false
+      - key: MONGODB_DB
+        value: meetingid
       - key: JWT_SECRET
+        sync: false
+      - key: WORKSPACE_ACCESS_CODE
+        sync: false
+      - key: CORS_ORIGINS
         sync: false
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
@@ -18,47 +48,13 @@ envVarGroups:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      - key: GEMINI_API_KEY
+      - key: GEMINI_API_KEY1
         sync: false
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
-      - key: GEMINI_TRANSCRIBE_MODEL
-        value: gemini-3.5-transcribe
+      - key: GEMINI_API_KEY2
+        sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: PYANNOTEAI_API_KEY
         sync: false
-
-services:
-  - type: web
-    name: meetingid-api
-    runtime: node
-    plan: starter
-    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
-    startCommand: npm run start -w @meetingid/api
-    healthCheckPath: /api/v1/health
-    envVars:
-      - fromGroup: meetingid-shared
-      - key: SERVICE_NAME
-        value: meetingid-api
-      # The Vercel origin(s), comma-separated, e.g. https://meetingid.vercel.app
-      - key: CORS_ORIGINS
-        sync: false
-      # Used by `npm run seed` (run once from the Render shell)
-      - key: WORKSPACE_ACCESS_CODE
-        sync: false
-
-  - type: worker
-    name: meetingid-worker
-    runtime: node
-    plan: starter
-    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
-    startCommand: npm run start:worker -w @meetingid/api
-    envVars:
-      - fromGroup: meetingid-shared
-      - key: SERVICE_NAME
-        value: meetingid-worker
-      - key: WORKER_CONCURRENCY
-        value: "2"
