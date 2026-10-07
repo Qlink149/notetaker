@@ -21,6 +21,7 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly similar?: SimilarName[],
   ) {
     super(message);
   }
@@ -66,8 +67,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 401 && !path.startsWith('/auth/login'))
     unauthorizedListeners.forEach((fn) => fn());
   if (res.status === 204) return undefined as T;
-  const json = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new ApiError(res.status, json.error ?? `Request failed (${res.status})`);
+  const json = (await res.json().catch(() => ({}))) as { error?: string; similar?: SimilarName[] };
+  if (!res.ok) throw new ApiError(res.status, json.error ?? `Request failed (${res.status})`, json.similar);
   return json as T;
 }
 
@@ -77,6 +78,28 @@ export interface Speaker {
   hasVoiceprint: boolean;
   enrollmentAudioUrl: string | null;
   createdAt: string;
+}
+
+export interface SpeakerCard {
+  diar: string;
+  label: string;
+  displayName: string;
+  personId: string | null;
+  personName: string | null;
+  anonymous: boolean;
+  voiceprints: number;
+  speakerSec: number;
+  turns: number;
+  status: 'solid' | 'review' | 'new' | 'manual';
+  match: { personId: string; name: string; score: number; margin: number } | null;
+  candidate: { name: string; score: number; status: string } | null;
+  clips: { start: number; end: number; quality: number | null }[];
+  appearsIn: { meetingId: string; title: string; label: string; displayName: string; score: number | null }[];
+}
+
+export interface SimilarName {
+  id: string;
+  name: string;
 }
 
 export interface CreateMeetingInput {
@@ -118,6 +141,35 @@ export const api = {
         (r) => r.meeting,
       ),
     remove: (id: string) => request<void>('DELETE', `/meetings/${id}`),
+    speakers: (id: string) =>
+      request<{ source: 'pyannote' | 'text-fallback'; cards: SpeakerCard[] }>(
+        'GET',
+        `/meetings/${id}/speakers`,
+      ),
+    /** Resolves with {similar} instead of saving when the name looks like an existing person. */
+    nameSpeaker: async (
+      id: string,
+      diar: string,
+      input: { name: string; usePersonId?: string; createNew?: boolean },
+    ): Promise<{ similar?: SimilarName[]; updatedMeetings?: string[]; meetingsWithThisVoice?: string[] }> => {
+      try {
+        return await request('POST', `/meetings/${id}/speakers/${encodeURIComponent(diar)}/name`, input);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409 && e.similar) return { similar: e.similar };
+        throw e;
+      }
+    },
+    mergeSpeakers: (id: string, from: string, into: string) =>
+      request<{ lines: number }>('POST', `/meetings/${id}/speakers/merge`, { from, into }),
+    splitSpeaker: (id: string, lineIndex: number) =>
+      request<{ newSpeaker: string }>('POST', `/meetings/${id}/speakers/split`, { lineIndex }),
+    reassignLine: (id: string, lineIndex: number, toDiar: string) =>
+      request<{ lines: number }>('POST', `/meetings/${id}/lines/reassign`, { lineIndex, toDiar }),
+    reidentify: (id: string) =>
+      request<{ changes: { speaker: string; person: string; score: number }[]; warnings: string[] }>(
+        'POST',
+        `/meetings/${id}/speakers/reidentify`,
+      ),
   },
   glossary: {
     get: () => request<{ entries: GlossaryEntry[] }>('GET', '/glossary').then((r) => r.entries),

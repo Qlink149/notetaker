@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fmtTime, lineText } from "@/lib/format";
 
 const PALETTE = [
@@ -28,11 +28,27 @@ function activeIndexFor(lines, t) {
   return idx;
 }
 
-/** scriptMode: "roman" | "native" | "both". Lines never exceed 45 s (built server-side). */
-export default function TranscriptView({ lines, currentTime = 0, onSeek, scriptMode = "roman" }) {
+/**
+ * scriptMode: "roman" | "native" | "both". Lines never exceed 45 s (built server-side).
+ * When `onReassign` / `onSplit` are given, clicking a speaker's name opens line actions:
+ * `speakers` is [{ diar, displayName }] of the meeting.
+ */
+export default function TranscriptView({
+  lines,
+  currentTime = 0,
+  onSeek,
+  scriptMode = "roman",
+  speakers = [],
+  onReassign,
+  onSplit,
+}) {
   const rowRefs = useRef([]);
   const firstRun = useRef(true);
+  const [menu, setMenu] = useState(-1);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const active = activeIndexFor(lines, currentTime);
+  const editable = Boolean(onReassign || onSplit);
 
   // Keep the active line in view during playback, but don't jump on first render.
   useEffect(() => {
@@ -44,6 +60,19 @@ export default function TranscriptView({ lines, currentTime = 0, onSeek, scriptM
     rowRefs.current[active]?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [active]);
 
+  const act = async (fn) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      setMenu(-1);
+    } catch (e) {
+      setError(e?.message || "That did not work.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!lines?.length) return <p className="text-sm text-muted-foreground">No transcript yet.</p>;
 
   return (
@@ -51,6 +80,7 @@ export default function TranscriptView({ lines, currentTime = 0, onSeek, scriptM
       {lines.map((line, i) => {
         const isActive = i === active;
         const showBoth = scriptMode === "both" && line.textNative && line.textNative !== line.textRoman;
+        const chipClass = `text-xs font-semibold px-2 py-0.5 rounded-full ${colorFor(line.speakerName)}`;
         return (
           <div
             key={i}
@@ -61,9 +91,23 @@ export default function TranscriptView({ lines, currentTime = 0, onSeek, scriptM
             }`}
           >
             <div className="flex items-center gap-2 mb-1.5">
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${colorFor(line.speakerName)}`}>
-                {line.speakerName}
-              </span>
+              {editable ? (
+                <button
+                  type="button"
+                  className={`${chipClass} underline decoration-dotted underline-offset-2`}
+                  aria-expanded={menu === i}
+                  aria-label={`${line.speakerName}: change who said this`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenu(menu === i ? -1 : i);
+                    setError("");
+                  }}
+                >
+                  {line.speakerName}
+                </button>
+              ) : (
+                <span className={chipClass}>{line.speakerName}</span>
+              )}
               <span className="text-[10px] text-muted-foreground tabular-nums">{fmtTime(line.start)}</span>
             </div>
             {showBoth ? (
@@ -75,6 +119,41 @@ export default function TranscriptView({ lines, currentTime = 0, onSeek, scriptM
               <p className="text-sm leading-relaxed text-foreground">
                 {lineText(line, scriptMode === "native" ? "native" : "roman")}
               </p>
+            )}
+            {editable && menu === i && (
+              <div
+                className="mt-2.5 pt-2.5 border-t border-border flex flex-wrap items-center gap-2 text-xs"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {onReassign && (
+                  <label className="flex items-center gap-1.5">
+                    Move this line to
+                    <select
+                      disabled={busy}
+                      defaultValue=""
+                      onChange={(e) => e.target.value && act(() => onReassign(i, e.target.value))}
+                      className="h-8 rounded-md border border-input bg-background px-2"
+                    >
+                      <option value="">choose…</option>
+                      {speakers
+                        .filter((s) => s.displayName !== line.speakerName)
+                        .map((s) => (
+                          <option key={s.diar} value={s.diar}>{s.displayName}</option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+                {onSplit && (
+                  <button
+                    disabled={busy}
+                    onClick={() => act(() => onSplit(i))}
+                    className="h-8 px-2.5 rounded-md border border-input hover:bg-secondary"
+                  >
+                    This is a different person from here on
+                  </button>
+                )}
+                {error && <span className="text-destructive">{error}</span>}
+              </div>
             )}
           </div>
         );

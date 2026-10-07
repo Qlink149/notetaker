@@ -9,6 +9,7 @@ import { api } from "@/api/client";
 import { useAuth } from "@/lib/AuthContext";
 import { fmtDuration } from "@/lib/format";
 import TranscriptView from "@/components/TranscriptView";
+import SpeakerReview from "@/components/SpeakerReview";
 import ActionItems from "@/components/ActionItems";
 import MeetingExport from "@/components/MeetingExport";
 import { Button } from "@/components/ui/button";
@@ -61,7 +62,10 @@ export default function MeetingDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [scriptMode, setScriptMode] = useState(workspace?.settings?.scriptPreference ?? "roman");
   const [currentTime, setCurrentTime] = useState(0);
+  const [speakers, setSpeakers] = useState(null);
+  const [summaryStale, setSummaryStale] = useState(false);
   const audioRef = useRef(null);
+  const stopAt = useRef(null);
   const dataKey = useRef(null);
 
   const load = useCallback(async () => {
@@ -90,7 +94,21 @@ export default function MeetingDetail() {
     if (dataKey.current === key) return;
     dataKey.current = key;
     api.meetings.data(id).then(setData).catch(() => {});
+    api.meetings.speakers(id).then(setSpeakers).catch(() => {});
   }, [meeting, id]);
+
+  // After a rename, merge, split or reassign: lines, speaker cards and participants all change.
+  const afterEdit = useCallback(async () => {
+    const [m, d, sp] = await Promise.all([
+      api.meetings.get(id),
+      api.meetings.data(id),
+      api.meetings.speakers(id),
+    ]);
+    setMeeting(m);
+    setData(d);
+    setSpeakers(sp);
+    if (m.summary) setSummaryStale(true);
+  }, [id]);
 
   const run = async (fn) => {
     setBusy(true);
@@ -130,7 +148,17 @@ export default function MeetingDetail() {
   const seekTo = (t) => {
     const a = audioRef.current;
     if (!a) return;
+    stopAt.current = null;
     a.currentTime = t;
+    a.play().catch(() => {});
+  };
+
+  // Play a short sample (a speaker's clip) and stop at its end.
+  const playRange = (start, end) => {
+    const a = audioRef.current;
+    if (!a) return;
+    stopAt.current = end;
+    a.currentTime = start;
     a.play().catch(() => {});
   };
 
@@ -204,7 +232,13 @@ export default function MeetingDetail() {
           src={meeting.audio.playbackUrl}
           controls
           className="w-full mb-6"
-          onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+          onTimeUpdate={(e) => {
+            setCurrentTime(e.target.currentTime);
+            if (stopAt.current !== null && e.target.currentTime >= stopAt.current) {
+              e.target.pause();
+              stopAt.current = null;
+            }
+          }}
         />
       )}
 
@@ -330,7 +364,28 @@ export default function MeetingDetail() {
         </div>
       )}
 
+      {summaryStale && meeting.summary && !processing && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap">
+          <span className="flex-1 min-w-48">
+            Names changed. The summary above was written with the earlier speaker labels until it is refreshed.
+          </span>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => { setSummaryStale(false); summariseAnyway(); }}>
+            <Sparkles className="w-4 h-4 mr-1" /> Refresh summary
+          </Button>
+        </div>
+      )}
+
       <ActionItems actionItems={meeting.actionItems} />
+
+      {speakers?.cards?.length > 0 && !processing && (
+        <SpeakerReview
+          meetingId={id}
+          source={speakers.source}
+          cards={speakers.cards}
+          onPlay={playRange}
+          onChanged={afterEdit}
+        />
+      )}
 
       {(hasTranscript || !processing) && (
         <div>
@@ -354,7 +409,25 @@ export default function MeetingDetail() {
               </div>
             </div>
           </div>
-          <TranscriptView lines={data?.lines} currentTime={currentTime} onSeek={seekTo} scriptMode={scriptMode} />
+          <TranscriptView
+            lines={data?.lines}
+            currentTime={currentTime}
+            onSeek={seekTo}
+            scriptMode={scriptMode}
+            speakers={speakers?.cards ?? []}
+            {...(speakers?.source === "pyannote" && !processing
+              ? {
+                  onReassign: async (i, toDiar) => {
+                    await api.meetings.reassignLine(id, i, toDiar);
+                    await afterEdit();
+                  },
+                  onSplit: async (i) => {
+                    await api.meetings.splitSpeaker(id, i);
+                    await afterEdit();
+                  },
+                }
+              : {})}
+          />
         </div>
       )}
 
