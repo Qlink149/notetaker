@@ -235,6 +235,8 @@ export function testDeps(over: Partial<Deps> & Pick<Deps, 'storage' | 'engine'>)
       detectSilences: ffmpeg.detectSilences,
       noiseFloorDb: ffmpeg.noiseFloorDb,
       cutFlac: ffmpeg.cutFlac,
+      decodePcm16k: ffmpeg.decodePcm16k,
+      encodeFlac16k: ffmpeg.encodeFlac16k,
     },
     now: () => new Date(),
     ...over,

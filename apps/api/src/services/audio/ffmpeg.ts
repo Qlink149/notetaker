@@ -200,3 +200,57 @@ export async function cutFlac(
     output,
   ]);
 }
+
+/** Decode any audio file to 16 kHz mono float samples (-1..1). */
+export async function decodePcm16k(input: string, workPath: string): Promise<Float32Array> {
+  await run(ffmpegPath(), [
+    '-y',
+    '-hide_banner',
+    '-i',
+    input,
+    '-vn',
+    '-ac',
+    '1',
+    '-ar',
+    '16000',
+    '-f',
+    's16le',
+    workPath,
+  ]);
+  const { readFile } = await import('node:fs/promises');
+  const buf = await readFile(workPath);
+  const n = Math.floor(buf.length / 2);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = buf.readInt16LE(i * 2) / 32768;
+  return out;
+}
+
+/** Write 16 kHz mono float samples as FLAC. */
+export async function encodeFlac16k(
+  samples: Float32Array,
+  workPath: string,
+  output: string,
+): Promise<void> {
+  const { writeFile } = await import('node:fs/promises');
+  const buf = Buffer.alloc(samples.length * 2);
+  for (let i = 0; i < samples.length; i++) {
+    const v = Math.max(-1, Math.min(1, samples[i]!));
+    buf.writeInt16LE(Math.round(v * 32767), i * 2);
+  }
+  await writeFile(workPath, buf);
+  await run(ffmpegPath(), [
+    '-y',
+    '-hide_banner',
+    '-f',
+    's16le',
+    '-ar',
+    '16000',
+    '-ac',
+    '1',
+    '-i',
+    workPath,
+    '-c:a',
+    'flac',
+    output,
+  ]);
+}

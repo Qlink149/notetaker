@@ -21,6 +21,8 @@ export interface AudioTools {
   detectSilences: typeof ffmpeg.detectSilences;
   noiseFloorDb: typeof ffmpeg.noiseFloorDb;
   cutFlac: typeof ffmpeg.cutFlac;
+  decodePcm16k: typeof ffmpeg.decodePcm16k;
+  encodeFlac16k: typeof ffmpeg.encodeFlac16k;
 }
 
 export interface GeminiFiles {
@@ -56,6 +58,8 @@ export function defaultDeps(): Deps {
       detectSilences: ffmpeg.detectSilences,
       noiseFloorDb: ffmpeg.noiseFloorDb,
       cutFlac: ffmpeg.cutFlac,
+      decodePcm16k: ffmpeg.decodePcm16k,
+      encodeFlac16k: ffmpeg.encodeFlac16k,
     },
     speakerSource: env().SPEAKER_SOURCE ?? (env().PYANNOTEAI_API_KEY ? 'pyannote' : 'text'),
     now: () => new Date(),

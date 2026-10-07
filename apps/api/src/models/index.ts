@@ -668,6 +668,8 @@ export const EngineResponseModel = mongoose.model<EngineResponseDoc>(
   'engineresponses',
 );
 
+import { LoudnessModel, ParticipantModel, SessionModel } from './session.js';
+
 export const allModels: Model<never>[] = [
   WorkspaceModel,
   GlossaryModel,
@@ -682,4 +684,7 @@ export const allModels: Model<never>[] = [
   SpendModel,
   HandoffModel,
   EngineResponseModel,
+  SessionModel,
+  ParticipantModel,
+  LoudnessModel,
 ] as unknown as Model<never>[];
