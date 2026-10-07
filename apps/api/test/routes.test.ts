@@ -342,6 +342,22 @@ describe('access code security', () => {
     expect(JSON.stringify(w)).not.toContain(ACCESS_CODE);
   });
 
+  it('rejects an expired session token and one signed with another secret', async () => {
+    const jwt = (await import('jsonwebtoken')).default;
+    const { env } = await import('../src/config/env.js');
+    const claims = { wid: String(workspace._id), v: workspace.tokenVersion };
+    const expired = jwt.sign(claims, env().JWT_SECRET, { expiresIn: -10 });
+    await request(app)
+      .get('/api/v1/meetings')
+      .set('Authorization', `Bearer ${expired}`)
+      .expect(401);
+    const forged = jwt.sign(claims, 'y'.repeat(40), { expiresIn: '1h' });
+    await request(app).get('/api/v1/meetings').set('Authorization', `Bearer ${forged}`).expect(401);
+    // a fresh, correctly signed token for the same claims is accepted
+    const fresh = jwt.sign(claims, env().JWT_SECRET, { expiresIn: '1h' });
+    await request(app).get('/api/v1/meetings').set('Authorization', `Bearer ${fresh}`).expect(200);
+  });
+
   it('locks an IP out after 10 failed logins', async () => {
     const ip = '203.0.113.7';
     for (let i = 0; i < 10; i++) {
