@@ -109,6 +109,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 7. **Gemini's text is unchanged**: names and Gujarati words can still be wrong, and 41–53 % of Gemini's words in 200 and 21/9 are not matched to a Deepgram word (their time and speaker come from neighbours).
 8. **Long group recordings use a lot of memory** (about 230 MB per phone per hour while mixing); fine for the demo, not for a long meeting on a small server.
 9. Pronouns and names in summaries come from a small model with no checking beyond the format.
+10. Left after an independent code review (DECISIONS #32 lists what was fixed): moving one line, or splitting a person from a line, acts on whole turns, so on a very long turn (over 45 s, shown as several lines) it moves more than the line you chose; two edits in two tabs at once can overwrite each other; deleting a group-recorded meeting leaves the phones' raw parts in storage.
 
 ## 8. Needs Yogansh
 

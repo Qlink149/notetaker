@@ -359,3 +359,19 @@ one global clock and no seams, and fits the "6 Deepgram jobs" budget (4 used).
 - **PDF stays print-to-PDF** (no browser engine on the server). **No deployment** (not pushed).
 - **Demo database safety:** scripts that modify data refuse any database whose name does not end in `_demo`. `demo` runs without Gemini keys unless `--live`.
 - **Reset restores the finished demo state** (a snapshot taken by `demo:snapshot`), not Phase 1's raw copy, because a raw copy would lose the speakers and summaries made tonight.
+
+## 32. Independent code review of the overnight work (8 Oct, 05:00)
+
+Two read-only review agents went through the public endpoints and edit safety, and through pipeline correctness (about 20 findings between them; nothing was run by them).
+Fixed, each with a regression test:
+- A guest could send absurd `startSample` / `firstSampleServerMs` values that size arrays in the worker and fail every phone's audio: both are now bounded (6 h of samples; the clock estimate must be within 10 minutes of Start), and the worker clamps the offset to ±1 h.
+- A guest-supplied part `url` was fetched by the worker: it must now be https, contain the part's `publicId`, and (when Cloudinary is configured) sit under the account's path.
+- `usePersonId` was unvalidated (a non-id made a meeting permanently return errors; another workspace's person id could be merged into): it must now be an id of a person in the same workspace, and `mergePeople` refuses cross-workspace merges.
+- Split ids could repeat after a merge; cards could be written back stale after a merge; deleting a person left cards pointing at nothing. All fixed.
+- `finish` could run twice (two meetings, two jobs): the session is claimed atomically first. Signatures and parts are refused after combining starts; a room is capped at 30 phones; every guest call is throttled per address and code; the join limit is 100 a minute because a room shares one address.
+- A network error in `diarize` was treated as "pyannote unavailable" and dropped the voices: only pyannote's own refusals fall back now; everything else retries first.
+- A stored pyannote result without usable output crashed assembly: now ignored. A text-linked rebuild no longer leaves a stale `phase1`. Diarization state is set before chunk jobs are queued. `identify` cannot fail the meeting through naming. The alignment reference is the phone that heard the most speech. A phone's start time can be derived from any of its parts, not only part 0. Control characters can no longer corrupt the Word export. A quadratic scan in the word-speaker fill is linear.
+
+Known and left (also in the handover): "Move this line" / "different person from here on" act on whole turns, so on a very long turn (> 45 s, shown as several lines) they move more than the chosen line;
+deleting a group-recorded meeting does not yet remove the phones' raw parts or session records; the insights page shows the global spend ledger and Gemini quota state (fine with one workspace);
+two edits made at the same moment in two tabs can overwrite each other; the mix holds every phone's timeline in memory.
