@@ -12,6 +12,8 @@ import {
   type SpeakerCardDoc,
   type WorkspaceDoc,
 } from '../src/models/index.js';
+import { LoudnessModel, ParticipantModel, SessionModel } from '../src/models/session.js';
+import { P2PyannoteResponseModel } from '../src/models/phase2.js';
 import { ACCESS_CODE, clearDb, fakeStorage, seedWorkspace, startDb, stopDb } from './helpers.js';
 
 let app: Express;
@@ -280,5 +282,76 @@ describe('merge, split and reassign', () => {
       audio: { originalUrl: 'x', originalPublicId: 'x' },
     });
     await auth(request(app).get(`/api/v1/meetings/${String(m._id)}/speakers`)).expect(404);
+  });
+});
+
+describe('closest phone hint (group recordings)', () => {
+  it('shows which phone was loudest for a voice, and only as a hint', async () => {
+    const id = await seedMeeting(
+      'Group',
+      [turn('S0', 0, 5, 'one'), turn('S1', 5, 10, 'two')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null)],
+    );
+    const segs = [
+      { speaker: 'S0', start: 0, end: 5 },
+      { speaker: 'S1', start: 5, end: 10 },
+    ];
+    await P2PyannoteResponseModel.create({
+      meetingId: id,
+      kind: 'diarize',
+      model: 'precision-2',
+      tag: 'pipeline',
+      jobId: 'j1',
+      status: 'succeeded',
+      submittedAt: new Date(),
+      output: { diarization: segs, exclusiveDiarization: segs },
+      keyLabel: 'PYANNOTEAI_API_KEY',
+    });
+    const session = await SessionModel.create({
+      workspaceId: workspace._id,
+      code: 'ABC234',
+      folder: 'f',
+      meetingId: id,
+      state: 'done',
+    });
+    const anil = await ParticipantModel.create({
+      sessionId: session._id,
+      name: 'Anil',
+      token: 't1',
+    });
+    const bina = await ParticipantModel.create({
+      sessionId: session._id,
+      name: 'Bina',
+      token: 't2',
+    });
+    // 40 hops of 250 ms: Anil's phone is loud for the first 5 s, Bina's for the next 5 s
+    const hops = (a: number, b: number) => Array.from({ length: 40 }, (_, i) => (i < 20 ? a : b));
+    await LoudnessModel.create({
+      sessionId: session._id,
+      participantId: anil._id,
+      hopSec: 0.25,
+      db: hops(-18, -40),
+    });
+    await LoudnessModel.create({
+      sessionId: session._id,
+      participantId: bina._id,
+      hopSec: 0.25,
+      db: hops(-40, -18),
+    });
+
+    const view = await speakers(id);
+    const byDiar = Object.fromEntries(
+      (
+        view.cards as unknown as {
+          diar: string;
+          phone: { name: string; attributed: number; total: number } | null;
+          displayName: string;
+        }[]
+      ).map((c) => [c.diar, c]),
+    );
+    expect(byDiar['S0']!.phone).toEqual({ name: 'Anil', attributed: 1, total: 1 });
+    expect(byDiar['S1']!.phone).toEqual({ name: 'Bina', attributed: 1, total: 1 });
+    // the hint does not name anyone
+    expect(byDiar['S0']!.displayName).toBe('Speaker A');
   });
 });

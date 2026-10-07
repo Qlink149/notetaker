@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
-import { similarNames } from '@meetingid/pipeline';
+import { attributeSegments, similarNames } from '@meetingid/pipeline';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import {
@@ -20,8 +20,15 @@ import {
   reassignLine,
   splitSpeaker,
 } from '../services/identity/edits.js';
-import { applyNames, displayName, peopleOf, shortTitle } from '../services/identity/identity.js';
+import {
+  applyNames,
+  displayName,
+  peopleOf,
+  pyannoteSegments,
+  shortTitle,
+} from '../services/identity/identity.js';
 import { PyannoteError } from '../services/pyannote/client.js';
+import { LoudnessModel, ParticipantModel, SessionModel } from '../models/session.js';
 import type { ApiDeps } from './deps.js';
 
 const NameBody = z.object({
@@ -79,6 +86,37 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
         ).lean()
       ).map((x) => [String(x._id), x.title]),
     );
+    // Third signal (group recordings): which phone was closest to this voice. Display only; it never
+    // changes a name or overrides a voiceprint match.
+    const phone = new Map<string, { name: string; attributed: number; total: number }>();
+    const session = await SessionModel.findOne({ meetingId: m._id }).lean();
+    if (session) {
+      const [loud, people2, pya] = await Promise.all([
+        LoudnessModel.find({ sessionId: session._id }).lean(),
+        ParticipantModel.find({ sessionId: session._id }, { name: 1 }).lean(),
+        pyannoteSegments(String(m._id)),
+      ]);
+      const nameOf = new Map(people2.map((p) => [String(p._id), p.name]));
+      if (loud.length && pya) {
+        for (const c of cards) {
+          const segs = pya.segments.filter((s) => s.speaker === c.diar);
+          const att = attributeSegments(
+            loud.map((l) => Float32Array.from(l.db)),
+            segs,
+          );
+          const counts = new Map<number, number>();
+          for (const a of att)
+            if (a.track !== null) counts.set(a.track, (counts.get(a.track) ?? 0) + 1);
+          const top = [...counts].sort((x, y) => y[1] - x[1])[0];
+          if (top)
+            phone.set(c.diar, {
+              name: nameOf.get(String(loud[top[0]]!.participantId)) ?? 'a phone',
+              attributed: top[1],
+              total: segs.length,
+            });
+        }
+      }
+    }
     const turnCount = new Map<string, number>();
     for (const t of data.turns) turnCount.set(t.speaker, (turnCount.get(t.speaker) ?? 0) + 1);
     res.set('Cache-Control', 'no-store').json({
@@ -95,6 +133,7 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
           voiceprints: person?.voiceprints.filter((v) => v.voiceprint).length ?? 0,
           speakerSec: c.speakerSec,
           turns: turnCount.get(c.diar) ?? 0,
+          phone: phone.get(c.diar) ?? null,
           status: c.status,
           match: c.match,
           candidate: c.candidate,

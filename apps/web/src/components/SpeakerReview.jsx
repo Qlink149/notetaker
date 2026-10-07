@@ -9,6 +9,7 @@ import {
   Link2,
   GitMerge,
   ScanFace,
+  Mic,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
@@ -125,6 +126,16 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
           <span>
             Closest known voice: {card.candidate.name} (score {card.candidate.score}), not confident
             enough to link.
+          </span>
+        </p>
+      )}
+      {card.phone && (
+        <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+          <Mic className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            Mostly closest to <b className="text-foreground">{card.phone.name}</b>'s phone (
+            {card.phone.attributed} of {card.phone.total} segments). A hint only; it never changes a
+            name.
           </span>
         </p>
       )}

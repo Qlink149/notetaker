@@ -94,6 +94,8 @@ export interface SpeakerCard {
   match: { personId: string; name: string; score: number; margin: number } | null;
   candidate: { name: string; score: number; status: string } | null;
   clips: { start: number; end: number; quality: number | null }[];
+  /** Group recordings: the phone closest to this voice, as a hint (never an identity). */
+  phone: { name: string; attributed: number; total: number } | null;
   appearsIn: { meetingId: string; title: string; label: string; displayName: string; score: number | null }[];
 }
 
