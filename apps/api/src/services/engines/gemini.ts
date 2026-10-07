@@ -9,6 +9,7 @@ import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
 import {
   geminiKeys,
   isDailyQuota,
+  canonicalKeyId,
   keyById,
   markExhausted,
   parseRetryDelayMs,
@@ -177,7 +178,10 @@ export class GeminiEngine implements TranscriptionEngine {
 
         // The file must live in the same project as the key.
         let file: { uri: string; mimeType: string };
-        if (input.audio.kind === 'gemini-file' && (input.audio.keyId ?? key.id) === key.id) {
+        if (
+          input.audio.kind === 'gemini-file' &&
+          (canonicalKeyId(input.audio.keyId) ?? key.id) === key.id
+        ) {
           file = input.audio;
         } else if (uploaded && uploaded.keyId === key.id) {
           file = { uri: uploaded.uri, mimeType: 'audio/flac' };

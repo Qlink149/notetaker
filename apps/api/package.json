@@ -27,7 +27,8 @@
     "p2:deepgram": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/deepgram.ts",
     "p2:join": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/join.ts",
     "p2:identity": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/identity.ts",
-    "p2:audit-seed": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/auditSeed.ts"
+    "p2:audit-seed": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/auditSeed.ts",
+    "p2:migrate-key-labels": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/migrateKeyLabels.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

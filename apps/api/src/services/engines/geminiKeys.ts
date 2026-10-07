@@ -10,19 +10,29 @@ import { QuotaModel } from '../../models/index.js';
  * MongoDB until Google's stated reset, so no process spends another request on it (DECISIONS #15).
  */
 export interface GeminiKey {
-  /** Stable, non-secret id: first 12 hex chars of sha256(key). */
+  /** Stable, non-secret id: the env variable name (e.g. GEMINI_API_KEY1). Never derived from the key. */
   id: string;
   /** The env variable it came from, for logs. */
   label: string;
+  /**
+   * Phase 1 stored the first 12 hex chars of sha256(key) as the id. Kept only to read old records;
+   * `npm run p2:migrate-key-labels` rewrites them to labels.
+   */
+  legacyId?: string | null;
   client: GoogleGenAI;
 }
+
+/** The Phase 1 id of a key. Used only to recognise old stored records, never written. */
+export const legacyKeyId = (value: string): string =>
+  createHash('sha256').update(value).digest('hex').slice(0, 12);
 
 let pool: GeminiKey[] | null = null;
 
 export function geminiKeys(): GeminiKey[] {
   pool ??= geminiKeyEntries().map(({ name, value }) => ({
-    id: createHash('sha256').update(value).digest('hex').slice(0, 12),
+    id: name,
     label: name,
+    legacyId: legacyKeyId(value),
     client: new GoogleGenAI({ apiKey: value }),
   }));
   return pool;
@@ -34,7 +44,12 @@ export function setGeminiKeysForTest(keys: GeminiKey[] | null): void {
 }
 
 export function keyById(id: string | null | undefined): GeminiKey | undefined {
-  return id ? geminiKeys().find((k) => k.id === id) : undefined;
+  return id ? geminiKeys().find((k) => k.id === id || k.legacyId === id) : undefined;
+}
+
+/** The current id for a stored one (a Phase 1 hash id becomes its label); unknown ids pass through. */
+export function canonicalKeyId(id: string | null | undefined): string | null {
+  return id ? (keyById(id)?.id ?? id) : null;
 }
 
 export async function exhaustedUntil(keyId: string, model: string): Promise<Date | null> {
@@ -65,7 +80,8 @@ export async function pickKey(
   preferId?: string | null,
 ): Promise<{ key: GeminiKey } | { key: null; resetAt: Date | null }> {
   const keys = geminiKeys();
-  const ordered = [...keys].sort((a, b) => Number(b.id === preferId) - Number(a.id === preferId));
+  const prefer = canonicalKeyId(preferId);
+  const ordered = [...keys].sort((a, b) => Number(b.id === prefer) - Number(a.id === prefer));
   let soonest: Date | null = null;
   for (const key of ordered) {
     const until = await exhaustedUntil(key.id, model);

@@ -2,7 +2,7 @@ import type { RawTurn } from '@meetingid/pipeline';
 import { env } from '../../config/env.js';
 import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
 import { uploadWith } from './gemini.js';
-import { pickKey } from './geminiKeys.js';
+import { canonicalKeyId, pickKey } from './geminiKeys.js';
 import {
   LANGUAGE_BCP47,
   type ChunkInput,
@@ -88,7 +88,10 @@ export class GeminiTranscribeEngine implements TranscriptionEngine {
     }
     const key = picked.key;
     let audio: { uri: string; mimeType: string };
-    if (input.audio.kind === 'gemini-file' && (input.audio.keyId ?? key.id) === key.id)
+    if (
+      input.audio.kind === 'gemini-file' &&
+      (canonicalKeyId(input.audio.keyId) ?? key.id) === key.id
+    )
       audio = input.audio;
     else if (input.audio.kind === 'path' || input.localPath) {
       const path = input.audio.kind === 'path' ? input.audio.path : await input.localPath!();
