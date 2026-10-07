@@ -100,7 +100,14 @@ export class Runner {
     const tmpDir = await mkdtemp(join(tmpdir(), `mid-${job.stage}-`));
     const ctx = { job, log, deps: this.deps, tmpDir };
     this.active.set(String(job._id), job);
-    const lease = setInterval(() => void renewLease(job._id, this.workerId), HEARTBEAT_MS);
+    // A failed renewal (e.g. a DNS blip to Atlas) must never reject unhandled: Node would exit.
+    const lease = setInterval(
+      () =>
+        void renewLease(job._id, this.workerId).catch((err: unknown) =>
+          log.warn({ err }, 'lease renewal failed'),
+        ),
+      HEARTBEAT_MS,
+    );
     const started = Date.now();
     try {
       log.info({ attempt: job.attempts }, 'job started');

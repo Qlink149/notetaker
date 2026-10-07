@@ -23,6 +23,10 @@ async function main(): Promise<void> {
     await disconnectMongo();
     process.exit(0);
   };
+  // Transient database/network errors must not take the worker down; jobs are resumable anyway.
+  process.on('unhandledRejection', (err) =>
+    logger.error({ err }, 'unhandled rejection (worker keeps running)'),
+  );
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
