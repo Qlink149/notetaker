@@ -227,6 +227,7 @@ export function testDeps(over: Partial<Deps> & Pick<Deps, 'storage' | 'engine'>)
       delete: async () => undefined,
     },
     resolver: new AnonymousResolver(),
+    speakerSource: 'text',
     audio: {
       probe: ffmpeg.probe,
       toAnalysisFlac: ffmpeg.toAnalysisFlac,

@@ -46,6 +46,13 @@ const EnvSchema = z.object({
    * stored in MongoDB and answered by an external agent via `npm run handoff`; no API spend).
    */
   SUMMARY_PROVIDER: z.enum(['anthropic', 'handoff']).default('anthropic'),
+  /**
+   * Where speaker labels come from. "pyannote" (default when PYANNOTEAI_API_KEY is set) diarizes the
+   * audio and joins it to the transcript; "text" keeps Phase 1's text-based linking between chunks.
+   */
+  SPEAKER_SOURCE: z.enum(['pyannote', 'text']).optional(),
+  /** "off" skips the gap-fill stage (it is the only stage that calls Gemini again after transcription). */
+  GAPFILL: z.enum(['on', 'off']).default('on'),
   /** Hard cap in USD on recorded Gemini (if paid) + Claude spend across all meetings and benchmarks. */
   SPEND_CAP_USD: z.coerce.number().positive().default(5),
   GEMINI_TRANSCRIBE_MODEL: z.string().default('gemini-3.5-transcribe'),

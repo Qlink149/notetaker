@@ -14,6 +14,7 @@ import { FatalError, RetryableError } from '../errors.js';
 import { addCost, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
 import { saveEngineResponse } from '../responses.js';
+import { loadJoinInput } from '../../services/identity/joinInput.js';
 import { rebuildTranscript } from '../transcript.js';
 import { rawOf } from '../../services/engines/types.js';
 
@@ -136,10 +137,16 @@ export const gapfillStage: StageHandler = {
 
     const fresh = await MeetingDataModel.findOne({ meetingId: meeting._id }).lean();
     const before = meeting.coverage?.ratio ?? null;
+    const join =
+      deps.speakerSource === 'pyannote' ? await loadJoinInput(String(meeting._id)) : null;
     const built =
-      gaps.length && fresh ? await rebuildTranscript(meeting, fresh, deps.resolver) : null;
+      gaps.length && fresh ? await rebuildTranscript(meeting, fresh, deps.resolver, join) : null;
     await MeetingModel.updateOne({ _id: meeting._id }, { $set: { stage: 'summarise' } });
-    await enqueue({ meetingId: meeting._id, stage: 'summarise' });
+    // pyannote meetings name their voices before the summary is written
+    await enqueue({
+      meetingId: meeting._id,
+      stage: deps.speakerSource === 'pyannote' ? 'identify' : 'summarise',
+    });
     log.info(
       {
         calls: gaps.length,

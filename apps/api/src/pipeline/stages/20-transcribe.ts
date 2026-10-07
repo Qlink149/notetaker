@@ -36,6 +36,9 @@ async function loadChunk(meetingId: Types.ObjectId, index: number) {
 export async function maybeAdvanceToAssemble(meetingId: Types.ObjectId): Promise<boolean> {
   const live = (await loadChunkStatuses(meetingId)).filter((c) => c.status !== 'superseded');
   if (!live.length || live.some((c) => c.status === 'pending')) return false;
+  // Speakers: assembly also waits for pyannote (or its fallback); a missing state means text-only.
+  const speakers = await MeetingDataModel.findOne({ meetingId }, { diarize: 1 }).lean();
+  if (speakers?.diarize?.state === 'pending') return false;
   const won = await MeetingModel.findOneAndUpdate(
     { _id: meetingId, stage: 'transcribe' },
     { $set: { stage: 'assemble' } },

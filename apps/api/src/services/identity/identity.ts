@@ -50,16 +50,42 @@ export async function pyannoteSegments(
   meetingId: string,
   model = 'precision-2',
 ): Promise<{ segments: DiarSegment[]; all: DiarSegment[] } | null> {
-  const doc = await P2PyannoteResponseModel.findOne({
+  // The pipeline's own run is preferred over the Stage A experiment run.
+  const docs = await P2PyannoteResponseModel.find({
     meetingId,
     kind: 'diarize',
     model,
-    tag: 'stageA',
+    tag: { $in: ['pipeline', 'stageA'] },
     status: 'succeeded',
   }).lean();
+  const doc = docs.find((d) => d.tag === 'pipeline') ?? docs[0];
   if (!doc) return null;
   const out = doc.output as DiarizationOutput;
   return { segments: out.exclusiveDiarization ?? out.diarization, all: out.diarization };
+}
+
+/**
+ * One card per pyannote speaker, labelled "Speaker A…" by speaking time. Existing cards are kept
+ * (they hold people and edits); otherwise skeleton cards are created and saved.
+ */
+export async function ensureCards(meetingId: string): Promise<SpeakerCardDoc[]> {
+  const data = await MeetingDataModel.findOne({ meetingId }, { speakerCards: 1 }).lean();
+  if ((data?.speakerCards ?? []).length > 0) return data!.speakerCards as SpeakerCardDoc[];
+  const pya = await pyannoteSegments(meetingId);
+  if (!pya) return [];
+  const labels = labelSpeakersByTime(pya.segments);
+  const cards: SpeakerCardDoc[] = [...speakerSeconds(pya.segments)].map(([diar, sec]) => ({
+    diar,
+    label: labels[diar] ?? diar,
+    personId: null,
+    speakerSec: Math.round(sec * 10) / 10,
+    match: null,
+    candidate: null,
+    status: 'new' as const,
+    clips: [],
+  }));
+  await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
+  return cards;
 }
 
 export interface InstallResult {
@@ -86,21 +112,7 @@ export async function installJoin(meetingId: string): Promise<InstallResult> {
   if (join.stats['coverageOk'] === false)
     return { installed: false, reason: 'join coverage is below Phase 1; Phase 1 lines kept' };
 
-  const labels = labelSpeakersByTime(pya.segments);
-  const seconds = speakerSeconds(pya.segments);
-  const cards: SpeakerCardDoc[] =
-    (data.speakerCards ?? []).length > 0
-      ? (data.speakerCards as SpeakerCardDoc[])
-      : [...seconds].map(([diar, sec]) => ({
-          diar,
-          label: labels[diar] ?? diar,
-          personId: null,
-          speakerSec: Math.round(sec * 10) / 10,
-          match: null,
-          candidate: null,
-          status: 'new' as const,
-          clips: [],
-        }));
+  const cards = await ensureCards(meetingId);
 
   const turns = join.turns as Turn[];
   const phase1 = data.phase1 ?? {

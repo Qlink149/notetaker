@@ -4,8 +4,10 @@ import { z } from 'zod';
 export const JobStage = z.enum([
   'ingest',
   'transcribe',
+  'diarize',
   'assemble',
   'gapfill',
+  'identify',
   'summarise',
   'finalise',
   'benchmark',
@@ -36,8 +38,10 @@ export type Job = z.infer<typeof Job>;
 export const STAGE_LEASE_MS: Record<JobStage, number> = {
   ingest: 5 * 60_000,
   transcribe: 8 * 60_000,
+  diarize: 10 * 60_000,
   assemble: 2 * 60_000,
   gapfill: 10 * 60_000,
+  identify: 10 * 60_000,
   summarise: 5 * 60_000,
   finalise: 2 * 60_000,
   benchmark: 20 * 60_000,

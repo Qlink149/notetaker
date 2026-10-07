@@ -245,6 +245,12 @@ export interface MeetingDataDoc {
   speakerCards: SpeakerCardDoc[];
   /** Where the speaker labels came from; "text-fallback" is Phase 1's text linker (no pyannote). */
   speakerSource: 'pyannote' | 'text-fallback';
+  /** State of the pyannote diarization running beside transcription. Missing means "off". */
+  diarize: {
+    state: 'pending' | 'done' | 'fallback' | 'off';
+    jobId: string | null;
+    reason: string | null;
+  } | null;
   /** Phase 1's turns, lines and speaker map before the pyannote join replaced them. */
   phase1: { turns: Turn[]; lines: Line[]; speakerMap: Record<string, string> } | null;
 }
@@ -312,6 +318,7 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
     speakerMap: { type: Schema.Types.Mixed, default: {} },
     speakerCards: { type: Schema.Types.Mixed, default: [] },
     speakerSource: { type: String, enum: ['pyannote', 'text-fallback'], default: 'text-fallback' },
+    diarize: { type: Schema.Types.Mixed, default: null },
     phase1: { type: Schema.Types.Mixed, default: null },
     gapFills: {
       type: [

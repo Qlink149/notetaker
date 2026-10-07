@@ -5,6 +5,7 @@ import type { StageContext, StageHandler } from '../context.js';
 import { FatalError } from '../errors.js';
 import { loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
+import { startDiarization } from './22-diarize.js';
 
 export const CHUNK_SEC = 600;
 export const OVERLAP_SEC = 30;
@@ -70,7 +71,19 @@ export const ingestStage: StageHandler = {
 
     await MeetingDataModel.updateOne(
       { meetingId: meeting._id },
-      { $set: { chunks, speechSegments, turns: [], lines: [], speakerMap: {} } },
+      {
+        $set: {
+          chunks,
+          speechSegments,
+          turns: [],
+          lines: [],
+          speakerMap: {},
+          speakerCards: [],
+          speakerSource: 'text-fallback',
+          diarize: null,
+          phase1: null,
+        },
+      },
       { upsert: true },
     );
     await MeetingModel.updateOne(
@@ -90,6 +103,7 @@ export const ingestStage: StageHandler = {
     );
     for (const c of chunks)
       await enqueue({ meetingId: meeting._id, stage: 'transcribe', step: c.index });
+    await startDiarization(meeting, deps.speakerSource);
     log.info(
       {
         chunks: chunks.length,

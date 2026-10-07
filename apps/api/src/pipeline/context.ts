@@ -36,6 +36,8 @@ export interface Deps {
   geminiFiles: GeminiFiles;
   resolver: SpeakerResolver;
   audio: AudioTools;
+  /** "pyannote": diarize and join; "text": Phase 1's text linker only. */
+  speakerSource: 'pyannote' | 'text';
   now: () => Date;
 }
 
@@ -55,6 +57,7 @@ export function defaultDeps(): Deps {
       noiseFloorDb: ffmpeg.noiseFloorDb,
       cutFlac: ffmpeg.cutFlac,
     },
+    speakerSource: env().SPEAKER_SOURCE ?? (env().PYANNOTEAI_API_KEY ? 'pyannote' : 'text'),
     now: () => new Date(),
   };
 }
