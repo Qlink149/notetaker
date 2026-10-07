@@ -70,3 +70,17 @@ calls whose output was rejected and retried.
 
 Settings → Access code, or re-run `npm run seed -w @meetingid/api` with a new
 `WORKSPACE_ACCESS_CODE`. Either signs out every device.
+
+## Stale local workers (Windows dev machines)
+
+Stopping the shell that ran `npx tsx src/worker.ts` does not always stop the `node` child. A stale
+worker keeps claiming jobs with the code and environment it started with (seen 2026-10-07: an old
+worker took a transcribe job with a retired key and failed it). Before a live run, list and kill
+leftover workers:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -match 'worker\.ts' } | Select ProcessId, CreationDate
+Stop-Process -Id <pid> -Force
+```
+
+The worker heartbeat (`db.workerheartbeats.find()`) also shows every worker id that is alive.
