@@ -269,3 +269,13 @@ Nothing below is taken from the Base44 code.
   built locally with the same `toAnalysisFlac` used for Gemini and uploaded through the media endpoint as
   `media://p2-<meetingId>.flac`. Enrolment clips are cut with `cutFlac` from the same FLAC, so meetings
   and voiceprints see an identical transform.
+
+## 27. Overnight demo build: standing decisions (8 Oct)
+
+- **Repo not pushed.** The owner said not to push (a push from this machine is not possible). Everything is
+  committed locally on `phase-2-speaker-identity`; the deploy block is skipped and the local demo is prepared instead.
+- **Summaries.** `ANTHROPIC_API_KEY` is removed from the worktree `.env`; `SUMMARY_PROVIDER=handoff` (the
+  repo's name for the subagent provider). Summaries come only from the handoff flow.
+- **Demo database `meetingid_demo`.** Copied from `meetingid` by `npm run demo:copy` (upsert by `_id`, source read-only).
+  `jobs` and `workerheartbeats` are never copied, because queued Phase 1 jobs would spend Gemini quota in a demo worker.
+  The brief's collection `meetingdatas` is `meetingdata` in this codebase.

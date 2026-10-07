@@ -22,7 +22,8 @@
     "reassemble": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/reassemble.ts",
     "requeue": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/requeue.ts",
     "p2:diarize": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/diarize.ts",
-    "p2:stats": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/stats.ts"
+    "p2:stats": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/stats.ts",
+    "demo:copy": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/copyDb.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
