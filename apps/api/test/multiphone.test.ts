@@ -5,7 +5,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
-import { MeetingDataModel, MeetingModel, type WorkspaceDoc } from '../src/models/index.js';
+import { MeetingDataModel, MeetingModel } from '../src/models/index.js';
 import { LoudnessModel, SessionModel } from '../src/models/session.js';
 import { Runner } from '../src/pipeline/runner.js';
 import { stages } from '../src/pipeline/stages/index.js';
@@ -25,7 +25,6 @@ import {
 
 const SR = 16000;
 let app: Express;
-let workspace: WorkspaceDoc;
 let token: string;
 let dir: string;
 let storage: Awaited<ReturnType<typeof fakeStorage>>;
@@ -57,7 +56,7 @@ afterAll(stopDb);
 beforeEach(async () => {
   await clearDb();
   cloud.clear();
-  workspace = await seedWorkspace();
+  await seedWorkspace();
   const res = await request(app).post('/api/v1/auth/login').send({ code: ACCESS_CODE });
   token = res.body.token as string;
 });
