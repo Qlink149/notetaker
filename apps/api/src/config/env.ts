@@ -41,6 +41,11 @@ const EnvSchema = z.object({
   ),
   /** Set to "true" when the Gemini keys are on a paid tier; free-tier usage costs nothing and is not counted against the cap. */
   GEMINI_PAID: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
+  /**
+   * Who writes summaries: 'anthropic' (production, Messages API) or 'handoff' (testing: the request is
+   * stored in MongoDB and answered by an external agent via `npm run handoff`; no API spend).
+   */
+  SUMMARY_PROVIDER: z.enum(['anthropic', 'handoff']).default('anthropic'),
   /** Hard cap in USD on recorded Gemini (if paid) + Claude spend across all meetings and benchmarks. */
   SPEND_CAP_USD: z.coerce.number().positive().default(5),
   GEMINI_TRANSCRIBE_MODEL: z.string().default('gemini-3.5-transcribe'),

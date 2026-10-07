@@ -14,7 +14,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",
     "test": "vitest run",
-    "probe": "tsx --conditions=source src/scripts/probe-files.ts"
+    "probe": "tsx --conditions=source src/scripts/probe-files.ts",
+    "handoff": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/handoff.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",

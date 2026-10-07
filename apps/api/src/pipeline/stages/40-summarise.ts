@@ -44,6 +44,7 @@ export const summariseStage: StageHandler = {
       languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
       includeNative: workspace.settings.scriptPreference === 'native',
       model: workspace.settings.summaryModel,
+      meetingId: String(meeting._id),
     });
     const usd = usdFor('claude', workspace.settings.summaryModel, usage);
     await recordSpend('claude', usd);

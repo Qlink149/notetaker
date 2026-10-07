@@ -40,6 +40,8 @@ export interface SummaryInput {
   languages: Language[];
   includeNative: boolean;
   model: string;
+  /** Used by the handoff summariser to key its request. */
+  meetingId?: string;
 }
 
 export interface Summariser {

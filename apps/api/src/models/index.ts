@@ -475,6 +475,41 @@ const spendSchema = new Schema<SpendDoc>({
 });
 export const SpendModel = mongoose.model<SpendDoc>('Spend', spendSchema, 'spend');
 
+// ---------- Summary handoff (testing: an external agent answers instead of the API) ----------
+export interface HandoffDoc {
+  /** `<meetingId>:<hash of the prompt>` */
+  _id: string;
+  meetingId: Types.ObjectId;
+  model: string;
+  system: string;
+  user: string;
+  status: 'pending' | 'answered';
+  response: string | null;
+  /** Replies that failed validation (each one re-opens the request). */
+  rejections: number;
+  lastError: string | null;
+  createdAt: Date;
+  answeredAt: Date | null;
+}
+const handoffSchema = new Schema<HandoffDoc>({
+  _id: { type: String },
+  meetingId: { type: Schema.Types.ObjectId, required: true },
+  model: String,
+  system: String,
+  user: String,
+  status: { type: String, enum: ['pending', 'answered'], default: 'pending' },
+  response: { type: String, default: null },
+  rejections: { type: Number, default: 0 },
+  lastError: { type: String, default: null },
+  createdAt: { type: Date, default: () => new Date() },
+  answeredAt: { type: Date, default: null },
+});
+export const HandoffModel = mongoose.model<HandoffDoc>(
+  'SummaryHandoff',
+  handoffSchema,
+  'summaryhandoffs',
+);
+
 export const allModels: Model<never>[] = [
   WorkspaceModel,
   GlossaryModel,
@@ -487,4 +522,5 @@ export const allModels: Model<never>[] = [
   EvalRunModel,
   QuotaModel,
   SpendModel,
+  HandoffModel,
 ] as unknown as Model<never>[];

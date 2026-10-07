@@ -10,7 +10,9 @@ import {
   type UploadedFile,
 } from '../services/engines/gemini.js';
 import { cloudinaryStorage, type StorageService } from '../services/storage/cloudinary.js';
+import { env } from '../config/env.js';
 import { ClaudeSummariser, type Summariser } from '../services/summary/claude.js';
+import { HandoffSummariser } from '../services/summary/handoff.js';
 
 export interface AudioTools {
   probe: typeof ffmpeg.probe;
@@ -41,7 +43,8 @@ export function defaultDeps(): Deps {
   return {
     storage: cloudinaryStorage,
     engine: createEngine,
-    summariser: new ClaudeSummariser(),
+    summariser:
+      env().SUMMARY_PROVIDER === 'handoff' ? new HandoffSummariser() : new ClaudeSummariser(),
     geminiFiles: { upload: uploadToGeminiFiles, delete: deleteGeminiFile },
     resolver: new AnonymousResolver(),
     audio: {

@@ -109,7 +109,9 @@ export class Runner {
       log.info({ ms: Date.now() - started }, 'job done');
     } catch (raw) {
       const err = classify(raw);
-      const quota = err instanceof RetryableError && err.reason === 'quota';
+      // Waiting on a quota reset or an external answer is not a failed attempt.
+      const quota =
+        err instanceof RetryableError && (err.reason === 'quota' || err.reason === 'waiting');
       const giveUp = err instanceof FatalError || (!quota && job.attempts >= job.maxAttempts);
       log.warn({ err: err.message, attempt: job.attempts, giveUp }, 'job failed');
       if (giveUp) {

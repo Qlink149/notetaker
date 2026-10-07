@@ -113,3 +113,13 @@ collection. It counts Claude, and Gemini only when `GEMINI_PAID=true` (free-tier
 Deepgram is not capped (owner's decision, 2026-10-07). A blocked call fails the job with a clear
 "Spending cap reached" message. Each meeting also records `cost.usd` at published paid-tier prices
 for reporting.
+
+### 17. Summary handoff for testing (no API spend)
+`SUMMARY_PROVIDER=handoff` stores the exact summary prompt (same system prompt, glossary and
+`[mm:ss] Speaker N: text` transcript as the API path) in `summaryhandoffs` and waits without using
+job attempts. During Phase 1 acceptance an isolated Claude Haiku 4.5 subagent answered each request
+from the prompt alone, and the reply went through the same strict `parseSummary` validation
+(2 invalid replies → `summaryStatus: failed`). Owner's request, 2026-10-07: save API tokens while
+testing. Production keeps `SUMMARY_PROVIDER=anthropic` because the Render worker cannot call a
+subagent. Differences from the API path: no JSON-schema constraint (validation only), and the whole
+transcript is sent in one request instead of being split at 60k characters.

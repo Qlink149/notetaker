@@ -11,6 +11,7 @@ export class RetryableError extends Error {
       | 'invalid_output'
       | 'timeout'
       | 'quota'
+      | 'waiting'
       | 'other' = 'other',
     options?: { cause?: unknown; retryAfterMs?: number },
   ) {
