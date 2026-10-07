@@ -135,7 +135,13 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
           turns: turnCount.get(c.diar) ?? 0,
           phone: phone.get(c.diar) ?? null,
           status: c.status,
-          match: c.match,
+          // the matched person's current name, not the placeholder they had when matched
+          match: c.match
+            ? {
+                ...c.match,
+                name: (c.match.personId === c.personId ? person?.name : undefined) ?? c.match.name,
+              }
+            : null,
           candidate: c.candidate,
           clips: c.clips,
           appearsIn: others.flatMap((o) =>

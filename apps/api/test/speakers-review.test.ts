@@ -143,6 +143,12 @@ describe('naming a voice', () => {
     const ghan = view.cards.find((c) => c.diar === 'S1')!;
     expect(ghan.displayName).toBe('Ghanshyam Dholakia');
     expect(ghan.appearsIn[0]).toMatchObject({ title: 'AOM', label: 'Speaker C' });
+    // the other meeting's card says who it matched by the person's new name
+    const aomView = (await auth(request(app).get(`/api/v1/meetings/${b}/speakers`)).expect(200))
+      .body as {
+      cards: { diar: string; match: { name: string } | null }[];
+    };
+    expect(aomView.cards.find((c) => c.diar === 'S5')!.match!.name).toBe('Ghanshyam Dholakia');
   });
 
   it('asks before creating a near-duplicate name, and can link to the existing person', async () => {
