@@ -69,7 +69,11 @@ export function auditRouter(): Router {
   }
 
   r.get('/audit', async (req, res) => {
-    const ids = await P2JoinModel.distinct('meetingId', { method: 'm1' });
+    // only meetings that have lines to judge (a recording still waiting for its transcript is left out)
+    const ids = await P2JoinModel.distinct('meetingId', {
+      method: 'm1',
+      'lines.0': { $exists: true },
+    });
     const meetings = await MeetingModel.find({
       _id: { $in: ids },
       workspaceId: ws(req)._id,
