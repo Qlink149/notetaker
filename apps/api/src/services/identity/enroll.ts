@@ -168,11 +168,14 @@ export async function identifyMeeting(
     thresholds = DEFAULT_THRESHOLDS,
     log = () => undefined,
     submitNew = false,
+    previewOnly = false,
   }: {
     thresholds?: { minScore: number; minMargin: number };
     log?: Log;
     /** Allow submitting a new full-meeting identify job; without it only stored results are used. */
     submitNew?: boolean;
+    /** Compute who each voice is without creating people, voiceprints or cards. */
+    previewOnly?: boolean;
   } = {},
 ): Promise<IdentityReport> {
   const meeting = await MeetingModel.findById(meetingId).lean();
@@ -293,6 +296,20 @@ export async function identifyMeeting(
       warnings.push('pyannote credits exhausted: voiceprints not created (rerun when topped up)');
     }
   };
+
+  if (previewOnly) {
+    return {
+      meetingId,
+      title: meeting.title,
+      jobId,
+      voiceprintsSent: refs.length,
+      cards: [],
+      resolutions,
+      newPeople: [],
+      linked: [],
+      warnings,
+    };
+  }
 
   // 3. cards, new people, voiceprints
   const cards: SpeakerCardDoc[] = [];

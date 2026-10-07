@@ -9,6 +9,7 @@ import { logger } from './lib/logger.js';
 import { HeartbeatModel } from './models/index.js';
 import { benchmarkRouter } from './routes/benchmark.js';
 import type { ApiDeps } from './routes/deps.js';
+import { meetingSpeakersRouter } from './routes/meetingSpeakers.js';
 import { meetingsRouter } from './routes/meetings.js';
 import { speakersRouter } from './routes/speakers.js';
 import { authRouter, workspaceRouter } from './routes/workspace.js';
@@ -56,6 +57,7 @@ export function createApp(deps: ApiDeps): Express {
   const authed = Router();
   authed.use(requireAuth);
   authed.use(meetingsRouter(deps));
+  authed.use(meetingSpeakersRouter(deps));
   authed.use(speakersRouter(deps));
   authed.use(benchmarkRouter());
   v1.use(authed);

@@ -30,6 +30,8 @@ const speakerView = (s: SpeakerDoc) => ({
   id: String(s._id),
   name: s.name,
   hasVoiceprint: s.voiceprints.length > 0,
+  voiceprintCount: s.voiceprints.length,
+  anonymous: s.anonymous ?? false,
   enrollmentAudioUrl: s.voiceprints.at(-1)?.audioUrl ?? null,
   createdAt: s.createdAt,
 });
