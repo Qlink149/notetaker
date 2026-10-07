@@ -101,9 +101,10 @@ export const ingestStage: StageHandler = {
         },
       },
     );
+    // diarization state first, so a fast chunk cannot finish and assemble without waiting for it
+    await startDiarization(meeting, deps.speakerSource);
     for (const c of chunks)
       await enqueue({ meetingId: meeting._id, stage: 'transcribe', step: c.index });
-    await startDiarization(meeting, deps.speakerSource);
     log.info(
       {
         chunks: chunks.length,

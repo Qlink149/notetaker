@@ -124,6 +124,35 @@ describe('Word export', () => {
     expect(doc).not.toContain('શરૂ કરીએ');
   });
 
+  it('still produces a valid file when the text holds control characters', async () => {
+    const m = await MeetingModel.create({
+      workspaceId: workspace._id,
+      title: 'Odd\u0001title',
+      audio: { originalUrl: 'x', originalPublicId: 'x' },
+    });
+    await MeetingDataModel.create({
+      meetingId: m._id,
+      lines: [
+        {
+          speakerName: 'Speaker\u0000 A',
+          start: 1,
+          end: 2,
+          textRoman: 'hello\u0008 \u000bworld',
+          textNative: 'hello',
+        },
+      ],
+    });
+    const res = await get(`/api/v1/meetings/${String(m._id)}/export`).expect(200);
+    const doc = await (
+      await JSZip.loadAsync(res.body as Buffer)
+    )
+      .file('word/document.xml')!
+      .async('string');
+    // eslint-disable-next-line no-control-regex -- asserting that control characters are gone
+    expect(doc).not.toMatch(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/);
+    expect(doc).toContain('hello');
+  });
+
   it('refuses a meeting with no transcript yet, another workspace’s meeting, and a bad script', async () => {
     const empty = await MeetingModel.create({
       workspaceId: workspace._id,

@@ -208,6 +208,87 @@ describe('naming a voice', () => {
   });
 });
 
+describe('safety of naming and splitting', () => {
+  it('rejects a person that is not an id, not in this workspace, or does not exist', async () => {
+    const other = await SpeakerModel.create({
+      workspaceId: new Types.ObjectId(),
+      name: 'Somebody Else',
+      anonymous: false,
+    });
+    const mine = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker A (Meeting M)',
+      anonymous: true,
+    });
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'x')],
+      [card('S0', 'Speaker A', String(mine._id))],
+    );
+    const name = (usePersonId: string) =>
+      auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`)).send({
+        name: 'Rajesh',
+        usePersonId,
+      });
+    await name('abc').expect(400);
+    await name(String(new Types.ObjectId())).expect(400);
+    await name(String(other._id)).expect(400);
+    // nothing was changed or merged away
+    expect(await SpeakerModel.exists({ _id: mine._id })).toBeTruthy();
+    expect(await SpeakerModel.exists({ _id: other._id })).toBeTruthy();
+    await auth(request(app).get(`/api/v1/meetings/${id}/speakers`)).expect(200);
+  });
+
+  it('keeps split speakers distinct even after a merge frees a number', async () => {
+    const turns = [
+      turn('S0', 0, 4, 'a'),
+      turn('S1', 4, 8, 'b'),
+      turn('S2', 8, 12, 'c'),
+      turn('S0', 20, 24, 'd'),
+      turn('S0', 40, 44, 'e'),
+    ];
+    const id = await seedMeeting('M', turns, [
+      card('S0', 'Speaker A', null),
+      card('S1', 'Speaker B', null),
+      card('S2', 'Speaker C', null),
+    ]);
+    const lineAt = async (start: number) =>
+      (await MeetingDataModel.findOne({ meetingId: id }).lean())!.lines.findIndex(
+        (l) => l.start >= start,
+      );
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/split`))
+      .send({ lineIndex: await lineAt(40) })
+      .expect(200);
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/merge`))
+      .send({ from: 'S2', into: 'S1' })
+      .expect(200);
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/split`))
+      .send({ lineIndex: await lineAt(20) })
+      .expect(200);
+    const diars = (await speakers(id)).cards.map((c) => c.diar);
+    expect(new Set(diars).size).toBe(diars.length);
+  });
+
+  it('a deleted person leaves no card pointing at nothing, and the voice can be named again', async () => {
+    const p = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker A (Meeting M)',
+      anonymous: true,
+    });
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'x')],
+      [card('S0', 'Speaker A', String(p._id))],
+    );
+    await auth(request(app).delete(`/api/v1/speakers/${String(p._id)}`)).expect(204);
+    expect((await speakers(id)).cards[0]!.personId).toBeNull();
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Rajesh Patel' })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Rajesh Patel']);
+  });
+});
+
 describe('merge, split and reassign', () => {
   const turns = [
     turn('S0', 0, 4, 'a'),

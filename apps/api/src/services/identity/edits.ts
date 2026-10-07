@@ -71,6 +71,8 @@ export async function mergePeople(keepId: string, dropId: string): Promise<strin
     SpeakerModel.findById(dropId).lean<SpeakerDoc>(),
   ]);
   if (!keep || !drop) throw new EditError('Person not found.');
+  if (String(keep.workspaceId) !== String(drop.workspaceId))
+    throw new EditError('Those people belong to different workspaces.');
   await SpeakerModel.updateOne(
     { _id: keepId },
     {
@@ -133,7 +135,11 @@ export async function splitSpeaker(
   const diar = first.speaker;
   const card = cards.find((c) => c.diar === diar);
   if (!card) throw new EditError('Speaker not found.');
-  const id = `${diar.replace(/~\d+$/, '')}~${cards.length + 1}`;
+  const base = diar.replace(/~\d+$/, '');
+  const used = cards
+    .map((c) => (c.diar.startsWith(`${base}~`) ? Number(c.diar.slice(base.length + 1)) : 0))
+    .filter(Number.isFinite);
+  const id = `${base}~${Math.max(0, ...used) + 1}`; // never reuses a suffix, even after merges
   const label = nextLabel(cards);
   let moved = 0;
   for (const t of turns) {
@@ -191,12 +197,21 @@ export async function nameSpeaker(
   name: string,
   usePersonId?: string,
 ): Promise<{ personId: string; changed: string[]; meetings: string[] }> {
-  const { cards } = await load(meetingId);
-  const card = cards.find((c) => c.diar === diar);
+  const loaded = await load(meetingId);
+  let cards = loaded.cards;
+  let card = cards.find((c) => c.diar === diar);
   if (!card) throw new EditError('Speaker not found.');
   let personId = card.personId;
+  // a card may point at a person who was deleted since (Speakers page): treat it as having none
+  if (personId && !(await SpeakerModel.exists({ _id: personId, workspaceId }))) personId = null;
   if (usePersonId) {
+    if (!Types.ObjectId.isValid(usePersonId)) throw new EditError('Unknown person.');
+    const target = await SpeakerModel.findOne({ _id: usePersonId, workspaceId }).lean();
+    if (!target) throw new EditError('Unknown person.');
     if (personId && personId !== usePersonId) await mergePeople(usePersonId, personId);
+    // merging rewrote cards in the database: read them again before saving this one
+    cards = (await load(meetingId)).cards;
+    card = cards.find((c) => c.diar === diar)!;
     personId = usePersonId;
     card.personId = personId;
     card.status = 'solid';

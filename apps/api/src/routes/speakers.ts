@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
-import { SpeakerModel, type SpeakerDoc } from '../models/index.js';
+import { MeetingDataModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
 import type { ApiDeps } from './deps.js';
 
 // Ported from legacy/base44/functions/enrollSpeaker. Phase 1 keeps the Speakers page working;
@@ -114,8 +114,15 @@ export function speakersRouter(deps: ApiDeps): Router {
   });
 
   r.delete('/speakers/:id', async (req, res) => {
-    const result = await SpeakerModel.deleteOne({ _id: idParam(req), workspaceId: ws(req)._id });
+    const id = idParam(req);
+    const result = await SpeakerModel.deleteOne({ _id: id, workspaceId: ws(req)._id });
     if (!result.deletedCount) throw notFound('speaker_not_found');
+    // no meeting card may keep pointing at a person who no longer exists
+    await MeetingDataModel.updateMany(
+      { 'speakerCards.personId': String(id) },
+      { $set: { 'speakerCards.$[c].personId': null, 'speakerCards.$[c].match': null } },
+      { arrayFilters: [{ 'c.personId': String(id) }] },
+    );
     res.status(204).end();
   });
 

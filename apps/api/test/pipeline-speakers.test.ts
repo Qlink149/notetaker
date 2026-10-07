@@ -306,6 +306,23 @@ describe('speakers in the pipeline (pyannote mocked)', () => {
     });
   });
 
+  it('retries after a network error instead of giving up on voices', async () => {
+    let calls = 0;
+    pya.submit = async () => {
+      calls++;
+      if (calls === 1) throw new TypeError('fetch failed');
+      return 'job-after-blip';
+    };
+    pya.getJob = () => succeeded();
+    const r = await runner();
+    const id = await createMeeting();
+    await drainAll(r);
+    expect((await MeetingDataModel.findOne({ meetingId: id }).lean())?.diarize).toMatchObject({
+      state: 'done',
+      jobId: 'job-after-blip',
+    });
+  });
+
   it('leaves the text-only pipeline untouched when speakers are not requested', async () => {
     const r = new Runner(
       testDeps({

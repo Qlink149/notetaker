@@ -87,12 +87,10 @@ export const multitrackStage: StageHandler = {
     const total = Math.max(...tracks.map((t) => t.length));
 
     // 2. fine alignment against the loudest phone: envelope correlation per 5 minutes, then a drift line
-    const energy = tracks.map((t) => {
-      let s = 0;
-      for (let i = 0; i < t.length; i += 16) s += Math.abs(t[i]!);
-      return s;
-    });
-    const ref = energy.indexOf(Math.max(...energy));
+    // the reference is the phone that heard the most speech (not merely the loudest microphone),
+    // so every other phone has something to line up with for as long as possible
+    const heard = tracks.map((t) => loudnessDb(t).filter((v) => v > -50).length);
+    const ref = heard.indexOf(Math.max(...heard));
     const report: TrackReport[] = [];
     const aligned: Float32Array[] = [];
     for (let i = 0; i < people.length; i++) {

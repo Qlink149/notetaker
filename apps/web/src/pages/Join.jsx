@@ -66,7 +66,7 @@ export default function Join() {
             url: up.url,
             bytes: part.wav.size,
             startSample: part.startSample,
-            ...(part.index === 0 && part.firstSampleServerMs != null
+            ...(part.firstSampleServerMs != null
               ? { firstSampleServerMs: part.firstSampleServerMs }
               : {}),
           });

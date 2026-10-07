@@ -49,11 +49,13 @@ export function assignWordSpeakers(
   const known = out.map((w, i) => (w.speaker ? i : -1)).filter((i) => i >= 0);
   if (!known.length) return out;
   let p = 0;
+  let q = 0; // first known word after i (moves forward only)
   return out.map((w, i) => {
     if (w.speaker) return w;
     while (p < known.length - 1 && known[p + 1]! < i) p++;
+    while (q < known.length && known[q]! <= i) q++;
     const before = known[p]! < i ? known[p]! : undefined;
-    const after = known.find((k) => k > i);
+    const after = q < known.length ? known[q] : undefined;
     const pick =
       before === undefined
         ? after!

@@ -48,11 +48,15 @@ export function splitByScript(text: string): { text: string; font: string | null
   return out;
 }
 
+/** Control characters XML 1.0 cannot hold would make Word call the whole file corrupt. */
+// eslint-disable-next-line no-control-regex -- removing control characters is the point
+const XML_ILLEGAL = new RegExp('[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]', 'g');
+
 function runs(
   text: string,
   opts: { bold?: boolean; color?: string; size?: number } = {},
 ): TextRun[] {
-  return splitByScript(text).map(
+  return splitByScript(text.replace(XML_ILLEGAL, '')).map(
     (seg) =>
       new TextRun({
         text: seg.text,

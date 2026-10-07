@@ -95,6 +95,8 @@ export async function rebuildTranscript(
         lines,
         speakerMap,
         speakerSource,
+        // a text-linked rebuild has nothing newer to compare against: drop any older comparison copy
+        ...(speakerSource === 'text-fallback' ? { phase1: null } : {}),
         ...(speakerSource === 'pyannote'
           ? {
               phase1: {

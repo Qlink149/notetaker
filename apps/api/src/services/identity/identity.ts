@@ -58,10 +58,15 @@ export async function pyannoteSegments(
     tag: { $in: ['pipeline', 'stageA'] },
     status: 'succeeded',
   }).lean();
-  const doc = docs.find((d) => d.tag === 'pipeline') ?? docs[0];
+  const usable = docs.filter((d) => {
+    const o = d.output as Partial<DiarizationOutput> | null;
+    return Boolean(o && (o.exclusiveDiarization ?? o.diarization));
+  });
+  const doc = usable.find((d) => d.tag === 'pipeline') ?? usable[0];
   if (!doc) return null;
   const out = doc.output as DiarizationOutput;
-  return { segments: out.exclusiveDiarization ?? out.diarization, all: out.diarization };
+  const segments = out.exclusiveDiarization ?? out.diarization;
+  return { segments, all: out.diarization ?? segments };
 }
 
 /**

@@ -35,9 +35,14 @@ export const identifyStage: StageHandler = {
         );
       } catch (err) {
         log.warn({ err: (err as Error).message }, 'identify failed; voices stay anonymous');
-        await ensureCards(id);
       }
-      await applyNames(id);
+      try {
+        await ensureCards(id);
+        await applyNames(id);
+      } catch (err) {
+        // naming is a bonus: never let it stop the summary
+        log.warn({ err: (err as Error).message }, 'could not apply speaker names');
+      }
     }
     await MeetingModel.updateOne({ _id: meeting._id }, { $set: { stage: 'summarise' } });
     await enqueue({ meetingId: meeting._id, stage: 'summarise' });

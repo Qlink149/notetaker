@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { Router, type Request } from 'express';
 import { Types } from 'mongoose';
 import { z } from 'zod';
+import { env } from '../config/env.js';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, notFound } from '../lib/http.js';
 import { MeetingModel } from '../models/index.js';
@@ -23,6 +24,10 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const code6 = (): string =>
   Array.from(randomBytes(6), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 
+/** A phone may report at most 6 hours of audio (16 kHz): stops absurd values from sizing arrays in the worker. */
+const MAX_SAMPLE = 6 * 3600 * 16_000;
+const MAX_PARTICIPANTS = 30;
+
 const CreateBody = z.object({ title: z.string().trim().min(1).max(120).optional() });
 const JoinBody = z.object({
   name: z.string().trim().min(1).max(60),
@@ -43,9 +48,9 @@ const PartBody = Auth.extend({
   url: z.string().url(),
   bytes: z.number().int().min(0),
   /** Index of the part's first sample in the phone's own 16 kHz recording. */
-  startSample: z.number().int().min(0),
+  startSample: z.number().int().min(0).max(MAX_SAMPLE),
   /** The phone's estimate of the server clock (ms) at its very first sample. */
-  firstSampleServerMs: z.number().optional(),
+  firstSampleServerMs: z.number().finite().optional(),
 });
 
 /** Allow `max` calls per `windowMs` per key (the join endpoint is public). */
@@ -151,6 +156,12 @@ export function sessionsHostRouter(): Router {
     const people = await ParticipantModel.find({ sessionId: s._id }).lean<ParticipantDoc[]>();
     const withAudio = people.filter((p) => p.parts.length);
     if (!withAudio.length) throw new HttpError(409, 'No phone has uploaded audio yet');
+    // claim the session first, so a double click cannot make two meetings and two jobs
+    const claimed = await SessionModel.findOneAndUpdate(
+      { _id: s._id, state: 'stopped' },
+      { $set: { state: 'processing' } },
+    );
+    if (!claimed) throw new HttpError(409, 'Already being combined');
     const workspace = ws(req);
     const meeting = await MeetingModel.create({
       workspaceId: workspace._id,
@@ -175,9 +186,12 @@ export function sessionsHostRouter(): Router {
 
 export function sessionsGuestRouter(deps: ApiDeps): Router {
   const r = Router();
-  const joinLimit = limiter(20, 60_000);
+  const joinLimit = limiter(100, 60_000); // a room of phones shares one address
+  // every guest call is throttled per address and code (phones poll every 2 s; a room shares one address)
+  const callLimit = limiter(1500, 60_000);
 
   const live = async (req: Request): Promise<SessionDoc> => {
+    callLimit(`${req.ip ?? 'unknown'}:${String(req.params.code)}`);
     const s = await SessionModel.findOne({
       code: String(req.params.code).toUpperCase(),
     }).lean<SessionDoc>();
@@ -193,6 +207,11 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     if (!p || p.token !== a.token) throw new HttpError(401, 'unknown_participant');
     return p;
   };
+  /** Signatures and parts are accepted until the host combines the audio. */
+  const uploadsOpen = (s: SessionDoc): void => {
+    if (!['lobby', 'recording', 'stopped'].includes(s.state))
+      throw new HttpError(409, 'This recording is closed.');
+  };
   const stateOf = (s: SessionDoc) => ({
     state: s.state,
     title: s.title,
@@ -206,6 +225,8 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     if (s.state !== 'lobby' && s.state !== 'recording')
       throw new HttpError(409, 'This recording is no longer open to join.');
     const input = body(JoinBody, req);
+    if ((await ParticipantModel.countDocuments({ sessionId: s._id })) >= MAX_PARTICIPANTS)
+      throw new HttpError(409, 'This recording is full.');
     const p = await ParticipantModel.create({
       sessionId: s._id,
       name: input.name,
@@ -242,6 +263,7 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     const s = await live(req);
     const input = body(Auth, req);
     await participant(s, input);
+    uploadsOpen(s);
     res.json(deps.storage.signUpload(`${s.folder}/${input.pid}`));
   });
 
@@ -249,8 +271,31 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     const s = await live(req);
     const input = body(PartBody, req);
     await participant(s, input);
+    uploadsOpen(s);
     if (!input.publicId.startsWith(`${s.folder}/${input.pid}/`))
       throw new HttpError(400, "publicId is not in this phone's folder");
+    // the worker downloads this address: it must be the stored file itself, not an arbitrary address
+    let host: URL | null = null;
+    try {
+      host = new URL(input.url);
+    } catch {
+      host = null;
+    }
+    const cloud = env().CLOUDINARY_CLOUD_NAME;
+    if (
+      !host ||
+      host.protocol !== 'https:' ||
+      !input.url.includes(input.publicId) ||
+      (cloud && !host.pathname.startsWith(`/${cloud}/`))
+    )
+      throw new HttpError(400, 'url must be the uploaded file');
+    // the phone's clock estimate may differ from the host's Start by seconds, not hours
+    if (
+      input.firstSampleServerMs !== undefined &&
+      s.startedAt &&
+      Math.abs(input.firstSampleServerMs - s.startedAt.getTime()) > 10 * 60_000
+    )
+      throw new HttpError(400, 'firstSampleServerMs is not close to the start of the recording');
     // a part can be re-sent after a bad connection: replace by index
     await ParticipantModel.updateOne(
       { _id: input.pid },
@@ -268,14 +313,20 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
             startSample: input.startSample,
           },
         },
-        $set: {
-          lastSeen: new Date(),
-          ...(input.firstSampleServerMs !== undefined && input.index === 0
-            ? { firstSampleServerMs: input.firstSampleServerMs }
-            : {}),
-        },
+        $set: { lastSeen: new Date() },
       },
     );
+    // the time of the phone's very first sample can be worked out from any part
+    if (input.firstSampleServerMs !== undefined) {
+      await ParticipantModel.updateOne(
+        { _id: input.pid, firstSampleServerMs: null },
+        {
+          $set: {
+            firstSampleServerMs: input.firstSampleServerMs - (input.startSample / 16_000) * 1000,
+          },
+        },
+      );
+    }
     res.json({ ok: true });
   });
 

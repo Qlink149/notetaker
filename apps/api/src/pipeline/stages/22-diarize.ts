@@ -218,6 +218,12 @@ export const diarizeStage: StageHandler = {
         throw new RetryableError(err.message, status === 429 ? 'rate_limit' : 'server', {
           cause: err,
         });
+      // a network blip, an audio-tool hiccup or a database error says nothing about pyannote: retry,
+      // and fall back only when retries run out (onGiveUp)
+      if (!(err instanceof PyannoteError))
+        throw new RetryableError(err instanceof Error ? err.message : String(err), 'other', {
+          cause: err,
+        });
       // 400/401/402/403 or a failed job: retrying will not help; use the text linker
       const reason = err instanceof Error ? err.message.slice(0, 300) : 'pyannote unavailable';
       log.warn({ reason }, 'pyannote unavailable; falling back to text speaker linking');

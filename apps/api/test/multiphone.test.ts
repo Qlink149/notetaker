@@ -279,6 +279,53 @@ describe('group recording (prototype, synthetic phones)', () => {
     expect(data?.lines.length).toBeGreaterThan(0);
   }, 120_000);
 
+  it('refuses hostile or closed-session uploads from a guest and a second combine', async () => {
+    const created = await host(request(app).post('/api/v1/sessions')).send({}).expect(201);
+    const code = (created.body as { code: string }).code;
+    const j = await request(app).post(`/api/v1/join/${code}`).send({ name: 'Anil' }).expect(201);
+    const auth = { pid: j.body.participantId as string, token: j.body.token as string };
+    await host(request(app).post(`/api/v1/sessions/${code}/start`)).expect(200);
+    const session = await SessionModel.findOne({ code }).lean();
+    const publicId = `${session!.folder}/${auth.pid}/part-0`;
+    const good = {
+      ...auth,
+      index: 0,
+      publicId,
+      url: `https://cloud.test/${publicId}.wav`,
+      bytes: 10,
+      startSample: 0,
+    };
+    const send = (over: object) =>
+      request(app)
+        .post(`/api/v1/join/${code}/parts`)
+        .send({ ...good, ...over });
+    // absurd sample positions and clock values would size arrays in the worker
+    await send({ startSample: 9e12 }).expect(400);
+    await send({ firstSampleServerMs: 1e12 }).expect(400);
+    // the address the worker downloads must be the uploaded file, not somewhere else
+    await send({ url: 'http://127.0.0.1:8080/api/v1/health' }).expect(400);
+    await send({ url: 'https://evil.test/other.wav' }).expect(400);
+    await send({}).expect(200);
+    // too many phones in one room
+    for (let i = 0; i < 29; i++)
+      await request(app)
+        .post(`/api/v1/join/${code}`)
+        .send({ name: `P${i}` })
+        .expect(201);
+    await request(app).post(`/api/v1/join/${code}`).send({ name: 'One too many' }).expect(409);
+
+    await host(request(app).post(`/api/v1/sessions/${code}/stop`)).expect(200);
+    const fin = await Promise.all([
+      host(request(app).post(`/api/v1/sessions/${code}/finish`)),
+      host(request(app).post(`/api/v1/sessions/${code}/finish`)),
+    ]);
+    expect(fin.map((r) => r.status).sort()).toEqual([202, 409]); // one meeting, one job
+    expect(await MeetingModel.countDocuments({ title: 'Group recording' })).toBe(1);
+    // once combining has started the phone can no longer file audio or get signatures
+    await request(app).post(`/api/v1/join/${code}/sign`).send(auth).expect(409);
+    await send({ index: 1 }).expect(409);
+  });
+
   it('does not let a session be joined once recording has been stopped', async () => {
     const created = await host(request(app).post('/api/v1/sessions')).send({}).expect(201);
     const code = (created.body as { code: string }).code;
