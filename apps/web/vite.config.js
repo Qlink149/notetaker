@@ -10,5 +10,12 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  server: { port: 5173 },
+  // The API is reached through this same address (`/api`), so one HTTPS tunnel serves phones and laptop.
+  server: { port: 5173, proxy: { '/api': 'http://localhost:8080' }, allowedHosts: true },
+  preview: {
+    port: 5173,
+    host: true,
+    proxy: { '/api': 'http://localhost:8080' },
+    allowedHosts: true,
+  },
 });
