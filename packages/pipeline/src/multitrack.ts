@@ -24,7 +24,7 @@ export function rmsEnvelope(samples: Float32Array): Float32Array {
 }
 
 export interface LagEstimate {
-  /** Frames by which `other` must be delayed to line up with `ref` (negative: advanced). */
+  /** Frames by which `other` runs behind `ref`: other[t] ≈ ref[t − lag] (negative: ahead). */
   lag: number;
   /** Normalised correlation at that lag, −1..1. */
   score: number;
@@ -42,28 +42,23 @@ export function estimateLag(
   len: number,
   centre: number,
   maxLag: number,
+  minOverlap = Math.max(50, Math.floor(len / 2)),
 ): LagEstimate | null {
   const end = Math.min(ref.length, start + len);
-  const n = end - start;
-  if (n < 50) return null;
-  let refMean = 0;
-  for (let t = start; t < end; t++) refMean += ref[t]!;
-  refMean /= n;
-  const r = new Float32Array(n);
-  let refNorm = 0;
-  for (let i = 0; i < n; i++) {
-    r[i] = ref[start + i]! - refMean;
-    refNorm += r[i]! * r[i]!;
-  }
-  if (refNorm < 1e-12) return null;
-
-  // prefix sums of other and other² for the sliding mean / energy
+  if (end - start < 50) return null;
   const m = other.length;
-  const p1 = new Float64Array(m + 1);
-  const p2 = new Float64Array(m + 1);
+  // prefix sums of both envelopes: mean and energy of any overlapping stretch in O(1)
+  const px = new Float64Array(ref.length + 1);
+  const pxx = new Float64Array(ref.length + 1);
+  for (let i = 0; i < ref.length; i++) {
+    px[i + 1] = px[i]! + ref[i]!;
+    pxx[i + 1] = pxx[i]! + ref[i]! * ref[i]!;
+  }
+  const py = new Float64Array(m + 1);
+  const pyy = new Float64Array(m + 1);
   for (let i = 0; i < m; i++) {
-    p1[i + 1] = p1[i]! + other[i]!;
-    p2[i + 1] = p2[i]! + other[i]! * other[i]!;
+    py[i + 1] = py[i]! + other[i]!;
+    pyy[i + 1] = pyy[i]! + other[i]! * other[i]!;
   }
   const lo = Math.round(centre - maxLag);
   const hi = Math.round(centre + maxLag);
@@ -71,17 +66,19 @@ export function estimateLag(
   let best = -2;
   let bestIdx = -1;
   for (let d = lo; d <= hi; d++) {
-    // other[t - d] for t in [start, end)
-    const a = start - d;
-    const b = end - d;
-    if (a < 0 || b > m) continue;
-    const mean = (p1[b]! - p1[a]!) / n;
-    const energy = p2[b]! - p2[a]! - n * mean * mean;
-    if (energy < 1e-12) continue;
+    // ref[t] ≈ other[t + d]; only the stretch where both exist is compared
+    const s0 = Math.max(start, -d);
+    const e0 = Math.min(end, m - d);
+    const n = e0 - s0;
+    if (n < minOverlap) continue;
+    const mx = (px[e0]! - px[s0]!) / n;
+    const my = (py[e0 + d]! - py[s0 + d]!) / n;
+    const vx = pxx[e0]! - pxx[s0]! - n * mx * mx;
+    const vy = pyy[e0 + d]! - pyy[s0 + d]! - n * my * my;
+    if (vx < 1e-9 || vy < 1e-9) continue;
     let dot = 0;
-    for (let i = 0; i < n; i++) dot += r[i]! * other[a + i]!;
-    // sum r = 0, so subtracting other's mean changes nothing in the dot product
-    const score = dot / Math.sqrt(refNorm * energy);
+    for (let t = s0; t < e0; t++) dot += ref[t]! * other[t + d]!;
+    const score = (dot - n * mx * my) / Math.sqrt(vx * vy);
     scores[d - lo] = score;
     if (score > best) {
       best = score;
@@ -102,7 +99,7 @@ export function estimateLag(
 export interface OffsetPoint {
   /** Seconds into the reference track at the middle of the window. */
   t: number;
-  /** Seconds `other` must be delayed at that time. */
+  /** Seconds `other` runs behind the reference at that time. */
   offset: number;
   score: number;
 }
@@ -124,7 +121,12 @@ export interface TrackAlignOptions {
 export function offsetsPerWindow(
   ref: Float32Array,
   other: Float32Array,
-  { expectedOffsetSec = 0, searchSec = 30, windowSec = 300, minScore = 0.2 }: TrackAlignOptions = {},
+  {
+    expectedOffsetSec = 0,
+    searchSec = 30,
+    windowSec = 300,
+    minScore = 0.35,
+  }: TrackAlignOptions = {},
 ): OffsetPoint[] {
   const envRef = rmsEnvelope(ref);
   const envOther = rmsEnvelope(other);
@@ -149,7 +151,7 @@ export function offsetsPerWindow(
 }
 
 export interface DriftFit {
-  /** Delay in seconds at t = 0. */
+  /** Seconds the track runs behind the reference at t = 0. */
   a: number;
   /** Seconds of extra delay per second (0.001 = the phone's clock runs 0.1 % slow). */
   b: number;
@@ -194,7 +196,7 @@ export function fitDrift(points: OffsetPoint[]): DriftFit | null {
 }
 
 /**
- * Re-time a track: output sample t takes the input at t − (a + b·t) seconds (linear interpolation),
+ * Re-time a track: output sample t takes the input at t + (a + b·t) seconds (linear interpolation),
  * so a phone that started `a` s late and runs `b` slow lines up with the reference.
  */
 export function alignTrack(
@@ -204,7 +206,7 @@ export function alignTrack(
 ): Float32Array {
   const out = new Float32Array(outLength);
   for (let t = 0; t < outLength; t++) {
-    const src = t - (fitted.a + fitted.b * (t / MT_SAMPLE_RATE)) * MT_SAMPLE_RATE;
+    const src = t + (fitted.a + fitted.b * (t / MT_SAMPLE_RATE)) * MT_SAMPLE_RATE;
     const i = Math.floor(src);
     if (i < 0 || i + 1 >= samples.length) continue;
     const f = src - i;
@@ -214,6 +216,8 @@ export function alignTrack(
 }
 
 export const LOUDNESS_HOP_SEC = 0.25;
+/** Hops quieter than this on every phone are silence (before level matching). */
+const SILENCE_DB = -55;
 
 /** RMS of each 250 ms hop, in dB (−100 for silence). */
 export function loudnessDb(samples: Float32Array, hopSec = LOUDNESS_HOP_SEC): Float32Array {
@@ -228,12 +232,15 @@ export function loudnessDb(samples: Float32Array, hopSec = LOUDNESS_HOP_SEC): Fl
   return out;
 }
 
-/** dB to add so that the track's typical speech level (median of its louder hops) is 0 dB. */
+/** The level every track is brought to before comparing and mixing: typical speech at −20 dBFS. */
+export const TARGET_LEVEL_DB = -20;
+
+/** dB to add so that the track's typical speech level (upper quartile of its active hops) is −20 dB. */
 export function levelOffsetDb(loudness: Float32Array): number {
   const active = [...loudness].filter((v) => v > -60).sort((a, b) => a - b);
   if (!active.length) return 0;
   // the median of the upper half: speech, not the noise floor between words
-  return -active[Math.floor(active.length * 0.75)]!;
+  return TARGET_LEVEL_DB - active[Math.floor(active.length * 0.75)]!;
 }
 
 export interface MixResult {
@@ -265,6 +272,11 @@ export function bestChannelMix(
   for (let h = 0; h < hops; h++) {
     let best = current;
     let bestDb = loudness[current]?.[h] ?? -Infinity;
+    // nobody is speaking near any phone: stay put (level-matched noise floors differ by chance)
+    if (raw.every((r) => (r[h] ?? -100) < SILENCE_DB)) {
+      chosen.push(current);
+      continue;
+    }
     loudness.forEach((l, i) => {
       const v = l[h] ?? -Infinity;
       // hysteresis: only switch for a clearly louder track, which stops flapping between phones
@@ -340,7 +352,7 @@ export function attributeSegments(
     const top = wins.indexOf(Math.max(...wins));
     const share = wins[top]! / hops;
     const marginDb = lead[top]! / wins[top]!;
-    return share >= minShare && marginDb >= minMarginDb
+    return share > minShare && marginDb >= minMarginDb
       ? {
           track: top,
           share: Math.round(share * 100) / 100,
