@@ -2,6 +2,15 @@ import type { Glossary, Language } from '@meetingid/shared';
 import { renderGlossaryForPrompt } from '@meetingid/pipeline';
 import { LANGUAGE_NAMES } from './types.js';
 
+/**
+ * Version of the transcription prompt template and schema. Bump it whenever the instruction text,
+ * user text or schema changes, so stored responses say which prompt produced them.
+ * v1: numeric-second timestamps. v2 (2026-10-07): "MM:SS.s" timestamps and the chunk length in rule 7.
+ */
+export const TRANSCRIBE_PROMPT_VERSION = 'v2';
+export const TRANSCRIBE_USER_TEXT =
+  'Transcribe this audio following the rules exactly. Return only the JSON object.';
+
 /** JSON Schema for one chunk's transcription (Gemini structured output). */
 export const TRANSCRIPT_JSON_SCHEMA = {
   type: 'object',

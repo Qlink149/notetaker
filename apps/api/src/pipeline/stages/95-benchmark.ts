@@ -13,6 +13,8 @@ import { materializeChunk } from '../chunkAudio.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, humanizeError } from '../errors.js';
 import { loadMeeting, loadWorkspaceContext } from '../meetings.js';
+import { saveEngineResponse } from '../responses.js';
+import { rawOf } from '../../services/engines/types.js';
 import { MAX_LINE_SEC, PAUSE_SEC } from './30-assemble.js';
 
 const FLAC = 'audio/flac';
@@ -104,14 +106,28 @@ export const benchmarkStage: StageHandler = {
         provider,
         estimateGeminiChunkUsd(env().GEMINI_MODEL, c.endSec - c.startSec),
       );
-      const r = await engine.transcribeChunk({
-        audio: { kind: 'path', path, mimeType: FLAC },
-        localPath: async () => path,
+      const where = {
+        meetingId: meeting._id,
+        kind: 'benchmark' as const,
+        chunkIndex: c.index,
         startSec: c.startSec,
         endSec: c.endSec,
-        languages,
-        glossary,
-      });
+      };
+      let r;
+      try {
+        r = await engine.transcribeChunk({
+          audio: { kind: 'path', path, mimeType: FLAC },
+          localPath: async () => path,
+          startSec: c.startSec,
+          endSec: c.endSec,
+          languages,
+          glossary,
+        });
+      } catch (err) {
+        await saveEngineResponse(rawOf(err), where, (err as Error).message.slice(0, 500));
+        throw err;
+      }
+      await saveEngineResponse(r.raw, where, r.finish === 'truncated' ? 'truncated' : null);
       await recordSpend(provider, usdFor(provider, r.model, r.usage));
       if (r.uploaded)
         await deps.geminiFiles.delete(r.uploaded.name, r.uploaded.keyId).catch(() => undefined);

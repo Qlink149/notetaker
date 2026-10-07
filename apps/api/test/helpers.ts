@@ -167,12 +167,31 @@ export function turnsCovering(from: number, to: number, step = 10): RawTurn[] {
   return out;
 }
 
-export const okResult = (turns: RawTurn[]): ChunkResult => ({
-  turns,
-  usage: { inputTokens: 1000, outputTokens: 200, audioSec: 0 },
-  model: 'fake',
-  finish: 'complete',
-});
+/** A successful engine reply, with an untouched raw reply like the Gemini engine returns. */
+export const okResult = (turns: RawTurn[]): ChunkResult => {
+  const usage = { inputTokens: 1000, outputTokens: 200, audioSec: 0 };
+  const text = JSON.stringify({ turns });
+  return {
+    turns,
+    usage,
+    model: 'fake',
+    finish: 'complete',
+    raw: {
+      engine: 'gemini',
+      model: 'fake',
+      promptVersion: 'test',
+      promptHash: '0000000000000000',
+      prompt: 'system',
+      userText: 'user',
+      status: 'completed',
+      text,
+      response: { status: 'completed', output_text: text },
+      usage,
+      keyId: null,
+      receivedAt: new Date(),
+    },
+  };
+};
 
 export const fakeSummariser = (): Summariser & { calls: number } => {
   const s = {

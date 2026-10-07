@@ -228,6 +228,8 @@ export interface ChunkDoc {
   attempts: number;
   parent: number | null;
   rawTurns: Turn[];
+  /** EngineResponse that rawTurns were built from. */
+  responseId: Types.ObjectId | null;
 }
 export interface MeetingDataDoc {
   _id: Types.ObjectId;
@@ -249,6 +251,8 @@ export interface GapFillDoc {
   model: string | null;
   error: string | null;
   turns: Turn[];
+  /** EngineResponse of this call (null when no reply arrived). */
+  responseId: Types.ObjectId | null;
 }
 const meetingDataSchema = new Schema<MeetingDataDoc>(
   {
@@ -271,6 +275,7 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
             attempts: { type: Number, default: 0 },
             parent: { type: Number, default: null },
             rawTurns: { type: [turnSchema], default: [] },
+            responseId: { type: Schema.Types.ObjectId, default: null },
           },
           opts,
         ),
@@ -293,6 +298,7 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
             model: { type: String, default: null },
             error: { type: String, default: null },
             turns: { type: [turnSchema], default: [] },
+            responseId: { type: Schema.Types.ObjectId, default: null },
           },
           opts,
         ),
@@ -552,6 +558,58 @@ export const HandoffModel = mongoose.model<HandoffDoc>(
   'summaryhandoffs',
 );
 
+// ---------- Engine responses (untouched replies, one per call) ----------
+export interface EngineResponseDoc {
+  _id: Types.ObjectId;
+  meetingId: Types.ObjectId;
+  kind: 'chunk' | 'gapfill' | 'benchmark';
+  /** Chunk index for kind "chunk" and "benchmark"; null for gap fills. */
+  chunkIndex: number | null;
+  /** Absolute position of the audio sent; engine times are relative to startSec. */
+  startSec: number;
+  endSec: number;
+  engine: string;
+  model: string;
+  promptVersion: string;
+  promptHash: string;
+  prompt: string;
+  userText: string;
+  status: string;
+  text: string | null;
+  response: unknown;
+  usage: { inputTokens: number; outputTokens: number; audioSec: number };
+  keyId: string | null;
+  /** Why the reply was not used (invalid JSON, truncated, …); null when it was accepted. */
+  error: string | null;
+  receivedAt: Date;
+}
+const engineResponseSchema = new Schema<EngineResponseDoc>({
+  meetingId: { type: Schema.Types.ObjectId, required: true },
+  kind: { type: String, enum: ['chunk', 'gapfill', 'benchmark'], required: true },
+  chunkIndex: { type: Number, default: null },
+  startSec: Number,
+  endSec: Number,
+  engine: String,
+  model: String,
+  promptVersion: String,
+  promptHash: String,
+  prompt: String,
+  userText: String,
+  status: String,
+  text: { type: String, default: null },
+  response: { type: Schema.Types.Mixed, default: null },
+  usage: { inputTokens: Number, outputTokens: Number, audioSec: Number },
+  keyId: { type: String, default: null },
+  error: { type: String, default: null },
+  receivedAt: Date,
+});
+engineResponseSchema.index({ meetingId: 1, kind: 1, chunkIndex: 1, receivedAt: 1 });
+export const EngineResponseModel = mongoose.model<EngineResponseDoc>(
+  'EngineResponse',
+  engineResponseSchema,
+  'engineresponses',
+);
+
 export const allModels: Model<never>[] = [
   WorkspaceModel,
   GlossaryModel,
@@ -565,4 +623,5 @@ export const allModels: Model<never>[] = [
   QuotaModel,
   SpendModel,
   HandoffModel,
+  EngineResponseModel,
 ] as unknown as Model<never>[];

@@ -36,7 +36,38 @@ export interface ChunkResult {
   finish: 'complete' | 'truncated';
   /** Set when the engine uploaded the chunk itself (e.g. under a different Gemini key). */
   uploaded?: { uri: string; name: string; keyId: string };
+  /** The engine's untouched reply (Gemini), stored so turns can be rebuilt without a new call. */
+  raw?: EngineRawResponse;
 }
+
+/** One engine reply exactly as received, with everything needed to reproduce the request. */
+export interface EngineRawResponse {
+  engine: string;
+  model: string;
+  /** TRANSCRIBE_PROMPT_VERSION of the prompt template. */
+  promptVersion: string;
+  /** sha256 of system instruction + user text + schema (changes with the glossary too). */
+  promptHash: string;
+  prompt: string;
+  userText: string;
+  /** Interaction status, e.g. completed / incomplete. */
+  status: string;
+  /** The model's output text (the transcript JSON) before any parsing. */
+  text: string | null;
+  /** The full response object as returned by the API. */
+  response: unknown;
+  usage: EngineUsage;
+  keyId: string | null;
+  receivedAt: Date;
+}
+
+/** Errors thrown after a reply arrived (invalid JSON, bad status) carry the reply with them. */
+export function attachRaw<E extends Error>(err: E, raw: EngineRawResponse): E {
+  (err as E & { engineRaw?: EngineRawResponse }).engineRaw = raw;
+  return err;
+}
+export const rawOf = (err: unknown): EngineRawResponse | null =>
+  (err as { engineRaw?: EngineRawResponse } | null)?.engineRaw ?? null;
 
 export interface TranscriptionEngine {
   readonly name: 'gemini' | 'deepgram' | 'gemini-transcribe' | 'sarvam';

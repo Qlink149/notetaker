@@ -11,7 +11,13 @@ import { ws } from '../lib/auth.js';
 import { HttpError, assertEngineEnabled, body, idParam, notFound } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
 import { meetingDataView, meetingView } from '../lib/views.js';
-import { JobModel, MeetingDataModel, MeetingModel, type MeetingDoc } from '../models/index.js';
+import {
+  EngineResponseModel,
+  JobModel,
+  MeetingDataModel,
+  MeetingModel,
+  type MeetingDoc,
+} from '../models/index.js';
 import { enqueue } from '../pipeline/queue.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
 import type { ApiDeps } from './deps.js';
@@ -177,6 +183,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
       MeetingModel.deleteOne({ _id: m._id }),
       MeetingDataModel.deleteOne({ meetingId: m._id }),
       JobModel.deleteMany({ meetingId: m._id }),
+      EngineResponseModel.deleteMany({ meetingId: m._id }),
     ]);
     // Storage cleanup is best effort; the records are already gone.
     void (async () => {

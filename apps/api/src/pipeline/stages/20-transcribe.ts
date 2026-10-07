@@ -9,6 +9,8 @@ import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, RetryableError } from '../errors.js';
 import { addCost, loadChunkStatuses, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
+import { saveEngineResponse } from '../responses.js';
+import { rawOf } from '../../services/engines/types.js';
 import { OVERLAP_SEC } from './10-ingest.js';
 
 const FLAC = 'audio/flac';
@@ -93,14 +95,28 @@ export const transcribeStage: StageHandler = {
     );
 
     const started = Date.now();
-    const result = await engine.transcribeChunk({
-      audio,
-      localPath: ensureLocal,
+    const where = {
+      meetingId: meeting._id,
+      kind: 'chunk' as const,
+      chunkIndex: index,
       startSec: chunk.startSec,
       endSec: chunk.endSec,
-      languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
-      glossary,
-    });
+    };
+    let result;
+    try {
+      result = await engine.transcribeChunk({
+        audio,
+        localPath: ensureLocal,
+        startSec: chunk.startSec,
+        endSec: chunk.endSec,
+        languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
+        glossary,
+      });
+    } catch (err) {
+      // A reply that arrived but could not be used (invalid JSON, bad status) is still kept.
+      await saveEngineResponse(rawOf(err), where, (err as Error).message.slice(0, 500));
+      throw err;
+    }
     if (result.uploaded) {
       await MeetingDataModel.updateOne(
         { meetingId: meeting._id, 'chunks.index': index },
@@ -127,6 +143,7 @@ export const transcribeStage: StageHandler = {
     const text = result.turns.map((t) => t.text_roman || t.text_native).join('\n');
     const bad =
       result.finish === 'truncated' ? 'truncated' : looksRepetitive(text) ? 'repetitive' : null;
+    const responseId = await saveEngineResponse(result.raw, where, bad);
     if (bad) {
       const updated = await MeetingDataModel.findOneAndUpdate(
         { meetingId: meeting._id, 'chunks.index': index, 'chunks.status': 'pending' },
@@ -152,6 +169,7 @@ export const transcribeStage: StageHandler = {
           'chunks.$.status': 'done',
           'chunks.$.rawTurns': turns,
           'chunks.$.model': result.model,
+          'chunks.$.responseId': responseId,
         },
       },
     );
@@ -197,6 +215,7 @@ async function splitAndRequeue(
     attempts: 0,
     parent: chunk.index,
     rawTurns: [],
+    responseId: null,
   }));
   const res = await MeetingDataModel.updateOne(
     { meetingId, chunks: { $elemMatch: { index: chunk.index, status: 'pending' } } },

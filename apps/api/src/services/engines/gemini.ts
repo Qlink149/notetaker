@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { FileState, type GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { TurnLang } from '@meetingid/shared';
@@ -14,8 +15,19 @@ import {
   pickKey,
   type GeminiKey,
 } from './geminiKeys.js';
-import { TRANSCRIPT_JSON_SCHEMA, buildTranscriptionInstruction } from './prompt.js';
-import type { ChunkInput, ChunkResult, TranscriptionEngine } from './types.js';
+import {
+  TRANSCRIBE_PROMPT_VERSION,
+  TRANSCRIBE_USER_TEXT,
+  TRANSCRIPT_JSON_SCHEMA,
+  buildTranscriptionInstruction,
+} from './prompt.js';
+import {
+  attachRaw,
+  type ChunkInput,
+  type ChunkResult,
+  type EngineRawResponse,
+  type TranscriptionEngine,
+} from './types.js';
 
 const MAX_OUTPUT_TOKENS = 65_536;
 const GEMINI_SEED = 20_260_927;
@@ -228,19 +240,17 @@ export class GeminiEngine implements TranscriptionEngine {
     file: { uri: string; mimeType: string },
     input: ChunkInput,
   ): Promise<ChunkResult> {
+    const system = buildTranscriptionInstruction(
+      input.languages,
+      input.glossary,
+      input.endSec - input.startSec,
+    );
     const interaction = await key.client.interactions.create(
       {
         model,
-        system_instruction: buildTranscriptionInstruction(
-          input.languages,
-          input.glossary,
-          input.endSec - input.startSec,
-        ),
+        system_instruction: system,
         input: [
-          {
-            type: 'text',
-            text: 'Transcribe this audio following the rules exactly. Return only the JSON object.',
-          },
+          { type: 'text', text: TRANSCRIBE_USER_TEXT },
           { type: 'audio', uri: file.uri, mime_type: file.mimeType },
         ],
         response_format: {
@@ -267,21 +277,52 @@ export class GeminiEngine implements TranscriptionEngine {
         (interaction.usage?.total_thought_tokens ?? 0),
       audioSec: 0,
     };
+    // Kept untouched whatever happens next (DECISIONS #25).
+    const raw: EngineRawResponse = {
+      engine: 'gemini',
+      model,
+      promptVersion: TRANSCRIBE_PROMPT_VERSION,
+      promptHash: promptHash(system),
+      prompt: system,
+      userText: TRANSCRIBE_USER_TEXT,
+      status: String(interaction.status),
+      text: interaction.output_text ?? null,
+      response: JSON.parse(JSON.stringify(interaction)) as unknown,
+      usage,
+      keyId: key.id,
+      receivedAt: new Date(),
+    };
     if (interaction.status === 'incomplete' || interaction.status === 'budget_exceeded') {
-      return { turns: [], usage, model, finish: 'truncated' };
+      return { turns: [], usage, model, finish: 'truncated', raw };
     }
     if (interaction.status !== 'completed') {
       const detail = interaction.errors?.map((e) => JSON.stringify(e)).join('; ') ?? '';
-      throw new RetryableError(
-        `Gemini interaction ended with status ${interaction.status} ${detail}`,
-        'server',
+      throw attachRaw(
+        new RetryableError(
+          `Gemini interaction ended with status ${interaction.status} ${detail}`,
+          'server',
+        ),
+        raw,
       );
     }
-    return {
-      turns: parseTranscriptJson(interaction.output_text),
-      usage,
-      model,
-      finish: 'complete',
-    };
+    let turns;
+    try {
+      turns = parseTranscriptJson(raw.text ?? undefined);
+    } catch (err) {
+      throw attachRaw(err as Error, raw);
+    }
+    return { turns, usage, model, finish: 'complete', raw };
   }
+}
+
+/** Identifies the exact request text: template version, glossary and chunk length all change it. */
+export function promptHash(system: string): string {
+  return createHash('sha256')
+    .update(system)
+    .update('\n--\n')
+    .update(TRANSCRIBE_USER_TEXT)
+    .update('\n--\n')
+    .update(JSON.stringify(TRANSCRIPT_JSON_SCHEMA))
+    .digest('hex')
+    .slice(0, 16);
 }

@@ -195,3 +195,26 @@ its line are marked `romanFix: "transliterated"`. Other Indic scripts are left a
 marked `"unrepaired"`. No engine call is made: a per-turn retry would cost a request from the
 20-per-day free quota to fix one or two words, and the table is deterministic and unit-tested.
 `textNative` is never changed.
+
+## 25. Every engine reply is stored untouched
+
+From 2026-10-07 (before Prachar's remaining chunks), every Gemini reply is saved in the
+`engineresponses` collection, one document per call:
+- The reply: `text` is the model's output exactly as returned, and `response` is the full interaction object.
+- What produced it: `model`, `promptVersion` (`TRANSCRIBE_PROMPT_VERSION`, bumped whenever the
+  template or schema changes), `promptHash`, and the full `prompt` and `userText`.
+- Where the audio came from: `startSec`/`endSec` of the audio sent, `chunkIndex`, `kind` (`chunk`, `gapfill` or `benchmark`).
+- Billing: `usage` and `keyId`.
+- Outcome: `error` is null when the reply was used; otherwise the reason it was not (`truncated`,
+  `repetitive`, invalid JSON, bad status).
+
+Replies that were rejected are kept too, since they were paid for. A chunk's `responseId` and a gap
+fill's `responseId` point to the reply its cleaned turns came from, and
+`turnsFromStoredResponse()` rebuilds those turns with no engine call. Re-assembly, re-timing
+experiments and Phase 2 work therefore never need quota.
+
+Size is about 50–150 KB per 10-minute reply, kept outside `MeetingData` so that document stays small.
+Deleting a meeting deletes its replies. Deepgram replies are not stored, because the engine returns no raw object.
+
+Meetings transcribed before this change (21-9, 200, AOM, and Prachar chunk 0) have no stored
+replies. Their only engine output is the cleaned `rawTurns`.

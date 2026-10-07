@@ -64,6 +64,7 @@ export const ingestStage: StageHandler = {
         attempts: 0,
         parent: null,
         rawTurns: [],
+        responseId: null,
       });
     }
 

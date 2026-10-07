@@ -13,7 +13,9 @@ import type { StageContext, StageHandler } from '../context.js';
 import { FatalError, RetryableError } from '../errors.js';
 import { addCost, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
+import { saveEngineResponse } from '../responses.js';
 import { rebuildTranscript } from '../transcript.js';
+import { rawOf } from '../../services/engines/types.js';
 
 /** Engine calls allowed per meeting for gap filling, failed ones included. */
 export const MAX_GAP_CALLS = 6;
@@ -60,6 +62,13 @@ export const gapfillStage: StageHandler = {
           model: null,
           error: null,
           turns: [],
+          responseId: null,
+        };
+        const where = {
+          meetingId: meeting._id,
+          kind: 'gapfill' as const,
+          startSec: cutStart,
+          endSec: cutEnd,
         };
         try {
           await assertBudget(
@@ -82,6 +91,11 @@ export const gapfillStage: StageHandler = {
             languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
             glossary,
           });
+          record.responseId = await saveEngineResponse(
+            result.raw,
+            where,
+            result.finish === 'truncated' ? 'truncated' : null,
+          );
           const usd = usdFor(provider, result.model, result.usage);
           await addCost(meeting._id, {
             usd,
@@ -107,6 +121,7 @@ export const gapfillStage: StageHandler = {
             throw err;
           if (err instanceof BudgetExceededError) throw err;
           record.error = err instanceof Error ? err.message.slice(0, 300) : String(err);
+          record.responseId = await saveEngineResponse(rawOf(err), where, record.error);
         }
         await MeetingDataModel.updateOne(
           { meetingId: meeting._id },

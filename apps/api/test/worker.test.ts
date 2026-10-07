@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  EngineResponseModel,
   JobModel,
   MeetingDataModel,
   MeetingModel,
@@ -12,6 +13,7 @@ import {
 import { claimNext, enqueue } from '../src/pipeline/queue.js';
 import { Runner } from '../src/pipeline/runner.js';
 import { stages } from '../src/pipeline/stages/index.js';
+import { turnsFromStoredResponse } from '../src/pipeline/responses.js';
 import {
   clearDb,
   fakeEngine,
@@ -93,6 +95,14 @@ describe('worker state machine', () => {
     expect(data?.speakerMap).toEqual({ S1: 'Speaker 1', S2: 'Speaker 2' });
     expect(data?.speechSegments.length).toBe(2);
     expect(await JobModel.countDocuments({ status: { $ne: 'done' } })).toBe(0);
+
+    // The untouched reply is stored and the chunk's turns can be rebuilt from it without a call.
+    const stored = await EngineResponseModel.find({ meetingId: id }).lean();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.kind).toBe('chunk');
+    expect(stored[0]?.error).toBeNull();
+    expect(String(data?.chunks[0]?.responseId)).toBe(String(stored[0]?._id));
+    expect(turnsFromStoredResponse(stored[0]!)).toEqual(data?.chunks[0]?.rawTurns);
   });
 
   it('withholds the summary and ends partial when coverage is low', async () => {
@@ -135,6 +145,10 @@ describe('worker state machine', () => {
     expect(engine.calls[1]!.startSec).toBe(15.5); // gap from 20.5 s, minus 5 s of padding
     expect(data?.gapFills).toHaveLength(1);
     expect(data?.gapFills[0]?.status).toBe('done');
+    const gapReply = await EngineResponseModel.findById(data?.gapFills[0]?.responseId).lean();
+    expect(gapReply?.kind).toBe('gapfill');
+    expect(gapReply?.startSec).toBe(15.5);
+    expect(turnsFromStoredResponse(gapReply!)).toEqual(data?.gapFills[0]?.turns);
     expect(data?.turns.some((t) => t.start > 25 && t.start < 45)).toBe(true);
     expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
     expect(m?.status).toBe('completed');
@@ -162,6 +176,10 @@ describe('worker state machine', () => {
     expect(m?.status).toBe('completed');
     expect(engine.calls).toHaveLength(2);
     expect(m?.cost.geminiInputTokens).toBe(2000); // the truncated call was paid for, and recorded
+    const replies = await EngineResponseModel.find({ meetingId: id })
+      .sort({ receivedAt: 1 })
+      .lean();
+    expect(replies.map((r) => r.error)).toEqual(['truncated', null]); // both replies kept
   });
 
   it('resumes after a worker dies mid-transcribe without paying twice', async () => {
