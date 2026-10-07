@@ -57,7 +57,14 @@ export function assembleChunks(chunks: ChunkTurns[], linkOptions?: LinkOptions):
     }));
     merged =
       overlap.end > overlap.start
-        ? mergeChunkTurns(merged, relabelled, overlap)
+        ? mergeChunkTurns(merged, relabelled, overlap, {
+            // No sentence shared with the previous chunk: its tail cannot be trusted (seen live: a
+            // mistimed, partly missing tail), while a chunk's start is its most reliable stretch.
+            ...(seams[ordered.indexOf(chunk) - 1]?.anchors === 0 &&
+            chunk.turns.some((t) => t.start < overlap.end)
+              ? { cutAt: overlap.start }
+              : {}),
+          })
         : [...merged, ...relabelled];
     prevEnd = Math.max(prevEnd, chunk.endSec);
   }

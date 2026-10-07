@@ -12,8 +12,8 @@ export function tokenize(text: string): string[] {
 
 /** Token-set Jaccard similarity in [0, 1]. Two empty texts are not similar. */
 export function jaccard(a: string, b: string): number {
-  const sa = new Set(tokenize(a));
-  const sb = new Set(tokenize(b));
+  const sa = new Set(matchTokens(a));
+  const sb = new Set(matchTokens(b));
   if (sa.size === 0 || sb.size === 0) return 0;
   let inter = 0;
   for (const t of sa) if (sb.has(t)) inter++;
@@ -37,11 +37,30 @@ export function formatTimestamp(sec: number): string {
  * `minTokens` tokens, so fillers like "haan ji" never match by containment.
  */
 export function containment(a: string, b: string, minTokens = 4): number {
-  const sa = new Set(tokenize(a));
-  const sb = new Set(tokenize(b));
+  const sa = new Set(matchTokens(a));
+  const sb = new Set(matchTokens(b));
   const [small, large] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
   if (small.size < minTokens) return jaccard(a, b);
   let inter = 0;
   for (const t of small) if (large.has(t)) inter++;
   return inter / small.size;
+}
+
+/**
+ * Spelling-tolerant form of a romanised word: lower-case, w→v, vowels dropped, repeated letters
+ * collapsed. The same speech romanised in two engine calls differs mostly in vowels
+ * ("saari kaaynaat" / "sari kayanaat" → "sr kynt"). Non-Latin tokens are kept as they are.
+ */
+export function skeleton(token: string): string {
+  if (!/[a-z]/.test(token)) return token;
+  const k = token
+    .replace(/w/g, 'v')
+    .replace(/[aeiou]/g, '')
+    .replace(/(.)\1+/g, '$1');
+  return k || token;
+}
+
+/** Tokens compared by similarity checks: spelling-tolerant skeletons of the words. */
+export function matchTokens(text: string): string[] {
+  return tokenize(text).map(skeleton);
 }

@@ -88,3 +88,24 @@ describe('rescaleTurns', () => {
     ).toEqual([1140, 1710]);
   });
 });
+
+describe('seam with no shared sentence', () => {
+  it('trusts the later chunk for the whole overlap', () => {
+    const prev = {
+      startSec: 0,
+      endSec: 600,
+      turns: [
+        turn('A', 500, 520, s[0]!),
+        turn('A', 572, 590, 'mistimed tail speech from somewhere else entirely'),
+      ],
+    };
+    const next = {
+      startSec: 570,
+      endSec: 1170,
+      turns: [turn('S1', 571, 580, s[1]!), turn('S1', 600, 610, s[2]!)],
+    };
+    const { turns, seams } = assembleChunks([prev, next]);
+    expect(seams[0]!.anchors).toBe(0);
+    expect(turns.map((t) => t.textRoman)).toEqual([s[0], s[1], s[2]]);
+  });
+});

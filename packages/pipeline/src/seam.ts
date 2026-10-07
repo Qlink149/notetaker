@@ -11,6 +11,8 @@ export interface SeamOptions {
   dedupeSimilarity?: number;
   /** How far apart (seconds) two turns may start and still count as the same utterance. */
   dedupeWindowSec?: number;
+  /** Where to switch from the earlier to the later chunk; default the overlap midpoint. */
+  cutAt?: number;
 }
 
 const textOf = (t: Turn): string => t.textRoman || t.textNative;
@@ -26,12 +28,12 @@ export function mergeChunkTurns(
   prev: Turn[],
   next: Turn[],
   overlap: Overlap,
-  { dedupeSimilarity = 0.8, dedupeWindowSec = 8 }: SeamOptions = {},
+  { dedupeSimilarity = 0.8, dedupeWindowSec = 8, cutAt }: SeamOptions = {},
 ): Turn[] {
   if (overlap.end <= overlap.start) {
     return [...prev, ...next].sort((a, b) => a.start - b.start);
   }
-  const mid = (overlap.start + overlap.end) / 2;
+  const mid = cutAt ?? (overlap.start + overlap.end) / 2;
   const keptPrev = prev.filter((t) => t.start < mid);
   const nearSeam = keptPrev.filter((t) => t.end >= overlap.start - dedupeWindowSec);
 

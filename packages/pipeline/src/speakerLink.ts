@@ -29,11 +29,24 @@ export function linkSpeakersAcrossChunks(
   prevTurns: Turn[],
   nextTurns: Turn[],
   overlap: Overlap,
-  { minSimilarity = 0.6, windowSec = 15, margin = 1.5 }: LinkOptions = {},
+  options: LinkOptions = {},
 ): LabelMap {
+  return linkSpeakersDetailed(prevTurns, nextTurns, overlap, options).map;
+}
+
+/** Vote matrix: votes[later][earlier] = seconds of overlap speech matched between the two labels. */
+export type VoteMatrix = Record<string, Record<string, number>>;
+
+/** Same as linkSpeakersAcrossChunks, also returning the vote matrix behind the decision. */
+export function linkSpeakersDetailed(
+  prevTurns: Turn[],
+  nextTurns: Turn[],
+  overlap: Overlap,
+  { minSimilarity = 0.6, windowSec = 15, margin = 1.5 }: LinkOptions = {},
+): { map: LabelMap; votes: VoteMatrix } {
   const result: LabelMap = {};
   for (const t of nextTurns) result[t.speaker] = null;
-  if (overlap.end <= overlap.start) return result;
+  if (overlap.end <= overlap.start) return { map: result, votes: {} };
 
   const prevO = prevTurns.filter((t) => inOverlap(t, overlap));
   const nextO = nextTurns.filter((t) => inOverlap(t, overlap));
@@ -77,5 +90,7 @@ export function linkSpeakersAcrossChunks(
     assigned.add(later);
     usedEarlier.add(earlier);
   }
-  return result;
+  const matrix: VoteMatrix = {};
+  for (const [later, row] of votes) matrix[later] = Object.fromEntries(row);
+  return { map: result, votes: matrix };
 }

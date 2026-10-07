@@ -133,3 +133,29 @@ describe('linking with live-run shapes', () => {
     expect(linkSpeakersAcrossChunks(prev, next, overlap)).toEqual({ S1: null });
   });
 });
+
+describe('spelling-tolerant matching', () => {
+  it('treats different romanisations of the same words as the same', async () => {
+    const { skeleton, jaccard } = await import('../src/text.js');
+    expect(skeleton('kaaynaat')).toBe(skeleton('kayanaat'));
+    expect(skeleton('vahaan')).toBe(skeleton('vahan'));
+    expect(jaccard('saari kaaynaat ban jaati hai', 'sari kayanaat ban jaati hai')).toBe(1);
+  });
+
+  it('links AOM-style overlaps that differ only in spelling', () => {
+    const overlap = { start: 570, end: 600 };
+    const prev = [
+      turn(
+        'G2',
+        578.2,
+        600,
+        'sari kayanaat ban jaati hai. Vahan se andar se marshal aa gaya koi aur bacha diya',
+      ),
+    ];
+    const next = [
+      turn('S1', 570, 571.3, 'saari kaaynaat ban jaati hai'),
+      turn('S1', 572.1, 575.1, 'vahaan se andar se maseeha aa gaya koee.'),
+    ];
+    expect(linkSpeakersAcrossChunks(prev, next, overlap)).toEqual({ S1: 'G2' });
+  });
+});
