@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@meetingid/shared": "0.1.0",
@@ -65,6 +66,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
     "@types/node": "^22.13.5",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
@@ -77,9 +80,11 @@
     "eslint-plugin-react-refresh": "^0.4.18",
     "eslint-plugin-unused-imports": "^4.3.0",
     "globals": "^15.14.0",
+    "jsdom": "^30.1.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^3.2.7"
   }
 }

@@ -117,13 +117,13 @@ export default function GroupRecording() {
     );
   }
 
+  const people = session?.participants ?? [];
   const canStart = session?.state === 'lobby' && session.participants.length > 0;
   // Wait until every phone has handed over its last part (or has not been seen for a while).
   const settled = (p) =>
     p.status === 'uploaded' || p.status === 'failed' || p.secondsSinceSeen > 45;
   const allSettled = people.length > 0 && people.every(settled);
   const hasAudio = people.some((p) => p.parts > 0);
-  const people = session?.participants ?? [];
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4 space-y-4">
