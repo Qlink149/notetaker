@@ -12,3 +12,4 @@ export * from './normalize.js';
 export * from './assemble.js';
 export * from './speakers.js';
 export * from './silence.js';
+export * from './align.js';

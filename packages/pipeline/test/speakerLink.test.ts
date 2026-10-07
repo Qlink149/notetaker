@@ -96,3 +96,40 @@ describe('assembleChunks', () => {
     expect(turns.map((t) => t.speaker)).toEqual(['S1', 'S2']);
   });
 });
+
+describe('linking with live-run shapes', () => {
+  it('links a short later turn contained in a long earlier turn, 10.5 s apart', () => {
+    // From Meeting-21-9-2026: the earlier chunk merged speech into one 25 s turn near its end.
+    const overlap = { start: 1140, end: 1170 };
+    const prev = [
+      turn(
+        'G1',
+        1117.8,
+        1145,
+        'matlab hamari baaki bhi saari effort hai itne mahine ki effort hai',
+      ),
+      turn(
+        'G3',
+        1145,
+        1170,
+        'parag bhai hum usko is trah kar sakte hain ki hamare paas jitne jo store hain jo is month',
+      ),
+    ];
+    const next = [
+      turn(
+        'S5',
+        1155.5,
+        1169.8,
+        'Parag bhai, hum isko is tarah kar sakte hain ki humare paas jitne jo store hain, jo is month',
+      ),
+    ];
+    expect(linkSpeakersAcrossChunks(prev, next, overlap)).toEqual({ S5: 'G3' });
+  });
+
+  it('does not link fillers by containment', () => {
+    const overlap = { start: 570, end: 600 };
+    const prev = [turn('G1', 575, 590, 'haan ji bilkul theek hai aage chalte hain report pe')];
+    const next = [turn('S1', 580, 581, 'haan ji')];
+    expect(linkSpeakersAcrossChunks(prev, next, overlap)).toEqual({ S1: null });
+  });
+});

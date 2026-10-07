@@ -30,3 +30,18 @@ export function formatTimestamp(sec: number): string {
   const ss = String(r).padStart(2, '0');
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
+
+/**
+ * Overlap similarity for texts of very different length: the share of the shorter text's distinct
+ * tokens found in the longer one. Falls back to Jaccard when the shorter text has fewer than
+ * `minTokens` tokens, so fillers like "haan ji" never match by containment.
+ */
+export function containment(a: string, b: string, minTokens = 4): number {
+  const sa = new Set(tokenize(a));
+  const sb = new Set(tokenize(b));
+  const [small, large] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  if (small.size < minTokens) return jaccard(a, b);
+  let inter = 0;
+  for (const t of small) if (large.has(t)) inter++;
+  return inter / small.size;
+}

@@ -1,4 +1,5 @@
 import type { Turn } from '@meetingid/shared';
+import { alignSeam, rescaleTurns, type SeamAlignment } from './align.js';
 import { mergeChunkTurns } from './seam.js';
 import { linkSpeakersAcrossChunks, type LinkOptions } from './speakerLink.js';
 
@@ -13,15 +14,26 @@ export interface AssembleResult {
   /** Turns in time order with global labels `S1..Sn` (numbered by first appearance). */
   turns: Turn[];
   speakerCount: number;
+  /** Clock correction applied at each seam, earlier chunk first. */
+  seams: SeamAlignment[];
 }
 
 /**
- * Stitch per-chunk transcripts into one: link each chunk's speaker labels to the previous chunk's
+ * Stitch per-chunk transcripts into one: correct each chunk's clock drift against the next chunk,
+ * link each chunk's speaker labels to the previous chunk's
  * through their shared overlap, relabel, then merge at the seam. Chunks with no overlap (a failed
  * chunk left a gap) are appended with fresh labels.
  */
 export function assembleChunks(chunks: ChunkTurns[], linkOptions?: LinkOptions): AssembleResult {
-  const ordered = [...chunks].sort((a, b) => a.startSec - b.startSec);
+  const ordered = [...chunks].sort((a, b) => a.startSec - b.startSec).map((c) => ({ ...c }));
+  // Correct each chunk's clock against the next chunk before linking and merging (see align.ts).
+  const seams: SeamAlignment[] = [];
+  for (let i = 0; i + 1 < ordered.length; i++) {
+    const cur = ordered[i]!;
+    const a = alignSeam(cur, ordered[i + 1]!);
+    seams.push(a);
+    cur.turns = rescaleTurns(cur.turns, cur.startSec, a.scale);
+  }
   let next = 1;
   const fresh = (): string => `G${next++}`;
 
@@ -56,5 +68,6 @@ export function assembleChunks(chunks: ChunkTurns[], linkOptions?: LinkOptions):
   return {
     turns: merged.map((t) => ({ ...t, speaker: final.get(t.speaker) ?? t.speaker })),
     speakerCount: final.size,
+    seams,
   };
 }

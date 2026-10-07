@@ -1,11 +1,11 @@
 import type { Turn } from '@meetingid/shared';
 import type { Overlap } from './seam.js';
-import { jaccard } from './text.js';
+import { containment } from './text.js';
 
 export interface LinkOptions {
   /** Minimum text similarity for two overlap turns to be treated as the same utterance. */
   minSimilarity?: number;
-  /** Maximum start-time distance (seconds) between matched turns. Covers engine drift. */
+  /** Maximum start-time distance (seconds) between matched turns. Covers engine drift (10.5 s seen live). */
   windowSec?: number;
   /** The winning earlier label must outweigh the runner-up by this factor. */
   margin?: number;
@@ -29,7 +29,7 @@ export function linkSpeakersAcrossChunks(
   prevTurns: Turn[],
   nextTurns: Turn[],
   overlap: Overlap,
-  { minSimilarity = 0.6, windowSec = 10, margin = 1.5 }: LinkOptions = {},
+  { minSimilarity = 0.6, windowSec = 15, margin = 1.5 }: LinkOptions = {},
 ): LabelMap {
   const result: LabelMap = {};
   for (const t of nextTurns) result[t.speaker] = null;
@@ -45,7 +45,7 @@ export function linkSpeakersAcrossChunks(
     let bestSim = minSimilarity;
     for (const p of prevO) {
       if (Math.abs(p.start - n.start) > windowSec) continue;
-      const sim = jaccard(textOf(p), textOf(n));
+      const sim = containment(textOf(p), textOf(n));
       if (sim >= bestSim) {
         best = p;
         bestSim = sim;
