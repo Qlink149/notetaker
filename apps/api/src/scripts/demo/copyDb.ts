@@ -77,3 +77,47 @@ if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
     process.exit(1);
   });
 }
+
+/**
+ * Make `to` identical to `from` (documents replaced, extra documents removed, collections kept).
+ * Only ever applied to a database whose name ends in "_demo". Worker heartbeats are left alone, and
+ * the job queue is emptied so a restored demo never resumes half-finished work.
+ */
+export async function restoreDatabase(
+  from: string,
+  to: string,
+  log = console.log,
+): Promise<Record<string, { restored: number; removed: number }>> {
+  if (!to.endsWith('_demo'))
+    throw new Error(`refusing to restore into "${to}": not a _demo database`);
+  if (from === to) throw new Error('source and target database must differ');
+  const client = mongoose.connection.getClient();
+  const src = client.db(from);
+  const dst = client.db(to);
+  const names = new Set([
+    ...(await src.listCollections().toArray()).map((c) => c.name),
+    ...(await dst.listCollections().toArray()).map((c) => c.name),
+  ]);
+  names.delete('workerheartbeats');
+  names.delete('jobs');
+  const report: Record<string, { restored: number; removed: number }> = {};
+  for (const name of [...names].filter((n) => !n.startsWith('system.'))) {
+    const docs = await src.collection(name).find({}).toArray();
+    for (let i = 0; i < docs.length; i += 200) {
+      await dst.collection(name).bulkWrite(
+        docs
+          .slice(i, i + 200)
+          .map((d) => ({ replaceOne: { filter: { _id: d._id }, replacement: d, upsert: true } })),
+        { ordered: false },
+      );
+    }
+    const removed = await dst
+      .collection(name)
+      .deleteMany({ _id: { $nin: docs.map((d) => d._id) } });
+    report[name] = { restored: docs.length, removed: removed.deletedCount };
+    log(`${name}: ${docs.length} restored, ${removed.deletedCount} removed`);
+  }
+  const jobs = await dst.collection('jobs').deleteMany({});
+  log(`jobs: queue emptied (${jobs.deletedCount})`);
+  return report;
+}
