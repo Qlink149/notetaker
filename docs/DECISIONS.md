@@ -224,3 +224,48 @@ replies. Their only engine output is the cleaned `rawTurns`.
 HTTP *response* headers plus the raw `Response` object. `storableResponse()` drops it before saving.
 The API key travels only in the request header, which the SDK never returns. As a last guard, any
 configured Gemini key value found in `response` or `text` is replaced with `[redacted]` (tested).
+
+## 26. pyannote facts Phase 2 relies on (checked 2026-10-07)
+
+Source: docs.pyannote.ai (llms.txt index, API reference) and `https://docs.pyannote.ai/openapi.json`.
+Nothing below is taken from the Base44 code.
+
+- **Endpoints** (`https://api.pyannote.ai`, `Authorization: Bearer $PYANNOTEAI_API_KEY`): `POST /v1/diarize`,
+  `POST /v1/identify`, `POST /v1/voiceprint`, `GET /v1/jobs/{jobId}`, `POST /v1/media/input` (returns a
+  pre-signed PUT URL for a `media://<key>` name), `GET /v1/test`. Jobs are asynchronous; status is one of
+  `pending | created | running | succeeded | failed | canceled`. Webhooks exist, but nothing local is
+  reachable, so we poll.
+- **Models.** `precision-2` (the default when `model` is omitted), `precision-3` (more accurate, opt-in),
+  and `community-1` (diarize only; no voiceprint or identify). Voiceprints are model-specific, so every
+  request pins `model` and every stored voiceprint records the model it came from.
+- **Diarize/identify parameters used.**
+  - `numSpeakers`, or `minSpeakers` ≤ `maxSpeakers` (all ≥ 1).
+  - `exclusive: true` adds `exclusiveDiarization`, the same segments with overlap removed.
+  - `turnLevelConfidence: true` adds a `confidence: {SPEAKER_xx: 0–100}` map to each segment.
+  - `confidence: true` adds a top-level *frame-level* curve `{score[], resolution}`. It is **not available
+    on precision-3**, so we request it only on precision-2.
+  - `vadSensitivity` and `crosstalkSensitivity` (−5..5) are precision-3 only and left at 0.
+- **Identify.**
+  - `voiceprints`: 1–50 entries of `{label, voiceprint}`. The label is at most 100 characters and must not
+    start with `SPEAKER_`; the voiceprint string is at most 20,000 characters.
+  - `matching.exclusive` (default true): one voiceprint per speaker.
+  - `matching.threshold` (0–100, default 0): no match below it.
+  - Output adds `identification[]` (segments with `diarizationSpeaker` and `match`, which may be null) and
+    `voiceprints[]` of `{speaker, match, confidence: {label: 0–100}}`, one entry per diarization speaker.
+    Those per-speaker scores are what our own name resolution uses. Identification confidence measures the
+    voice match and is distinct from turn-level diarization confidence.
+- **Voiceprint.** One clip of at most 30 s, one speaker, no overlap; no minimum is documented (we
+  reject clips under 6 s). The output is `{voiceprint}`.
+- **Retention.** Every job's output is deleted 24 h after the job completes, including voiceprints.
+  Raw output is therefore stored immediately in `p2_pyannote_responses` and voiceprint strings on the
+  `Speaker`. Media uploads are kept "at least 24 hours" (API spec; the tutorial says up to 48 h). We
+  re-upload any upload older than 20 h.
+- **Rate limits.** Per team, a 60 s window: 100/min for submissions and media, 300/min for job reads.
+  A 429 carries `Retry-After`. Media upload can return 402 when no subscription is active.
+- **Price.** Plans are Developer €19/month and Starter €99/month, each including the same amount of usage
+  credit, with a 30-day trial. Neither the docs nor the pricing page gives a per-hour rate; Phase 2
+  measures it from account usage and reports it in PHASE2_REPORT.
+- **Audio.** Phase 1 stores only the original in Cloudinary (#13). For pyannote, the 16 kHz mono FLAC is
+  built locally with the same `toAnalysisFlac` used for Gemini and uploaded through the media endpoint as
+  `media://p2-<meetingId>.flac`. Enrolment clips are cut with `cutFlac` from the same FLAC, so meetings
+  and voiceprints see an identical transform.
