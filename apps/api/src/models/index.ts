@@ -241,6 +241,30 @@ export interface MeetingDataDoc {
   speakerMap: Record<string, string>;
   /** Gap-fill calls: transcripts of speech the chunk calls missed (labels are gap-local). */
   gapFills: GapFillDoc[];
+  /** Phase 2: one card per pyannote speaker (who it is, how sure, sample clips). */
+  speakerCards: SpeakerCardDoc[];
+  /** Where the speaker labels came from; "text-fallback" is Phase 1's text linker (no pyannote). */
+  speakerSource: 'pyannote' | 'text-fallback';
+  /** Phase 1's turns, lines and speaker map before the pyannote join replaced them. */
+  phase1: { turns: Turn[]; lines: Line[]; speakerMap: Record<string, string> } | null;
+}
+/** Who one pyannote speaker is in one meeting. */
+export interface SpeakerCardDoc {
+  /** pyannote speaker id, e.g. SPEAKER_02. */
+  diar: string;
+  /** Anonymous per-meeting label ("Speaker A"), by speaking time. */
+  label: string;
+  /** Person (Speaker document) this voice belongs to. */
+  personId: string | null;
+  speakerSec: number;
+  /** Cross-meeting voiceprint match that linked this voice to an earlier person. */
+  match: { personId: string; name: string; score: number; margin: number } | null;
+  /** Closest known person when the match was rejected. */
+  candidate: { name: string; score: number; status: string } | null;
+  /** solid = confident voiceprint match or confirmed by a person; review = needs a look; new = first time heard; manual = set by hand. */
+  status: 'solid' | 'review' | 'new' | 'manual';
+  /** Playable samples in the meeting audio. */
+  clips: { start: number; end: number; quality: number | null }[];
 }
 export interface GapFillDoc {
   start: number;
@@ -286,6 +310,9 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
     lines: { type: [lineSchema], default: [] },
     speechSegments: { type: [new Schema({ start: Number, end: Number }, opts)], default: [] },
     speakerMap: { type: Schema.Types.Mixed, default: {} },
+    speakerCards: { type: Schema.Types.Mixed, default: [] },
+    speakerSource: { type: String, enum: ['pyannote', 'text-fallback'], default: 'text-fallback' },
+    phase1: { type: Schema.Types.Mixed, default: null },
     gapFills: {
       type: [
         new Schema(
@@ -367,15 +394,30 @@ export const HeartbeatModel = mongoose.model<HeartbeatDoc>('WorkerHeartbeat', he
 
 // ---------- Speaker (Phase 2 fills voiceprints) ----------
 export interface VoiceprintDoc {
+  /** Phase 1 enrolments stored the voiceprint string here; Phase 2 uses `voiceprint`. */
   id: string;
   source: 'enrolment' | 'meeting';
   audioUrl: string;
   createdAt: Date;
+  /** pyannote voiceprint string (kept until the person is deleted; pyannote does not store it). */
+  voiceprint?: string;
+  /** pyannote model that made it; voiceprints only work with the same model. */
+  model?: string;
+  meetingId?: Types.ObjectId | null;
+  clip?: { start: number; end: number } | null;
+  /** Mean turn confidence (0–100) of the clip. */
+  quality?: number | null;
 }
 export interface SpeakerDoc {
   _id: Types.ObjectId;
   workspaceId: Types.ObjectId;
   name: string;
+  /** Other names for the same person. */
+  aliases: string[];
+  /** True until a human types a real name; the name is then a placeholder like "Speaker A (Meeting 21/9)". */
+  anonymous: boolean;
+  /** Where the person was first heard. */
+  origin: { meetingId: Types.ObjectId; diar: string } | null;
   voiceprints: VoiceprintDoc[];
   createdAt: Date;
 }
@@ -383,14 +425,22 @@ const speakerSchema = new Schema<SpeakerDoc>(
   {
     workspaceId: { type: Schema.Types.ObjectId, required: true },
     name: { type: String, required: true },
+    aliases: { type: [String], default: [] },
+    anonymous: { type: Boolean, default: false },
+    origin: { type: Schema.Types.Mixed, default: null },
     voiceprints: {
       type: [
         new Schema(
           {
             id: { type: String, required: true },
             source: { type: String, enum: ['enrolment', 'meeting'], required: true },
-            audioUrl: { type: String, required: true },
+            audioUrl: { type: String, default: '' },
             createdAt: { type: Date, default: () => new Date() },
+            voiceprint: { type: String },
+            model: { type: String },
+            meetingId: { type: Schema.Types.ObjectId, default: null },
+            clip: { type: Schema.Types.Mixed, default: null },
+            quality: { type: Number, default: null },
           },
           opts,
         ),

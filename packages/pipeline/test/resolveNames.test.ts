@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { buildScoreMatrix, resolveNames } from '../src/index.js';
+import {
+  buildScoreMatrix,
+  buildScoreMatrixFromSegments,
+  buildSpeakerLevelMatrix,
+  type IdentifyOutputLike,
+  resolveNames,
+  type ScoredSegment,
+} from '../src/index.js';
 
 const names = { ghan: 'Ghanshyam Dholakia', raj: 'Rajesh' };
 
@@ -90,5 +97,72 @@ describe('resolveNames', () => {
   it('respects custom thresholds', () => {
     const r = resolveNames(['S0'], { S0: { ghan: 55, raj: 5 } }, { names, minScore: 50 });
     expect(r.S0!.personId).toBe('ghan');
+  });
+});
+
+describe('buildScoreMatrixFromSegments', () => {
+  it('weights each label by overlap time and takes the best voiceprint per person', () => {
+    const own = [
+      { speaker: 'A', start: 0, end: 10 },
+      { speaker: 'B', start: 10, end: 20 },
+    ];
+    const scored: ScoredSegment[] = [
+      { start: 0, end: 5, confidence: { 'p1-0': 90, 'p1-1': 70, 'p2-0': 10 } },
+      { start: 5, end: 10, confidence: { 'p1-0': 50, 'p1-1': 70, 'p2-0': 10 } },
+      { start: 10, end: 20, confidence: { 'p1-0': 5, 'p2-0': 88 } },
+    ];
+    const m = buildScoreMatrixFromSegments(own, scored, {
+      'p1-0': 'p1',
+      'p1-1': 'p1',
+      'p2-0': 'p2',
+    });
+    expect(m.A).toEqual({ p1: 70, p2: 10 }); // p1-0 averages 70, p1-1 70
+    expect(m.B).toEqual({ p1: 5, p2: 88 });
+  });
+
+  it('ignores identify segments without scores and speakers without overlap', () => {
+    const m = buildScoreMatrixFromSegments(
+      [{ speaker: 'A', start: 100, end: 110 }],
+      [
+        { start: 0, end: 5, confidence: { 'p1-0': 99 } },
+        { start: 100, end: 110 },
+      ],
+      { 'p1-0': 'p1' },
+    );
+    expect(m).toEqual({});
+  });
+});
+
+describe('buildSpeakerLevelMatrix', () => {
+  const output: IdentifyOutputLike = {
+    diarization: [
+      { speaker: 'X', start: 0, end: 50 },
+      { speaker: 'Y', start: 50, end: 100 },
+    ],
+    voiceprints: [
+      { speaker: 'X', confidence: { 'p1-0': 90, 'p1-1': 40, 'p2-0': 20 } },
+      { speaker: 'Y', confidence: { 'p1-0': 10, 'p2-0': 75 } },
+    ],
+  };
+  const map = { 'p1-0': 'p1', 'p1-1': 'p1', 'p2-0': 'p2' };
+
+  it('maps our speakers to the job’s speakers by time overlap, whatever the ids', () => {
+    const own = [
+      { speaker: 'S9', start: 1, end: 48 },
+      { speaker: 'S3', start: 52, end: 99 },
+    ];
+    const { matrix, unmapped } = buildSpeakerLevelMatrix(own, output, map);
+    expect(matrix).toEqual({ S9: { p1: 90, p2: 20 }, S3: { p1: 10, p2: 75 } });
+    expect(unmapped).toEqual([]);
+  });
+
+  it('reports speakers whose speech is split across the job’s speakers', () => {
+    const { matrix, unmapped } = buildSpeakerLevelMatrix(
+      [{ speaker: 'S1', start: 25, end: 75 }],
+      output,
+      map,
+    );
+    expect(matrix).toEqual({});
+    expect(unmapped).toEqual(['S1']);
   });
 });

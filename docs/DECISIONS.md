@@ -306,3 +306,24 @@ one global clock and no seams, and fits the "6 Deepgram jobs" budget (4 used).
   so the speech really is sparser; no second Deepgram request was spent on `gu`.
 - **Where M1 and M3 disagree, M3 wins** (decision 2). The agreement figures are not accuracy: only the blind audit measures that.
 - **Rule kept:** if a join's coverage is below Phase 1's for a meeting, Phase 1's lines are kept. It did not trigger.
+
+## 29. Cross-meeting identity: scoring, thresholds, and the credit stop (8 Oct)
+
+- **Score used: pyannote's own per-speaker aggregate** (`voiceprints[].confidence`, 0–100), with the identify
+  job's speakers mapped to ours by time overlap (≥ 70 % of a speaker's speech). My first version, the
+  duration-weighted mean of per-segment scores, diluted a real match from 78 to 59.6 because many short
+  segments score low; it is kept only for voices the job split differently (`buildScoreMatrixFromSegments`).
+- **Thresholds (decision 4): accept at score ≥ 60 with a margin ≥ 10** over the runner-up, one person per voice.
+  Observed in the three identify runs (21-9's four people against AOM, Prachar, 200): every non-match scored
+  16–48, every accepted match 78–90 (AOM 78, 200 85, Prachar 90). The gap between 48 and 78 is wide, so 60 is
+  not sensitive to the exact value. Margins were 11, 47 and 62. AOM's match is the weakest: the same voice scored
+  67 against a second 21-9 person.
+- **pyannote credits ran out** during the third voiceprint batch: `POST /v1/voiceprint` now returns 402
+  "Insufficient credits and no active subscription" (also with a dummy URL). The 8 diarizations, 10 voiceprints
+  (21-9) and 3 identify jobs completed before. I did not upgrade or pay (hard rule). Effects: the new people for
+  AOM, Prachar and 200 exist (anonymous, with sample clips) but have **no voiceprints yet**; re-running
+  `npm run p2:identity -- AOM Prachar 200` after a top-up enrols them (idempotent, skips clips already enrolled).
+  Until then only 21-9's four voices can be recognised in other meetings.
+- **Guard.** Identity scripts never submit a new full-meeting identify job unless `--submit` is given.
+- **Names.** Voices keep per-meeting labels (Speaker A, B…) in transcripts until a person is named; the card shows
+  "same voice as Speaker D (Meeting 21/9), score 78". Naming a person renames them in every linked meeting.

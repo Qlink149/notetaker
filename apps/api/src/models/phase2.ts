@@ -97,4 +97,44 @@ const joinSchema = new Schema<P2JoinDoc>({
 joinSchema.index({ meetingId: 1, method: 1 }, { unique: true });
 export const P2JoinModel = mongoose.model<P2JoinDoc>('P2Join', joinSchema, 'p2_join_lines');
 
-export const phase2Models = [P2PyannoteResponseModel, P2MediaModel, P2JoinModel];
+// ---------- Identify runs: every score, so thresholds can be judged ----------
+export interface P2IdentityRunDoc {
+  _id: Types.ObjectId;
+  meetingId: Types.ObjectId;
+  jobId: string;
+  model: string;
+  thresholds: { minScore: number; minMargin: number };
+  /** Labels sent (opaque ids), mapped to person ids. */
+  labelToPerson: Record<string, string>;
+  /** Person id to display name at the time. */
+  names: Record<string, string>;
+  /** Our speaker, then person, then score (0-100). */
+  matrix: Record<string, Record<string, number>>;
+  /** Our speaker to outcome of the name resolution. */
+  resolutions: Record<string, unknown>;
+  createdAt: Date;
+}
+const identityRunSchema = new Schema<P2IdentityRunDoc>({
+  meetingId: { type: Schema.Types.ObjectId, required: true },
+  jobId: { type: String, required: true },
+  model: String,
+  thresholds: { type: Schema.Types.Mixed },
+  labelToPerson: { type: Schema.Types.Mixed },
+  names: { type: Schema.Types.Mixed },
+  matrix: { type: Schema.Types.Mixed },
+  resolutions: { type: Schema.Types.Mixed },
+  createdAt: { type: Date, default: () => new Date() },
+});
+identityRunSchema.index({ meetingId: 1, createdAt: -1 });
+export const P2IdentityRunModel = mongoose.model<P2IdentityRunDoc>(
+  'P2IdentityRun',
+  identityRunSchema,
+  'p2_identity_runs',
+);
+
+export const phase2Models = [
+  P2PyannoteResponseModel,
+  P2MediaModel,
+  P2JoinModel,
+  P2IdentityRunModel,
+];

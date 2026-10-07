@@ -27,6 +27,106 @@ export function buildScoreMatrix(
   return matrix;
 }
 
+export interface ScoredSegment {
+  start: number;
+  end: number;
+  /** Score (0–100) of each voiceprint label for this stretch of speech. */
+  confidence?: Record<string, number>;
+}
+
+/**
+ * Score matrix from segment-level identify output, independent of the speaker ids pyannote used in
+ * that job: for each of our own speakers, the duration-weighted mean score of every voiceprint
+ * label over the identify segments that overlap its speech, then the best label per person.
+ */
+export function buildScoreMatrixFromSegments(
+  own: { speaker: string; start: number; end: number }[],
+  scored: ScoredSegment[],
+  labelToPerson: Record<string, string>,
+): ScoreMatrix {
+  const segs = scored.filter((s) => s.confidence).sort((a, b) => a.start - b.start);
+  const sums = new Map<string, Map<string, { sum: number; sec: number }>>();
+  let from = 0;
+  for (const o of [...own].sort((a, b) => a.start - b.start)) {
+    while (from < segs.length && segs[from]!.end <= o.start - 60) from++;
+    for (let i = from; i < segs.length && segs[i]!.start < o.end; i++) {
+      const s = segs[i]!;
+      const sec = Math.min(s.end, o.end) - Math.max(s.start, o.start);
+      if (sec <= 0) continue;
+      const row = sums.get(o.speaker) ?? new Map<string, { sum: number; sec: number }>();
+      sums.set(o.speaker, row);
+      for (const [label, score] of Object.entries(s.confidence!)) {
+        const cur = row.get(label) ?? { sum: 0, sec: 0 };
+        row.set(label, { sum: cur.sum + score * sec, sec: cur.sec + sec });
+      }
+    }
+  }
+  const matrix: ScoreMatrix = {};
+  for (const [speaker, row] of sums) {
+    const out: Record<string, number> = {};
+    for (const [label, { sum, sec }] of row) {
+      const person = labelToPerson[label];
+      if (!person) continue;
+      out[person] = Math.max(out[person] ?? -Infinity, Math.round((sum / sec) * 10) / 10);
+    }
+    matrix[speaker] = out;
+  }
+  return matrix;
+}
+
+export interface IdentifyOutputLike {
+  /** The identify job's own (exclusive) diarization. */
+  diarization: { speaker: string; start: number; end: number }[];
+  /** Per speaker of that job: score of every voiceprint label (0-100). */
+  voiceprints: IdentifyVoiceprintScores[];
+}
+
+/**
+ * Score matrix from pyannote's own per-speaker aggregate scores. The identify job diarizes the
+ * audio itself, so its speaker ids are mapped to ours by time overlap: our speaker takes the
+ * identify speaker that covers most of its speech, provided that is at least `minShare` of it.
+ * Returns the matrix plus the speakers that could not be mapped (use segment-level scores for those).
+ */
+export function buildSpeakerLevelMatrix(
+  own: { speaker: string; start: number; end: number }[],
+  output: IdentifyOutputLike,
+  labelToPerson: Record<string, string>,
+  minShare = 0.7,
+): { matrix: ScoreMatrix; unmapped: string[] } {
+  const rows = new Map(output.voiceprints.map((v) => [v.speaker, v.confidence]));
+  const theirs = [...output.diarization].sort((a, b) => a.start - b.start);
+  const overlap = new Map<string, Map<string, number>>();
+  const ownTotal = new Map<string, number>();
+  for (const o of own) {
+    ownTotal.set(o.speaker, (ownTotal.get(o.speaker) ?? 0) + (o.end - o.start));
+    for (const t of theirs) {
+      if (t.start >= o.end) break;
+      const sec = Math.min(t.end, o.end) - Math.max(t.start, o.start);
+      if (sec <= 0) continue;
+      const row = overlap.get(o.speaker) ?? new Map<string, number>();
+      overlap.set(o.speaker, row);
+      row.set(t.speaker, (row.get(t.speaker) ?? 0) + sec);
+    }
+  }
+  const matrix: ScoreMatrix = {};
+  const unmapped: string[] = [];
+  for (const [speaker, total] of ownTotal) {
+    const best = [...(overlap.get(speaker) ?? [])].sort((a, b) => b[1] - a[1])[0];
+    const conf = best ? rows.get(best[0]) : undefined;
+    if (!best || !conf || best[1] / total < minShare) {
+      unmapped.push(speaker);
+      continue;
+    }
+    const row: Record<string, number> = {};
+    for (const [label, score] of Object.entries(conf)) {
+      const person = labelToPerson[label];
+      if (person) row[person] = Math.max(row[person] ?? -Infinity, score);
+    }
+    matrix[speaker] = row;
+  }
+  return { matrix, unmapped };
+}
+
 export type ResolveStatus =
   'accepted' | 'below-threshold' | 'low-margin' | 'taken' | 'no-voiceprints';
 
@@ -153,5 +253,37 @@ export function resolveNames(
       status,
     };
   });
+  return out;
+}
+
+export interface VoiceprintCandidate {
+  personId: string;
+  quality: number | null;
+}
+
+/**
+ * At most `max` voiceprints for one identify request (pyannote takes 50), spread over people:
+ * every person's best voiceprint first, then every person's second best, and so on. People with
+ * better voiceprints come first within a round.
+ */
+export function pickVoiceprints<T extends VoiceprintCandidate>(items: T[], max = 50): T[] {
+  const byPerson = new Map<string, T[]>();
+  for (const it of items) byPerson.set(it.personId, [...(byPerson.get(it.personId) ?? []), it]);
+  const queues = [...byPerson.values()].map((q) =>
+    [...q].sort((a, b) => (b.quality ?? 0) - (a.quality ?? 0)),
+  );
+  queues.sort((a, b) => (b[0]?.quality ?? 0) - (a[0]?.quality ?? 0));
+  const out: T[] = [];
+  for (let round = 0; out.length < max; round++) {
+    let added = false;
+    for (const q of queues) {
+      const item = q[round];
+      if (item && out.length < max) {
+        out.push(item);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
   return out;
 }

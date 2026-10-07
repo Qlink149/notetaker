@@ -25,7 +25,8 @@
     "p2:stats": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/stats.ts",
     "demo:copy": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/copyDb.ts",
     "p2:deepgram": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/deepgram.ts",
-    "p2:join": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/join.ts"
+    "p2:join": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/join.ts",
+    "p2:identity": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/identity.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
