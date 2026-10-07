@@ -279,3 +279,30 @@ Nothing below is taken from the Base44 code.
 - **Demo database `meetingid_demo`.** Copied from `meetingid` by `npm run demo:copy` (upsert by `_id`, source read-only).
   `jobs` and `workerheartbeats` are never copied, because queued Phase 1 jobs would spend Gemini quota in a demo worker.
   The brief's collection `meetingdatas` is `meetingdata` in this codebase.
+
+## 28. Join: M1 + M3 chooser, measured (8 Oct, 0 Gemini calls)
+
+Inputs: pyannote precision-2 exclusive diarization (#26), Phase 1's stored turns, and one Deepgram
+nova-3 request per whole meeting (`hi`; `gu` for "200"), stored in `engineresponses`
+(engine `deepgram`, kind `words`). A whole file per request rather than six 10-minute chunks means
+one global clock and no seams, and fits the "6 Deepgram jobs" budget (4 used).
+
+- **Alignment must be semi-global.** The first version aligned each block end to end against a Deepgram
+  window 75 s longer than the block, which rewarded dragging Gemini words onto later Deepgram words:
+  21-9 coverage fell to 0.914 (Phase 1: 0.963) and 185 s of speech was left without a turn. Letting
+  unused Deepgram words at either end cost nothing fixed it (coverage 0.985).
+- **Result** (`npm run p2:join`):
+
+  | Meeting | M1 speakers | M3 speakers | Phase 1 speakers | Coverage M3 (Phase 1) | Gemini words matched | M1/M3 agreement |
+  |---|---|---|---|---|---|---|
+  | 21-9 | 6 | 5 | 11 | 0.985 (0.963) | 4583 / 7748 | 0.64 |
+  | 200 | 4 | 4 | 11 | 0.992 (0.992) | 2253 / 4843 | 0.75 |
+  | AOM | 7 | 7 | 18 | 1.000 (0.916) | 4046 / 5852 | 0.84 |
+
+  Matched words are anchors; the rest take time and speaker from their neighbours. Lines were ≤ 45 s throughout.
+- **Chooser.** M3 for a chunk when Deepgram's words cover ≥ 0.70 of that chunk's speech, else M1. All chunks
+  of 21-9, 200 and AOM qualified. Prachar chunk 3 (the only one with Gemini turns yet) scored 0.446 and uses M1:
+  Deepgram found about 97 words/min there against 184 for the other Hindi meetings, with similar confidence (0.83),
+  so the speech really is sparser; no second Deepgram request was spent on `gu`.
+- **Where M1 and M3 disagree, M3 wins** (decision 2). The agreement figures are not accuracy: only the blind audit measures that.
+- **Rule kept:** if a join's coverage is below Phase 1's for a meeting, Phase 1's lines are kept. It did not trigger.
