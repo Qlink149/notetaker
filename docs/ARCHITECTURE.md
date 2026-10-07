@@ -77,3 +77,53 @@ chunks).
   (`Speaker n`); `VoiceprintResolver` (pyannote) plugs in at the assemble stage. The FLAC
   `analysisUrl` is kept for it.
 - `services/pyannote/client.ts` and the `Speaker` model / enrol route are ported and compiling.
+
+## Phase 2 additions (speaker identity, group recording)
+
+This section describes what the code does now; the older sections above describe Phase 1 and are still right for the parts not listed here.
+
+### Stage order
+
+```
+ingest ─┬─ transcribe (one job per 10-min chunk) ──┐
+        └─ diarize (pyannote, polled; Deepgram words) ┴─ assemble (+ join) → gapfill → identify → summarise → finalise
+multitrack (group recordings only) → ingest
+```
+
+- `assemble` waits for both transcription and diarization (`meetingdata.diarize.state` ∈ done / fallback / off). It builds Phase 1's text-linked turns, then
+  re-labels them with pyannote speakers (`rebuildTranscript` with a `JoinInput`) unless that would lower coverage. `gapfill` re-runs the same function.
+- `diarize` never blocks a worker: it submits, then waits by retrying. Stored results are reused; results older than 24 h or no longer on pyannote's side are submitted again.
+  If pyannote is unavailable the meeting continues with Phase 1's text linking (`speakerSource: "text-fallback"`).
+- `identify` compares each voice with every known voiceprint (best per person first, ≤ 50), creates anonymous people for new voices, applies names, then hands over to `summarise`. It never fails the meeting.
+- `GAPFILL=off` skips gap-fill; `SPEAKER_SOURCE=text` keeps Phase 1 behaviour.
+
+### Join methods (`packages/pipeline/src/join/`)
+
+M1 time overlap (`assignByOverlap`), M3 word clock (`wordClockJoin`: semi-global alignment of Gemini's words to Deepgram's, speaker from pyannote at each word's midpoint),
+a per-chunk chooser (`joinMeeting`: M3 where Deepgram covers ≥ 70 % of a chunk's speech) and `labelSpeakersByTime` ("Speaker A, B…").
+
+### New and changed collections
+
+| Collection | Holds |
+|---|---|
+| `p2_pyannote_responses` | every pyannote job's complete output (diarize, identify, voiceprint) with the request minus voiceprint strings; key label only |
+| `p2_media` | pyannote media uploads (they expire) |
+| `p2_join_lines` | M1, M3 and chooser results per meeting (experiment output, used by the audit) |
+| `p2_identity_runs` | every identify score matrix and the resolution made from it |
+| `p2_audits` | blind audit items, naming and answers |
+| `speakers` | people: name, `anonymous`, origin voice, voiceprints (string, model, clip, quality) |
+| `meetingdata` | + `speakerCards` (one per voice: person, match, status, sample clips), `speakerSource`, `diarize`, `phase1` (the text-linked version) |
+| `engineresponses` | + kind `words` (Deepgram word clock) |
+| `meetingsessions`, `sessionparticipants`, `sessionloudness` | group recordings |
+
+### Services
+
+- `services/pyannote/client.ts`: pinned-model requests, media upload, 429 handling, polling with back-off. `jobs.ts`: resumable jobs stored in `p2_pyannote_responses`.
+- `services/identity/`: `identity.ts` (install the join, cards, apply names, rename a person everywhere), `edits.ts` (merge, split, reassign, name), `enroll.ts` (voiceprints from clips, identify, resolve), `joinInput.ts`.
+- `services/export/docx.ts`: Word files with embedded fonts. `services/audit.ts`: audit sampling.
+- `packages/pipeline`: `resolveNames` (one-to-one best pairing, threshold and margin), `voiceprintClips`, `names`, `audit`, `multitrack` (alignment, drift, mix, attribution) — all pure and unit-tested.
+
+### Routes added
+
+`/meetings/:id/speakers` (+ `/:diar/name`, `merge`, `split`, `reidentify`), `/meetings/:id/lines/reassign`, `/meetings/:id/export`, `/audit…`, `/dashboard`,
+`/sessions…` (host, logged in) and `/join/:code…` (guests, token only; mounted before the login wall).
