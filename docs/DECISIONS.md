@@ -327,3 +327,35 @@ one global clock and no seams, and fits the "6 Deepgram jobs" budget (4 used).
 - **Guard.** Identity scripts never submit a new full-meeting identify job unless `--submit` is given.
 - **Names.** Voices keep per-meeting labels (Speaker A, B…) in transcripts until a person is named; the card shows
   "same voice as Speaker D (Meeting 21/9), score 78". Naming a person renames them in every linked meeting.
+
+## 30. Pipeline integration (8 Oct)
+
+- **Stage order:** `ingest → [transcribe ∥ diarize] → assemble (with the join) → gapfill → identify → summarise → finalise`.
+  The brief's separate `join` stage is part of `assemble` (and of the re-assembly gap-fill does): gap-filled turns need
+  pyannote speakers too, and one function (`rebuildTranscript`) does it everywhere.
+- **Waiting without holding a worker:** `diarize` polls once per run and waits by retrying ("waiting" retries do not use attempts);
+  assembly starts only when both transcription and diarization are finished.
+- **Fallback:** if pyannote refuses (no key, 402, 400/401/403, a failed job) or retries run out, the meeting continues with
+  Phase 1's text linking and `speakerSource: "text-fallback"`; the review screen says so. Rate limits (429) and 5xx are retried.
+- **A join may not lower coverage** (tolerance 0.002) below the text-linked version; if it would, the text-linked lines are kept.
+- **Phase 1's text-linked turns, lines and speaker map** are stored in `meetingdata.phase1` whenever pyannote speakers replace them.
+- **`GAPFILL=off`** skips gap-fill (the one stage that calls Gemini again after transcription). Used by `demo:reprocess`, which also
+  removes the Gemini keys from its own process, so "0 new Gemini calls" holds by construction.
+- **Stored pyannote output is reused:** a successful `stageA` diarization counts as the pipeline's result; a result older than 24 h or one pyannote
+  no longer has is resubmitted.
+- **Key ids** are env variable names; the Phase 1 hash is only recognised when reading old records.
+- **Reprocessing tonight:** 21/9, AOM and 200 ran assemble → identify → summarise from stored output with 0 new Gemini calls. Summaries were written by
+  isolated Haiku subagents answering the handoffs and passed the same strict validation as the Anthropic path. Prachar waits for the other session.
+
+## 31. Group recording and Phase 4 (8 Oct)
+
+- **Parts are WAV, not browser codecs:** MediaRecorder parts are not independently decodable and have gaps between restarts. 16 kHz mono PCM parts are exact
+  and about 1.9 MB a minute.
+- **Alignment convention:** `fineSec` in the report is the correction to add to the coarse start, so `coarseSec + fineSec` is a phone's real start relative to the reference phone.
+  Everything is aligned to the reference phone's content, so that phone's own timestamp error is shared by all.
+- **Level matching before choosing a microphone**, with hysteresis and no switching in silence. Plain loudest-wins flipped between phones whenever their noise floors differed by chance.
+- **Attribution is display only.** It never changes a name.
+- **The public router is mounted before the workspace router** (which requires login for everything after it); guests are authenticated by participant token only.
+- **PDF stays print-to-PDF** (no browser engine on the server). **No deployment** (not pushed).
+- **Demo database safety:** scripts that modify data refuse any database whose name does not end in `_demo`. `demo` runs without Gemini keys unless `--live`.
+- **Reset restores the finished demo state** (a snapshot taken by `demo:snapshot`), not Phase 1's raw copy, because a raw copy would lose the speakers and summaries made tonight.

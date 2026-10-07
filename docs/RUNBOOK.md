@@ -108,3 +108,14 @@ The worker validates the reply within 15 s; an invalid reply re-opens the reques
 Assembly works from stored chunk turns. Mark the meeting `stage: "assemble"`, `status:
 "processing"`, delete its pending summary handoffs, and queue an `assemble` job (see
 `POST /meetings/:id/retry {"stage": "assemble"}`).
+
+## Demo (Phase 2 build)
+
+All from the repo root of the Phase 2 worktree. Details and the demo script: `docs/DEMO_HANDOVER.md`.
+
+- `npm run demo` starts API, worker and web against `meetingid_demo` with Gemini switched off; `npm run demo:live` keeps Gemini on.
+- `npm run demo:check` runs 11 checks against the running demo; `npm run demo:tunnel` gives phones an https address.
+- `npm run demo:snapshot` saves the demo state; `npm run demo:reset` restores it.
+- `npm run demo:refresh -w @meetingid/api -- Prachar [--apply]` re-copies meetings the Phase 1 queue has finished; then
+  `npm run p2:join -w @meetingid/api -- Prachar`, `npm run demo:reprocess -w @meetingid/api -- <meetingId>`, answer the summary handoffs (see "Summaries in testing"), `npm run demo:reprocess -w @meetingid/api -- --resume`, `npm run demo:snapshot`.
+- Experiments (read stored data, write `p2_*` collections): `p2:diarize`, `p2:stats`, `p2:join`, `p2:deepgram`, `p2:identity` (never submits a new full-meeting job without `--submit`), `p2:audit-seed`, `p2:migrate-key-labels`.
