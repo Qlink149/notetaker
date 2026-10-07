@@ -33,6 +33,7 @@ export const SEED_GLOSSARY: GlossaryEntry[] = [
   { term: 'Kalyan', kind: 'competitor', aliases: ['Kalyan Jewellers'] },
   { term: 'Titan', kind: 'competitor', aliases: [] },
   { term: 'Reliance Jewels', kind: 'competitor', aliases: [] },
+  { term: 'ORA', kind: 'competitor', aliases: ['Aura', 'Evara'] },
   { term: 'Prachar', kind: 'agency', aliases: [] },
 ];
 
