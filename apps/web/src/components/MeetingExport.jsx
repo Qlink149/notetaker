@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Copy, Download, Printer, Check } from "lucide-react";
+import { Copy, Download, Printer, Check, FileText, Loader2 } from "lucide-react";
+import { api } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { fmtDuration, fmtTime, lineText } from "@/lib/format";
 
@@ -36,7 +37,8 @@ function buildText(meeting, lines, scriptMode) {
   return out.join("\n");
 }
 
-// Print-to-PDF via the browser so Gujarati and Devanagari render with system fonts. Phase 4 replaces this.
+// PDF is the browser's print-to-PDF (system fonts for Gujarati and Devanagari): no browser engine is bundled
+// on the server. The Word export embeds the fonts.
 function buildPrintHtml(meeting, lines, scriptMode) {
   const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const parts = [`<h1>${esc(meeting.title)}</h1>`, `<p class="meta">${esc(fmtDate(meeting.date))}`];
@@ -87,6 +89,7 @@ function buildPrintHtml(meeting, lines, scriptMode) {
 
 export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) {
   const [copied, setCopied] = useState(false);
+  const [wordBusy, setWordBusy] = useState(false);
 
   const copy = async () => {
     try {
@@ -108,6 +111,23 @@ export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) 
     URL.revokeObjectURL(url);
   };
 
+  const downloadWord = async () => {
+    setWordBusy(true);
+    try {
+      const blob = await api.meetings.exportDocx(meeting.id, scriptMode);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${meeting.title.replace(/[^a-z0-9]+/gi, "_")}.docx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e?.message || "Could not create the Word file.");
+    } finally {
+      setWordBusy(false);
+    }
+  };
+
   const printPdf = () => {
     const w = window.open("", "_blank");
     if (!w) return alert("Please allow pop-ups to export as PDF.");
@@ -123,6 +143,9 @@ export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) 
       </Button>
       <Button variant="outline" size="sm" onClick={downloadTxt}>
         <Download className="w-4 h-4 mr-1" /> .txt
+      </Button>
+      <Button variant="outline" size="sm" onClick={downloadWord} disabled={wordBusy}>
+        {wordBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />} Word
       </Button>
       <Button variant="outline" size="sm" onClick={printPdf}>
         <Printer className="w-4 h-4 mr-1" /> PDF

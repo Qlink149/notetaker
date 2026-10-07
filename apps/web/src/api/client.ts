@@ -214,6 +214,19 @@ export const api = {
         (r) => r.meeting,
       ),
     remove: (id: string) => request<void>('DELETE', `/meetings/${id}`),
+    /** The meeting as a Word file (Gujarati and Devanagari fonts embedded). */
+    exportDocx: async (id: string, script: 'roman' | 'native' | 'both'): Promise<Blob> => {
+      const token = getToken();
+      const res = await fetch(`${BASE}/meetings/${id}/export?format=docx&script=${script}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new ApiError(res.status, json.error ?? `Export failed (${res.status})`);
+      }
+      return res.blob();
+    },
     speakers: (id: string) =>
       request<{ source: 'pyannote' | 'text-fallback'; cards: SpeakerCard[] }>(
         'GET',
