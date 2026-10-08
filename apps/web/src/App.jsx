@@ -47,6 +47,7 @@ function AuthenticatedApp() {
         <Route path="/meetings/:id" element={<MeetingDetail />} />
         <Route path="/benchmark" element={<Benchmark />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<PageNotFound />} />

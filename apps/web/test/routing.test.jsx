@@ -56,4 +56,40 @@ describe('who can see what', () => {
       unmount();
     }
   });
+
+  it('every page in the menu opens when logged in (no 404)', async () => {
+    api.auth.me.mockResolvedValue({ workspace: { settings: { scriptPreference: 'roman' } } });
+    api.meetings.list.mockResolvedValue([]);
+    api.speakers = { list: vi.fn().mockResolvedValue([]) };
+    api.dashboard = vi.fn().mockResolvedValue({
+      totals: {
+        meetings: 0,
+        hours: 0,
+        usdRecorded: 0,
+        usdLedger: 0,
+        ledgerByProvider: {},
+        averageCoverage: null,
+        belowNinety: 0,
+        voiceBacked: 0,
+      },
+      usage: { engineCalls: [], pyannoteJobs: [], pyannoteHours: 0, pyannoteCostNote: '' },
+      quotas: [],
+      audit: [],
+      meetings: [],
+    });
+    api.audit = { list: vi.fn().mockResolvedValue([]) };
+    api.workspace.settings.mockResolvedValue({
+      languages: ['hi'],
+      engine: 'gemini',
+      scriptPreference: 'roman',
+    });
+    const expected = { '/dashboard': 'Cost and quality', '/audit': 'Blind audit' };
+    for (const [path, heading] of Object.entries(expected)) {
+      window.history.pushState({}, '', path);
+      const { unmount } = render(<App />);
+      await screen.findByText(heading);
+      expect(screen.queryByText(/page.*not found|404/i)).toBeNull();
+      unmount();
+    }
+  });
 });
