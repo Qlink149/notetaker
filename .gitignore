@@ -50,3 +50,11 @@ scripts/eval/out/
 *.tmp.mjs
 *.tmp.ts
 *.tmp.cjs
+
+# local speaker-embedding environment and models (downloaded, not committed)
+tools/local-voices/.venv/
+tools/local-voices/models/
+
+tools/local-voices/.venv/
+tools/local-voices/models/
+tools/local-voices/out/

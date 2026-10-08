@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireEnv } from '../../config/env.js';
 import { MeetingModel } from '../../models/index.js';
 import {
   MEDIA_FRESH_MS,
@@ -34,14 +36,18 @@ export async function analysisFlac(meetingId: string): Promise<string> {
 
 /** media:// URL of the meeting's analysis FLAC, uploading it again when the copy may have expired. */
 export async function meetingMedia(meetingId: string): Promise<string> {
+  // Uploads belong to one pyannote account: name the file after a short tag of the key in use, so a
+  // changed key re-uploads instead of reusing an address the new account cannot see.
+  const tag = createHash('sha1').update(requireEnv(PYANNOTE_KEY_LABEL)).digest('hex').slice(0, 4);
+  const key = `p2-${meetingId}-${tag}.flac`;
   const fresh = await P2MediaModel.findOne({
+    _id: `media://${key}`,
     meetingId,
     kind: 'meeting',
     uploadedAt: { $gt: new Date(Date.now() - MEDIA_FRESH_MS) },
   }).lean();
   if (fresh) return fresh._id;
   const flac = await analysisFlac(meetingId);
-  const key = `p2-${meetingId}.flac`;
   const url = await uploadMedia(flac, key);
   const { durationSec } = await probe(flac);
   const { size } = await stat(flac);

@@ -169,6 +169,7 @@ export async function identifyMeeting(
     log = () => undefined,
     submitNew = false,
     previewOnly = false,
+    budget,
   }: {
     thresholds?: { minScore: number; minMargin: number };
     log?: Log;
@@ -176,6 +177,8 @@ export async function identifyMeeting(
     submitNew?: boolean;
     /** Compute who each voice is without creating people, voiceprints or cards. */
     previewOnly?: boolean;
+    /** Pay-per-voiceprint cap shared across meetings: one clip per new voice, none for recognised voices, stop at `left`. */
+    budget?: { left: number };
   } = {},
 ): Promise<IdentityReport> {
   const meeting = await MeetingModel.findById(meetingId).lean();
@@ -287,9 +290,11 @@ export async function identifyMeeting(
     resolutions = resolveNames(order, {}, { ...thresholds, names });
   }
   const enrol = async (personId: string, diar: string, clips: VoiceClip[]): Promise<void> => {
+    if (budget) clips = clips.slice(0, Math.min(1, budget.left));
     if (creditsOut || !clips.length) return;
     try {
       await addVoiceprints(meetingId, personId, diar, clips, log);
+      if (budget) budget.left -= clips.length;
     } catch (err) {
       if (!outOfCredits(err)) throw err;
       creditsOut = true;
@@ -327,7 +332,7 @@ export async function identifyMeeting(
       status = 'solid';
       match = { personId, name: res.name ?? personId, score: res.score, margin: res.margin };
       linked.push({ label, person: res.name ?? personId, score: res.score, margin: res.margin });
-      await enrol(personId, diar, clips.slice(0, 1));
+      if (!budget) await enrol(personId, diar, clips.slice(0, 1));
     } else if (sec >= MIN_SPEECH_FOR_PERSON_SEC && clips.length) {
       const existing = await SpeakerModel.findOne({
         workspaceId: new Types.ObjectId(workspaceId),

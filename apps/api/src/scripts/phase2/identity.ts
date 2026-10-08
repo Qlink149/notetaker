@@ -14,6 +14,7 @@ run(async () => {
     allowPositionals: true,
     options: {
       submit: { type: 'boolean' },
+      budget: { type: 'string' },
       'min-score': { type: 'string', default: '60' },
       'min-margin': { type: 'string', default: '10' },
     },
@@ -23,6 +24,8 @@ run(async () => {
     minScore: Number(values['min-score']),
     minMargin: Number(values['min-margin']),
   };
+  // --budget N: create at most N voiceprints in total, one per new voice (the trial allows only a few)
+  const budget = values.budget ? { left: Number(values.budget) } : undefined;
   for (const m of meetingIds(positionals)) {
     const meeting = await MeetingModel.findById(m.id).lean();
     if (!meeting) continue;
@@ -33,6 +36,7 @@ run(async () => {
     const r = await identifyMeeting(m.id, String(meeting.workspaceId), {
       thresholds,
       submitNew: values.submit === true,
+      budget,
       log: (x) => console.log(`   ${x}`),
     });
     console.log(
