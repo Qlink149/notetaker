@@ -64,7 +64,7 @@ async function seedJoined(): Promise<string> {
   });
   await P2JoinModel.create({
     meetingId: m._id,
-    method: 'm3',
+    method: 'joined',
     lines: m1Lines,
     turns: [],
     speakerMap,
@@ -122,7 +122,7 @@ describe('blind audit', () => {
     };
     expect(new Set(got.items.map((i) => i.assigned))).toEqual(new Set(['Ghanshyam']));
 
-    // answer every item: m1 items right, m3 items wrong (the id prefix is the hidden method)
+    // answer every item: m1 items right, joined items wrong (the id prefix is the hidden method)
     for (const it of got.items) {
       await auth(request(app).patch(`/api/v1/audit/${id}/items/${it.id}`))
         .send({ speaker: it.id.startsWith('m1') ? 'right' : 'wrong', text: 'match' })
@@ -138,9 +138,9 @@ describe('blind audit', () => {
       }[];
     };
     const m1 = results.methods.find((t) => t.method === 'm1')!;
-    const m3 = results.methods.find((t) => t.method === 'm3')!;
+    const joined = results.methods.find((t) => t.method === 'joined')!;
     expect(m1).toMatchObject({ answered: 6, speakerCorrectRate: 1, wrongNameRate: 0 });
-    expect(m3).toMatchObject({ answered: 6, speakerCorrectRate: 0, wrongNameRate: 1 });
+    expect(joined).toMatchObject({ answered: 6, speakerCorrectRate: 0, wrongNameRate: 1 });
   });
 
   it('refuses to reseed once answers exist, and lists only joined meetings', async () => {

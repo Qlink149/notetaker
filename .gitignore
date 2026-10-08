@@ -55,6 +55,4 @@ scripts/eval/out/
 tools/local-voices/.venv/
 tools/local-voices/models/
 
-tools/local-voices/.venv/
-tools/local-voices/models/
 tools/local-voices/out/

@@ -11,7 +11,9 @@ import { stages } from '../../pipeline/stages/index.js';
 // finalise) from STORED output only. This process cannot call Gemini: the keys are removed from its
 // environment and gap-fill is switched off, so the number of new Gemini calls is zero by construction.
 // Summaries use the handoff provider: when they are waiting for an answer the script stops and lists them.
-//   npm run demo:reprocess -w @meetingid/api -- <meetingId>... [--resume]
+//   npm run demo:reprocess -w @meetingid/api -- <meetingId>... [--resume] [--stage summarise]
+// `--stage summarise` only writes the summaries again (after speakers or lines changed); the join and
+// the identification are left as they are.
 for (const name of Object.keys(process.env))
   if (/^GEMINI_API_KEY\d*$/.test(name)) delete process.env[name];
 process.env.GAPFILL = 'off';
@@ -19,7 +21,7 @@ process.env.GAPFILL = 'off';
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { resume: { type: 'boolean' } },
+    options: { resume: { type: 'boolean' }, stage: { type: 'string', default: 'assemble' } },
   });
   const cfg = env();
   await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
@@ -32,15 +34,25 @@ async function main(): Promise<void> {
 
   if (!values.resume) {
     for (const id of positionals) {
+      const stage = values.stage === 'summarise' ? 'summarise' : 'assemble';
       const m = await MeetingModel.findByIdAndUpdate(id, {
-        $set: { stage: 'assemble', status: 'processing', error: null },
+        $set: {
+          stage,
+          status: 'processing',
+          error: null,
+          ...(stage === 'summarise' ? { summaryStatus: 'pending' } : {}),
+        },
       }).lean();
       if (!m) {
         console.log(`${id}: not found`);
         continue;
       }
-      await enqueue({ meetingId: m._id, stage: 'assemble' });
-      console.log(`${m.title}: assemble queued`);
+      await enqueue({
+        meetingId: m._id,
+        stage,
+        ...(stage === 'summarise' ? { payload: { force: true } } : {}),
+      });
+      console.log(`${m.title}: ${stage} queued`);
     }
   }
   const runner = new Runner(deps, stages, { workerId: 'demo-reprocess', concurrency: 1 });

@@ -3,7 +3,7 @@ import { MeetingModel } from '../../models/index.js';
 import { seedAudit } from '../../services/audit.js';
 import { connect, meetingIds, run } from './lib.js';
 
-// Seed the blind audit with sampled lines from the M1 and M3 joins (method hidden in the UI).
+// Seed the blind audit with sampled lines from the M1 and joined joins (method hidden in the UI).
 //   npm run p2:audit-seed -w @meetingid/api -- [all | names…] [--per-method 15]
 run(async () => {
   const { values, positionals } = parseArgs({

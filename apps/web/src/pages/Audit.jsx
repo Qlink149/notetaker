@@ -48,7 +48,11 @@ function Results() {
       .catch(() => setR({ methods: [], shortLines: [], note: '' }));
   }, []);
   if (!r) return <Loader2 className="w-5 h-5 animate-spin" />;
-  const label = { m1: 'M1 · time overlap', m3: 'M3 · word clock' };
+  const label = {
+    m1: 'M1 · time overlap on Gemini times',
+    m3: 'M3 · word clock',
+    joined: 'Joined · word clock + drift-shifted turns',
+  };
   const table = (rows, title) => (
     <div className="mb-5">
       <h3 className="text-sm font-semibold mb-2">{title}</h3>

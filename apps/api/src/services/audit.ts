@@ -4,7 +4,8 @@ import type { Line } from '@meetingid/shared';
 import { P2AuditModel, P2JoinModel, type AuditItem } from '../models/phase2.js';
 
 /**
- * Sample lines from the M1 and M3 joins of a meeting (a third under 3 s), hide the method and
+ * Sample lines from the two joins under test of a meeting (m1: time overlap on Gemini's own times, the
+ * Phase 2 starting point; joined: the word-clock join that is installed) (a third under 3 s), hide the method and
  * shuffle. Stable per meeting. Returns the number of items.
  */
 export async function seedAudit(
@@ -14,7 +15,7 @@ export async function seedAudit(
 ): Promise<number> {
   const m = { _id: new Types.ObjectId(meetingId) };
   const items: AuditItem[] = [];
-  for (const method of ['m1', 'm3'] as const) {
+  for (const method of ['m1', 'joined'] as const) {
     const join = await P2JoinModel.findOne({ meetingId: m._id, method }).lean();
     if (!join) continue;
     const labelToDiar = Object.fromEntries(

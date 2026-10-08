@@ -136,7 +136,7 @@ export const P2IdentityRunModel = mongoose.model<P2IdentityRunDoc>(
 export interface AuditItem {
   id: string;
   /** Hidden from the person auditing. */
-  method: 'm1' | 'm3';
+  method: 'm1' | 'm3' | 'joined';
   start: number;
   end: number;
   /** pyannote speaker the method gave this line. */
