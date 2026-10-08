@@ -72,7 +72,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 **What not to click:**
 - **Re-identify speakers**: needs pyannote credit; right now it answers "Speaker recognition is unavailable: the pyannote account has no credits." (honest, but not a demo moment).
 - **Refresh summary** after naming: it needs the summary service (a person answers it in testing), so the meeting would sit on "Processing" until someone answers. The page tells the truth: "the summary was written with the earlier speaker labels".
-- **Retry** buttons on Prachar, and **recording a new meeting** in safe mode: both need Gemini. Use `npm run demo:live` if you want a new recording transcribed.
+- **Retry** buttons, and **recording a new meeting** in safe mode: both need Gemini. Use `npm run demo:live` if you want a new recording transcribed.
 - **Audit page** with a client: it is your work tool.
 
 ## 5. Morning checklist (08:00–10:00)
@@ -87,20 +87,20 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 
 | | 21/9 | 200 | AOM | Prachar |
 |---|---|---|---|---|
-| Speakers before (Phase 1, by text) | 11 | 11 | 18 | not finished |
-| Speakers after (pyannote, precision-2) | 5 | 4 | 7 | 7 (diarized; transcript not finished) |
-| Coverage after (Phase 1) | 0.985 (0.963) | 0.992 (0.992) | 1.000 (0.916) | n/a |
-| Gemini words matched to Deepgram words | 59 % | 47 % | 69 % | n/a |
-| M1 vs M3 agreement | 0.64 | 0.75 | 0.84 | n/a |
+| Speakers before (Phase 1, by text) | 11 | 11 | 18 | not measured (transcript finished after the comparison) |
+| Speakers after (pyannote, precision-2) | 5 | 4 | 7 | 7 |
+| Coverage after (Phase 1) | 0.985 (0.963) | 0.992 (0.992) | 1.000 (0.916) | 0.982 (0.981) |
+| Gemini words matched to Deepgram words | 59 % | 47 % | 69 % | 40 % (Deepgram heard it less: 3 of 4 chunks use M1) |
+| M1 vs M3 agreement | 0.64 | 0.75 | 0.84 | 0.69 |
 | Linked to another meeting | D ↔ AOM B (78), 200 B (85); B ↔ Prachar D (90) | B ↔ 21/9 D (85) | B ↔ 21/9 D (78) | D ↔ 21/9 B (90) |
 
 - Scores of voices that were *not* the same person: 16–48.
 - **Spend tonight:** Gemini new calls **0** (budget 6). pyannote: 8 diarizations (about 5 h of audio), 10 voiceprints, 3 identifications (budget: 3 full-meeting jobs). Deepgram: 4 whole-file requests (budget 6), about $0.62. Summaries: 3, by a subagent, no Anthropic API.
-- Tests: 180 (pipeline) + 71 (API) + 21 (web); lint and typecheck clean. Details in `docs/PHASE2_REPORT.md` §6.
+- Tests: 180 (pipeline) + 77 (API) + 21 (web); lint and typecheck clean. Details in `docs/PHASE2_REPORT.md` §6.
 
 ## 7. Known defects and risks, most likely first
 
-1. **Prachar** shows as "processing" in the demo copy until the Phase 1 queue finishes it (see the end of this file for what I did about it).
+1. **Transcripts are the Phase 1 ones from before its gap-fill step.** The other session's queue restarted at 05:30 and finished Prachar's transcription, which I took (4 of 4 chunks); its gap-fill (re-listening to speech Gemini skipped) was still queued, so 21/9, AOM and Prachar do not include it. Coverage is already 0.98–1.0 so little is missing; to include it later run `npm run demo:refresh -- <names> --apply` and the steps in `docs/RUNBOOK.md` (new summaries need answering again).
 2. **I could not open a real browser, so nobody has looked at the screens.** Their behaviour is tested (21 tests drive them in a simulated browser, and `demo:check` walks the same endpoints a browser uses) but layout, spacing and phone-sized views are unseen. Click through once before the client does.
 3. **Some voice links are only as sure as their score.** AOM Speaker B = 21/9 Speaker D is 78, and the same voice scored 67 against 21/9 Speaker B (margin 11). Confirm by ear before naming. Small voices (E/F/G, under a minute) may be fragments of someone else; *Same person as…* merges them.
 4. **After naming, the summary text still has the old labels** until someone answers the summary request (testing setup). The page says so.
@@ -128,3 +128,4 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 - 03:55: pipeline stages with pyannote mocked tests; three meetings reprocessed; summaries answered.
 - 04:30: group recording prototype end to end with synthetic phones; Word export; dashboard.
 - 05:00: demo launcher, tunnel, smoke check, snapshot and reset verified; this document written.
+- 05:30: the other session's queue restarted on the quota reset and finished Prachar's transcription; Prachar joined, reprocessed and summarised (0 Gemini calls by me). Two independent code reviews fixed (DECISIONS #32). Final snapshot taken.

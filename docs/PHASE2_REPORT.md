@@ -39,6 +39,7 @@ Two methods were built and measured; M2 and M4 were skipped to protect Gemini qu
 | 21-9 | 6 / 5 | 0.985 (0.963) | 4583 / 7748 (59 %) | 0.64 |
 | 200 | 4 / 4 | 0.992 (0.992) | 2253 / 4843 (47 %) | 0.75 |
 | AOM | 7 / 7 | 1.000 (0.916) | 4046 / 5852 (69 %) | 0.84 |
+| Prachar | 7 / 7 | 0.982 (0.981) | 2374 / 5897 (40 %) | 0.69 |
 
 An alignment bug found on the way is worth recording: the first version aligned end to end against a Deepgram window longer than the block, which rewarded dragging Gemini words onto later Deepgram words; coverage on 21-9 fell to 0.914 and 185 s of speech was left without a turn. Letting unused Deepgram words at either end cost nothing fixed it (DECISIONS #28).
 
@@ -64,24 +65,24 @@ Every non-match scored 16–48 (21 speakers across the three runs; median about 
 
 | # | Item | Result | Evidence |
 |---|---|---|---|
-| 1 | Speakers per meeting within ±1 of the true count | **Not judged** | pyannote finds 5 / 4 / 7 (Prachar 7); true counts needed |
+| 1 | Speakers per meeting within ±1 of the true count | **Not judged** | pyannote finds 5 / 4 / 7 / 7; true counts needed |
 | 2 | Blind audit: ≥ 90 % of sampled lines under the right speaker, ≤ 5 % under a wrong named person | **Not judged** | audit page built and seeded; needs the auditor |
 | 3 | Naming 21/9's speakers recognises that person in AOM and Prachar | **Partly** | 21/9 Speaker D is linked to AOM and 200 (78, 85); 21/9 Speaker B to Prachar (90). Which of them is Ghanshyam Dholakia must be confirmed by ear |
 | 4 | Rename, merge, split, reassign one line; confirmations improve recognition | **Done, except the voiceprint part** | `speakers-review.test.ts` (10 tests) and the rehearsal on real data. A confirmed name gains a voiceprint only when pyannote has credit |
-| 5 | Lines ≤ 45 s, both scripts intact, coverage not lower than Phase 1 | **Done** | coverage 0.985 / 0.992 / 1.000 against 0.963 / 0.992 / 0.916; `demo:check` verifies the 45 s limit on every line |
+| 5 | Lines ≤ 45 s, both scripts intact, coverage not lower than Phase 1 | **Done** | coverage 0.985 / 0.992 / 1.000 / 0.982 against 0.963 / 0.992 / 0.916 / 0.981; `demo:check` verifies the 45 s limit on every line |
 | 6 | Lint, typecheck, tests pass; report with measured numbers | **Done** | see section 6 |
 
 ## 5. Cost and spend
 
 - **Gemini:** 0 new calls in Phase 2. Everything used stored output and cleaned turns.
-- **Deepgram:** 4 whole-file requests (one per meeting, 21-9, 200, AOM, Prachar), about 2.5 h of audio; at the Phase 1 rate of $0.0043 per minute that is about $0.65.
+- **Deepgram:** 4 whole-file requests (one per meeting, 21-9, 200, AOM, Prachar), 143 minutes of audio; at the Phase 1 rate of $0.0043 per minute that is about $0.62.
 - **pyannote:** 8 diarize jobs (about 5.0 h of audio), 10 voiceprint jobs, 3 identify jobs (one per later meeting). **pyannote publishes no per-hour rate**: its plans are Developer €19 and Starter €99 per month, each with the same amount of usage credit. The cost per processed hour must be read from the credit balance in the pyannote billing page before and after a run; the dashboard shows hours diarized to divide by.
 
 ## 6. Tests
 
 - `packages/pipeline`: 180 tests, including join methods (speaker change mid-turn, overlap, drifted times, words outside any segment), name resolution (two voices claiming one person, margin failure, no voiceprints, several voiceprints), clip selection, loose duplicate names, audit sampling and tally, and the multi-phone signal code (offsets of 0.3 s, 4 s and 20 s found within 50 ms; 0.1 % clock drift recovered and removed; best-channel mix; attribution).
 - `apps/web`: 21 tests render the real components in a simulated browser with the API mocked: speaker cards (match, where else heard, closest phone, name, near-duplicate prompt, merge, re-identify failure), transcript line editing, the blind audit (method never shown), insights, the host panel (waits for uploads), the phone's join page end to end, the meeting page after naming, and the routing (join page public, everything else behind the access code). They caught one crash in the host panel that lint and the build had passed.
-- `apps/api`: 71 tests, including the pipeline with pyannote mocked (diarize beside transcription, expired result resubmitted, a job older than 24 h resubmitted, rate limit retried, 402 falls back to Phase 1's text linking), speaker review edits, the audit, the Word export (unzipped and inspected), the dashboard, and the multi-phone flow end to end with three synthetic phones.
+- `apps/api`: 77 tests, including the pipeline with pyannote mocked (diarize beside transcription, expired result resubmitted, a job older than 24 h resubmitted, rate limit retried, 402 falls back to Phase 1's text linking), speaker review edits, the audit, the Word export (unzipped and inspected), the dashboard, and the multi-phone flow end to end with three synthetic phones.
 - Lint, typecheck and tests pass at the commit that carries this report.
 
 ## 7. Known defects
