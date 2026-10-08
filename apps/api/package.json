@@ -34,6 +34,7 @@
     "p2:audit-seed": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/auditSeed.ts",
     "p2:migrate-key-labels": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/migrateKeyLabels.ts",
     "demo:prepare": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/prepare.ts",
+    "demo:new-meeting": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/newMeeting.ts",
     "demo:reprocess": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/reprocess.ts",
     "demo:synthetic-phones": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/syntheticPhones.ts",
     "demo:check": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/demo/check.ts",

@@ -17,8 +17,12 @@ import type { JoinInput } from '../services/identity/joinInput.js';
 export const MAX_LINE_SEC = 45;
 export const PAUSE_SEC = 1.2;
 
-/** A join may not lower coverage by more than rounding (Phase 2 rule: never below Phase 1's). */
-const COVERAGE_TOLERANCE = 0.002;
+/**
+ * A join may not lower coverage by more than this (5 points). Text-linked turns keep Gemini's own
+ * times, which can be minutes out, and still count as covering the speech near them, so a join that
+ * puts text at its true time may score a little lower (DECISIONS #34); only a real loss is refused.
+ */
+const COVERAGE_TOLERANCE = 0.05;
 
 /**
  * Build the meeting transcript from stored engine output (no engine calls): assemble the done
