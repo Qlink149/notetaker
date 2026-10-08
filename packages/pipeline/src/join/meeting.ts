@@ -126,13 +126,22 @@ export const POOR_SHARE = 0.3;
 export const SHIFT_MAX_GAP_SEC = 80;
 export const SHIFT_MAX_DISAGREE_SEC = 8;
 /** A turn with at least this many matched words (and POOR_SHARE of its words) has a drift of its own (their median). */
-const OWN_DRIFT_ANCHORS = 3;
+const OWN_DRIFT_ANCHORS = POOR_ANCHORS;
 /**
  * A turn whose own drift is more than this from both anchored neighbours and from the line
  * between them is an outlier: its matches are a few common words aligned to a distant spot, not
  * the real place.
  */
 export const OUTLIER_SEC = 8;
+
+/** Most adjacent turns that can form a spike of false matches (see turnTrust). */
+const SPIKE_MAX_TURNS = 3;
+
+/** Where `x` sits between `a` and `b` (0..1); null when Gemini's times are not in order there. */
+function fraction(x: number, a: number, b: number): number | null {
+  if (!(b > a) || x < a || x > b) return null;
+  return (x - a) / (b - a);
+}
 
 const median = (v: number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)]!;
 
@@ -190,13 +199,37 @@ export function turnTrust(turns: Turn[], tokens: TokenPlacement[]): TurnTrust {
     if (prev !== undefined) candidates.push(own[prev]!);
     if (next !== undefined) candidates.push(own[next]!);
     if (prev !== undefined && next !== undefined) {
-      const f = (midOf(i) - midOf(prev)) / Math.max(1e-6, midOf(next) - midOf(prev));
-      candidates.push(own[prev]! + f * (own[next]! - own[prev]!));
+      const f = fraction(midOf(i), midOf(prev), midOf(next));
+      if (f !== null) candidates.push(own[prev]! + f * (own[next]! - own[prev]!));
     }
     // with one neighbour only, a ramp cannot be told from a jump: be twice as lenient
     const tolerance = candidates.length === 1 ? 2 * OUTLIER_SEC : OUTLIER_SEC;
     if (candidates.length && candidates.every((c) => Math.abs(own[i]! - c) > tolerance))
       outlier[i] = true;
+  });
+  // Two or three adjacent false turns agree with each other, so the test above cannot see them: a
+  // short stretch whose drift differs from both sides, where the two sides agree with each other, is
+  // a spike, not a change in the clock (a real seam changes the drift and keeps it).
+  const levels: { turns: number[]; level: number }[] = [];
+  anchored.forEach((i) => {
+    if (outlier[i]) return;
+    const last = levels[levels.length - 1];
+    if (last && Math.abs(own[i]! - last.level) <= OUTLIER_SEC) {
+      last.turns.push(i);
+      last.level = median(last.turns.map((j) => own[j]!));
+    } else levels.push({ turns: [i], level: own[i]! });
+  });
+  levels.forEach((l, k) => {
+    const before = levels[k - 1];
+    const after = levels[k + 1];
+    if (
+      before &&
+      after &&
+      l.turns.length <= SPIKE_MAX_TURNS &&
+      Math.abs(before.level - after.level) <= OUTLIER_SEC &&
+      Math.abs(l.level - before.level) > OUTLIER_SEC
+    )
+      for (const i of l.turns) outlier[i] = true;
   });
   outlier.forEach((o, i) => {
     if (o) own[i] = null;
@@ -226,7 +259,8 @@ export function turnTrust(turns: Turn[], tokens: TokenPlacement[]): TurnTrust {
       Math.abs(own[n]! - own[p]!) > SHIFT_MAX_DISAGREE_SEC
     )
       return;
-    const f = (mid[i]! - mid[p]!) / Math.max(1e-6, mid[n]! - mid[p]!);
+    const f = fraction(mid[i]!, mid[p]!, mid[n]!);
+    if (f === null) return;
     shift[i] = own[p]! + f * (own[n]! - own[p]!);
     shiftKnown[i] = true;
   });

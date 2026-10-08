@@ -11,6 +11,7 @@ import {
   keysMatch,
   labelSpeakersByTime,
   speakerAtTime,
+  turnTrust,
   wordClockJoin,
   wordKey,
   wordsMatch,
@@ -341,5 +342,89 @@ describe('joinMeeting with Gemini’s clock off', () => {
     const turns = [turn(30, 40, t1), turn(40, 44, t2), turn(44, 54, t3)];
     const j = joinMeeting({ ...base, turns, dgWords: words(t1, 0, 10) });
     expect(total(j.turns)).toBe(total(turns));
+  });
+});
+
+describe('review fixes', () => {
+  const w = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(' ');
+
+  it('M1 keeps a turn with no text even when it spans two speakers', () => {
+    const empty = { ...turn(0, 10, ''), textRoman: '' };
+    const r = assignByOverlap([empty], [seg('A', 0, 5), seg('B', 5, 10)]);
+    expect(r.turns).toHaveLength(1);
+    expect(r.sourceIndex).toEqual([0]);
+    expect(r.turns[0]!.speaker).toBe('A');
+  });
+
+  it('matches move forward through Deepgram words when a phrase repeats', () => {
+    const text = 'one two three four five six seven eight nine ten';
+    const r = wordClockJoin(
+      [turn(0, 10, text), turn(10, 20, text)],
+      [...words(text, 0, 10), ...words(text, 10, 20)],
+    );
+    const starts = r.tokens.map((t) => t.start);
+    expect(starts.every((v, i) => i === 0 || v >= starts[i - 1]! - 1e-9)).toBe(true);
+    expect(r.tokens.every((t) => t.end >= t.start)).toBe(true);
+  });
+
+  it('never gives a word a negative duration when Deepgram words overlap', () => {
+    const dg: TimedWord[] = [
+      { text: 'alpha', start: 10, end: 10.6, speaker: 'A' },
+      { text: 'omega', start: 10.4, end: 11, speaker: 'A' },
+    ];
+    const r = wordClockJoin([turn(10, 11, 'alpha mid1 mid2 omega')], dg, {
+      segments: [seg('A', 9, 12)],
+    });
+    expect(r.tokens.every((t) => t.end >= t.start)).toBe(true);
+  });
+
+  it('words before the first match take the drift of the nearest matched word, not Gemini’s clock', () => {
+    // Gemini says 70-80 s, Deepgram has the last 4 words at 10-14 s; 6 leading words are unmatched
+    const text = `${w(6, 'lead')} tail0 tail1 tail2 tail3`;
+    const dg = words('tail0 tail1 tail2 tail3', 10, 14);
+    const r = wordClockJoin([turn(70, 80, text)], dg, { segments: [seg('A', 0, 20)] });
+    const lead = r.tokens.slice(0, 6);
+    expect(lead.every((t) => t.start <= 10 + 1e-9)).toBe(true);
+    expect(lead[0]!.start).toBeGreaterThan(-100);
+  });
+
+  const placed = (start: number, matched: boolean) => ({
+    start,
+    end: start + 0.3,
+    speaker: 'A',
+    matched,
+  });
+
+  it('turnTrust does not extrapolate when Gemini’s turn times are out of order', () => {
+    const dense = w(10, 'x');
+    const turns = [turn(100, 110, dense), turn(85, 95, 'solo word'), turn(90, 100, dense)];
+    const tokens = [
+      ...Array.from({ length: 10 }, () => placed(100, true)),
+      placed(0, false),
+      placed(0, false),
+      ...Array.from({ length: 10 }, () => placed(97, true)),
+    ];
+    const t = turnTrust(turns, tokens);
+    expect(t.shift.every((v) => Math.abs(v) < 1000)).toBe(true);
+    expect(t.shiftKnown[1]).toBe(false);
+  });
+
+  const driftTokens = (turns: Turn[], drifts: number[]) =>
+    turns.flatMap((tr, ti) =>
+      Array.from({ length: 10 }, (_, k) =>
+        placed(tr.start + ((k + 0.5) / 10) * 10 + drifts[ti]!, true),
+      ),
+    );
+
+  it('a short run of adjacent false turns between two agreeing stretches is rejected', () => {
+    const turns = [0, 10, 20, 30, 40, 50].map((at) => turn(at, at + 10, w(10, 'y')));
+    const t = turnTrust(turns, driftTokens(turns, [0, 0, 200, 205, 0, 0]));
+    expect(t.outlier).toEqual([false, false, true, true, false, false]);
+  });
+
+  it('a genuine jump in the drift (a chunk seam) is kept, not rejected', () => {
+    const turns = [0, 10, 20, 30, 40, 50].map((at) => turn(at, at + 10, w(10, 'z')));
+    const t = turnTrust(turns, driftTokens(turns, [0, 0, 0, 30, 30, 30]));
+    expect(t.outlier.some(Boolean)).toBe(false);
   });
 });

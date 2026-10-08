@@ -2,6 +2,7 @@
 
   python voices.py embed   [wespeaker|titanet]   embed every clip listed in out/segments.json
   python voices.py compare [wespeaker|titanet]   cosine similarity within and across meetings
+  python voices.py probe <file.wav> [titanet]    which meeting voices does this sample resemble
 
 Run from this folder with the venv:  .venv/Scripts/python.exe voices.py embed wespeaker
 """
@@ -104,7 +105,56 @@ def compare(model):
     print(f"  all other cross-meeting pairs: {len(nl)}, max {max(nl):.2f}, 95th percentile {np.percentile(nl, 95):.2f}, median {np.median(nl):.2f}")
 
 
+def probe(path, model="titanet", window=6.0, hop=3.0):
+    import sherpa_onnx
+
+    cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+        model=str(MODELS[model]), num_threads=2, debug=False, provider="cpu"
+    )
+    ext = sherpa_onnx.SpeakerEmbeddingExtractor(cfg)
+    x, sr = sf.read(path, dtype="float32")
+    if x.ndim > 1:
+        x = x.mean(axis=1)
+    embs = []
+    n, w, h = len(x), int(window * sr), int(hop * sr)
+    for a in range(0, max(1, n - w + 1), h):
+        seg = x[a:a + w]
+        if len(seg) < sr * 2:
+            continue
+        # skip near-silent windows
+        if float(np.sqrt((seg ** 2).mean())) < 0.005:
+            continue
+        s = ext.create_stream()
+        s.accept_waveform(sample_rate=sr, waveform=seg)
+        s.input_finished()
+        embs.append(ext.compute(s))
+    embs = np.array(embs)
+    print(f"sample: {len(x) / sr:.1f}s at {sr} Hz, {len(embs)} windows of {window:.0f}s; self-consistency {float((unit(embs) @ unit(unit(embs).mean(0))).mean()):.2f}")
+    data = json.loads((OUT / "segments.json").read_text(encoding="utf8"))
+    emb = np.load(OUT / f"emb_{model}.npz")
+    mu = np.concatenate([emb[k] for k in emb.files]).mean(0)
+    q = unit(unit(embs - mu).mean(0))
+    rows = []
+    for name, m in data["meetings"].items():
+        for diar, v in m["voices"].items():
+            k = f"{name}|{diar}"
+            if k not in emb.files or len(emb[k]) == 0:
+                continue
+            c = unit(unit(emb[k] - mu).mean(0))
+            rows.append((float(q @ c), name, v["label"], v["sec"], v.get("person")))
+    rows.sort(reverse=True)
+    print(f"\nresemblance to each meeting voice ({model}, centred like the meeting comparison; same-person pairs averaged ~0.2-0.35, others ~0.0, max seen 0.57):")
+    for s, name, label, sec, person in rows[:10]:
+        print(f"  {s:+.2f}  {name:8s} {label:10s} {sec:5d}s  {person or ''}")
+    print("  ...")
+    print(f"  lowest {rows[-1][0]:+.2f}; median of all {np.median([r[0] for r in rows]):+.2f}")
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "probe":
+        probe(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "titanet")
+        raise SystemExit
+
     cmd = sys.argv[1]
     model = sys.argv[2] if len(sys.argv) > 2 else "wespeaker"
     {"embed": embed, "compare": compare}[cmd](model)

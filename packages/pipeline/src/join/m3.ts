@@ -189,7 +189,8 @@ export function wordClockJoin(
 
   // 1. align in blocks, moving forward through the Deepgram words
   const matchOf = new Array<number>(toks.length).fill(-1);
-  let dgPos = 0;
+  let dgPos = 0; // where the next block may start looking (a few words before the last good hit)
+  let lastDg = -1; // the last Deepgram word given to a Gemini word: matches must keep moving forward
   for (let b = 0; b < toks.length; b += blockWords) {
     const block = toks.slice(b, b + blockWords);
     const from = Math.max(
@@ -203,14 +204,18 @@ export function wordClockJoin(
       dgFolded.slice(from, to),
       same,
     );
-    let lastHit = -1;
+    const accepted: number[] = [];
     hits.forEach((j, i) => {
-      if (j >= 0) {
+      // the 15-word rewind lets a block reach back over the seam: never reuse or go behind a word
+      if (j >= 0 && from + j > lastDg) {
         matchOf[b + i] = from + j;
-        lastHit = from + j;
+        lastDg = from + j;
+        accepted.push(from + j);
       }
     });
-    if (lastHit >= 0) dgPos = lastHit + 1;
+    // Move on from the third-from-last hit, not the last: a stray common word at the end of the
+    // window must not push the next block's start past where its words really are.
+    if (accepted.length) dgPos = accepted[Math.max(0, accepted.length - 3)]! + 1;
   }
 
   // 2. time and speaker per token; unmatched tokens interpolate / inherit
@@ -253,13 +258,25 @@ export function wordClockJoin(
         const f = (i - prev) / (next - prev);
         start[i] = gapStart + f * (gapEnd - gapStart);
       }
-      end[i] = Math.min(
-        gapEnd,
-        start[i]! + Math.min(0.4, Math.max(0.05, (gapEnd - gapStart) / (next - prev))),
+      end[i] = Math.max(
+        start[i]!,
+        Math.min(
+          gapEnd,
+          start[i]! + Math.min(0.4, Math.max(0.05, (gapEnd - gapStart) / (next - prev))),
+        ),
       );
     } else {
-      start[i] = toks[i]!.approx;
-      end[i] = Math.min(t.end, toks[i]!.approx + 0.4);
+      // before the first or after the last matched word: keep Gemini's pacing but apply the offset
+      // to the nearest matched word (Gemini's own clock can be minutes out)
+      const anchor = prev ?? next;
+      const off = anchor === undefined ? 0 : start[anchor]! - toks[anchor]!.approx;
+      start[i] =
+        prev !== undefined
+          ? Math.max(end[prev]!, toks[i]!.approx + off)
+          : next !== undefined
+            ? Math.min(start[next]!, toks[i]!.approx + off)
+            : toks[i]!.approx;
+      end[i] = Math.max(start[i]!, Math.min(t.end + off, start[i]! + 0.4));
     }
     const pick =
       prev === undefined ? next : next === undefined ? prev : i - prev <= next - i ? prev : next;

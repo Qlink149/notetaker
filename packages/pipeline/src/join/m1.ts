@@ -132,6 +132,11 @@ export function assignByOverlap(
       sourceIndex.push(idx);
     });
     tokenSpeakers.push(speakers);
+    // a turn without any text still gets one output turn (as the word clock does)
+    if (!sourceIndex.includes(idx)) {
+      out.push({ ...t, speaker: runs[0]!.speaker });
+      sourceIndex.push(idx);
+    }
   });
   return { turns: out, tokenSpeakers, sourceIndex };
 }
