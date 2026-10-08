@@ -27,6 +27,7 @@
     "p2:deepgram": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/deepgram.ts",
     "p2:join": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/join.ts",
     "p2:joincheck": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/joinCheck.ts",
+    "p2:localvoices-export": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/localVoicesExport.ts",
     "p2:holdout": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/holdout.ts",
     "p2:identity": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/identity.ts",
     "p2:audit-seed": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/auditSeed.ts",
