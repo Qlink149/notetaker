@@ -25,8 +25,8 @@
 ## Worth doing next
 
 1. **Consent and retention for voiceprints.** A voiceprint is biometric data. Add a consent line to enrolment and a delete-everything-about-this-person action (voiceprints, clips, aliases); pyannote deletes its own results after 24 h but our stored copies stay until deleted.
-2. **pyannote cost per hour**, from the billing page, put in the dashboard as a number (it publishes no rate).
-3. **Credit alarm**: the first sign of the credit running out was a `402` in the middle of a batch. Check the balance before a batch and show the state on the dashboard.
+2. **pyannote cost per hour** as a number on the dashboard (published rates are in DECISIONS #33; identification's unit price still needs confirming).
+3. **Allowance alarm**: the first sign that the trial's voiceprint allowance was used up was a `402` in the middle of a batch. Probe `/voiceprint` before a batch (a request for a missing file is free) and show the state on the dashboard.
 4. **Re-identify** should list what it would change before changing anything.
 5. **Calibrate the thresholds** (accept at ≥ 60 with a margin ≥ 10) on audited data; the overnight values rest on three matches and 21 non-matches.
 6. A server-side PDF if clients want one.

@@ -263,8 +263,7 @@ Nothing below is taken from the Base44 code.
 - **Rate limits.** Per team, a 60 s window: 100/min for submissions and media, 300/min for job reads.
   A 429 carries `Retry-After`. Media upload can return 402 when no subscription is active.
 - **Price.** Plans are Developer €19/month and Starter €99/month, each including the same amount of usage
-  credit, with a 30-day trial. Neither the docs nor the pricing page gives a per-hour rate; Phase 2
-  measures it from account usage and reports it in PHASE2_REPORT.
+  credit, with a 30-day trial. The per-hour rates are on pyannote.ai/pricing (see #33; this entry was wrong when written: the docs pages do not list them, the pricing page does).
 - **Audio.** Phase 1 stores only the original in Cloudinary (#13). For pyannote, the 16 kHz mono FLAC is
   built locally with the same `toAnalysisFlac` used for Gemini and uploaded through the media endpoint as
   `media://p2-<meetingId>.flac`. Enrolment clips are cut with `cutFlac` from the same FLAC, so meetings
@@ -318,7 +317,7 @@ one global clock and no seams, and fits the "6 Deepgram jobs" budget (4 used).
   16–48, every accepted match 78–90 (AOM 78, 200 85, Prachar 90). The gap between 48 and 78 is wide, so 60 is
   not sensitive to the exact value. Margins were 11, 47 and 62. AOM's match is the weakest: the same voice scored
   67 against a second 21-9 person.
-- **pyannote credits ran out** during the third voiceprint batch: `POST /v1/voiceprint` now returns 402
+- **pyannote stopped accepting new voiceprints** (corrected in #33: this is the trial's 10-voiceprint allowance, not all credit) during the third voiceprint batch: `POST /v1/voiceprint` now returns 402
   "Insufficient credits and no active subscription" (also with a dummy URL). The 8 diarizations, 10 voiceprints
   (21-9) and 3 identify jobs completed before. I did not upgrade or pay (hard rule). Effects: the new people for
   AOM, Prachar and 200 exist (anonymous, with sample clips) but have **no voiceprints yet**; re-running
@@ -375,3 +374,17 @@ Fixed, each with a regression test:
 Known and left (also in the handover): "Move this line" / "different person from here on" act on whole turns, so on a very long turn (> 45 s, shown as several lines) they move more than the chosen line;
 deleting a group-recorded meeting does not yet remove the phones' raw parts or session records; the insights page shows the global spend ledger and Gemini quota state (fine with one workspace);
 two edits made at the same moment in two tabs can overwrite each other; the mix holds every phone's timeline in memory.
+
+## 33. pyannote pricing, checked properly (8 Oct, 12:50)
+
+Sources read: pyannote.ai/pricing, docs.pyannote.ai/administration/billing, pyannote's blog "Build vs. Buy" (list prices as of August 2026), and live probes of the API (free: a request for a file that does not exist cannot succeed, and only jobs that reach `succeeded` are billed).
+
+- **Plans:** Developer €19 / month with €19 of usage credit; Starter €99 / month with €99 of usage credit; Enterprise custom. One-month free trial (no card). Usage beyond the credit is pay-as-you-go at the same rates; a monthly spend limit can be set.
+- **Rates, per audio hour (Developer / Starter):** diarization batch €0.112 / €0.096 (the pricing page labels this line "Precision-3"; the blog and a third-party summary call the same figures "Precision-2"; precision-2 and precision-3 may share a price, which I could not confirm); Community-1 €0.035; Live-1 €0.198 / €0.170; speech-to-text orchestration €0.168 / €0.144.
+- **Voiceprints:** billed per voiceprint created, not by duration. The price shown is €0.015 (the unit is inferred, the table text does not label it).
+- **Identification:** billed by audio duration like diarization. The pricing page lists €0.015 next to it without a clear unit; whether that is per hour or per voiceprint I could not tell. Budget it as anything from €0.015 to €0.112 per audio hour.
+- **Billing rules (billing docs):** by audio seconds sent for processing, 20 s minimum per diarize/identify job, only successful jobs are billed.
+- **What this means for what happened last night:** the FAQ says the trial includes "150 hours of identification and 10 voiceprints". We made exactly 10 voiceprints, then `/voiceprint` answered 402 while the later identify jobs still succeeded. A probe today confirms it: `/diarize` passes the credit check, `/voiceprint` does not. So pyannote was not out of credit; **the trial's voiceprint allowance was used up.** My earlier statement that the account had no credits was too broad.
+- **Estimated use in Phase 2 so far:** 8 diarizations = 4.8 audio hours × €0.112 ≈ €0.53 (if both models are priced alike); 3 identifications = 1.7 hours × €0.015–0.112 ≈ €0.03–0.19; 10 voiceprints × €0.015 = €0.15. About **€0.7–0.9 in total**, inside the trial.
+- **Estimated pyannote cost of one 1-hour meeting:** diarization €0.112 + identification €0.015–0.112 + voiceprints (about 3 per new voice, 1 per recognised voice; 5 new voices ≈ €0.23) = roughly **€0.15–0.45, typically about €0.3**. €19 of Developer credit covers roughly 55 such meeting-hours a month, or about 170 hours of diarization alone.
+- **Still to confirm with pyannote or the dashboard:** the identification unit price, whether precision-2 is billed like precision-3, and what the Developer plan's overage does after the credit is used.

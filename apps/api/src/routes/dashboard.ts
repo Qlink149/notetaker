@@ -117,7 +117,7 @@ export function dashboardRouter(): Router {
         pyannoteJobs: pyannote.map((p) => ({ kind: p._id.kind, status: p._id.status, jobs: p.n })),
         pyannoteHours: round(diarizedHours, 1),
         pyannoteCostNote:
-          'pyannote does not publish a per-hour rate. Read the credit balance in its billing page before and after a run.',
+          'pyannote list prices (Developer plan, EUR): diarization 0.112 per audio hour (Starter 0.096), voiceprint 0.015 each; identification is billed by audio duration and its rate is not clearly listed. Plans include 19 / 99 of usage credit a month. Check pyannote billing for your contract.',
       },
       quotas: quotas.map((q) => ({ key: q._id, until: q.exhaustedUntil })),
       audit,

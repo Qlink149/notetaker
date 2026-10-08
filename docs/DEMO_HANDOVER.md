@@ -8,7 +8,7 @@ Everything is committed locally on branch `phase-2-speaker-identity` in the work
 |---|---|---|
 | 1. Join Gemini text to pyannote speakers (M1, M3, chooser) | **Done** | `docs/PHASE2_REPORT.md` §2: speakers 11/11/18 → 5/4/7; coverage 0.985 / 0.992 / 1.000 (Phase 1: 0.963 / 0.992 / 0.916) |
 | 1. `/audit` page, seeded | **Done, not yet used** | 30 items per meeting (15 per method, method hidden). No audit result yet |
-| 2. Voiceprints and cross-meeting identity | **Partial** | 10 voiceprints for 21-9's four voices; 3 cross-meeting links (scores 78, 85, 90; non-matches 16–48). **pyannote credits ran out**, so voices of AOM, Prachar and 200 have no voiceprints yet |
+| 2. Voiceprints and cross-meeting identity | **Partial** | 10 voiceprints for 21-9's four voices; 3 cross-meeting links (scores 78, 85, 90; non-matches 16–48). **pyannote refuses new voiceprints** (the free trial seems to allow 10, and exactly 10 were made; diarization and identification still work), so voices of AOM, Prachar and 200 have no voiceprints yet |
 | 2. Review screen (name, merge, split, reassign, re-identify, duplicate-name check) | **Done** | 10 API tests plus a rehearsal on real data; naming one voice renamed it in 3 meetings |
 | 3. Pipeline stages (`diarize` beside `transcribe`, join at assembly, `identify`, text fallback, expired results resubmitted) | **Done** | `test/pipeline-speakers.test.ts` (pyannote mocked). Three meetings reprocessed from stored output with **0 Gemini calls** |
 | 3. Key hashes replaced by labels | **Done** | migration applied to the demo database; old hash ids still readable |
@@ -33,7 +33,7 @@ Everything is committed locally on branch `phase-2-speaker-identity` in the work
 
 **Not built / not done:**
 - Deployment (not pushed). Webhooks. A new login system.
-- Voiceprints for AOM, Prachar and 200 voices (credit, see "Needs Yogansh").
+- Voiceprints for AOM, Prachar and 200 voices (pyannote refuses new voiceprints on the current plan, see "Needs Yogansh").
 - The **blind audit result**: accuracy of the speaker labels has not been measured by a person. Everything above about speakers is "how many" and "linked", not "how right".
 - Names. Every voice is "Speaker A, B…" until you name it.
 
@@ -70,14 +70,14 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 8. **(1 min, optional) Group recording.** Record page → *Start a group recording* → show the QR and code. If the tunnel and two phones are ready, join, press Start, talk, Stop, *Combine and process*. If not, say "prototype, tested with synthetic tracks" and show the page only.
 
 **What not to click:**
-- **Re-identify speakers**: needs pyannote credit; right now it answers "Speaker recognition is unavailable: the pyannote account has no credits." (honest, but not a demo moment).
+- **Re-identify speakers**: it re-runs the comparison with today's voiceprints (identification still works, so it should answer "nothing changed" for a meeting already checked); it cannot add new voiceprints. Not a demo moment.
 - **Refresh summary** after naming: it needs the summary service (a person answers it in testing), so the meeting would sit on "Processing" until someone answers. The page tells the truth: "the summary was written with the earlier speaker labels".
 - **Retry** buttons, and **recording a new meeting** in safe mode: both need Gemini. Use `npm run demo:live` if you want a new recording transcribed.
 - **Audit page** with a client: it is your work tool.
 
 ## 5. Morning checklist (08:00–10:00)
 
-1. **pyannote credit** (see "Needs Yogansh"). Without it the demo still works as above.
+1. **pyannote voiceprints** (see "Needs Yogansh"). Without more voiceprints the demo still works as above.
 2. `npm run demo:reset`, `npm run demo`, `npm run demo:check`. Click through the script once yourself: nobody has looked at the screens in a real browser (see §7).
 3. **Name the voices** (listen to the samples on each Speakers card). This is the ground truth the audit and the "true count" need.
 4. **Blind audit, about 25 minutes**: http://localhost:5173/audit. Name each voice from its three samples, then judge the lines; keys R / W / U for the speaker and 1 / 2 / 3 for the text. *Results* tab shows the two methods side by side.
@@ -104,7 +104,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 2. **I could not open a real browser, so nobody has looked at the screens.** Their behaviour is tested (21 tests drive them in a simulated browser, and `demo:check` walks the same endpoints a browser uses) but layout, spacing and phone-sized views are unseen. Click through once before the client does.
 3. **Some voice links are only as sure as their score.** AOM Speaker B = 21/9 Speaker D is 78, and the same voice scored 67 against 21/9 Speaker B (margin 11). Confirm by ear before naming. Small voices (E/F/G, under a minute) may be fragments of someone else; *Same person as…* merges them.
 4. **After naming, the summary text still has the old labels** until someone answers the summary request (testing setup). The page says so.
-5. **Re-identify and enrolling new voiceprints are unavailable** until pyannote has credit.
+5. **New voiceprints cannot be created** until pyannote allows more (diarization and identification still work, so a new meeting still gets its voices counted and compared with the existing ten voiceprints).
 6. **Group recording on real phones is unproven**: screen lock and background throttling (a phone that sleeps stops recording), iOS Safari, a weak connection, microphone permission prompts, the tunnel's reminder page. The join page asks for a screen wake lock and saves the unfinished part locally every 2 s so a reload recovers most of it.
 7. **Gemini's text is unchanged**: names and Gujarati words can still be wrong, and 41–53 % of Gemini's words in 200 and 21/9 are not matched to a Deepgram word (their time and speaker come from neighbours).
 8. **Long group recordings use a lot of memory** (about 230 MB per phone per hour while mixing); fine for the demo, not for a long meeting on a small server.
@@ -113,7 +113,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 
 ## 8. Needs Yogansh
 
-- **pyannote credit**: the account returns `402 Insufficient credits and no active subscription`. Top up or subscribe in the pyannote billing page, then run `npm run p2:identity -w @meetingid/api -- AOM Prachar 200` to create the missing voiceprints (safe to repeat). To get the cost per hour, note the credit balance before and after.
+- **pyannote plan**: `POST /v1/voiceprint` returns `402 Insufficient credits and no active subscription` while `/v1/diarize` and `/v1/identify` are accepted. That fits the free trial's 10-voiceprint allowance (checked 8 Oct, 12:50). Subscribe to a paid plan (Developer is €19 a month with €19 of usage credit) in the pyannote billing page, then run `npm run p2:identity -w @meetingid/api -- AOM Prachar 200` to create the missing voiceprints (safe to repeat). Published prices are in `docs/DECISIONS.md` #33.
 - **True speaker counts and names** for the four recordings, and the blind audit (§5).
 - A decision on deployment when you are ready to push (see `docs/PHASE4_NOTES.md`).
 
@@ -124,7 +124,7 @@ Before the client arrives: `npm run demo:reset`, `npm run demo`, `npm run demo:c
 ## Hourly progress log
 
 - 02:25 IST: safety setup (Anthropic key removed, worktree on `meetingid_demo`).
-- 03:09: join, Deepgram word clocks, identity links, review screen, audit seeded. pyannote credits ran out.
+- 03:09: join, Deepgram word clocks, identity links, review screen, audit seeded. pyannote stopped accepting new voiceprints (the trial's 10 were used).
 - 03:55: pipeline stages with pyannote mocked tests; three meetings reprocessed; summaries answered.
 - 04:30: group recording prototype end to end with synthetic phones; Word export; dashboard.
 - 05:00: demo launcher, tunnel, smoke check, snapshot and reset verified; this document written.

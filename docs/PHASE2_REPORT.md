@@ -59,7 +59,7 @@ Voiceprints are made from pyannote's own segments (single speaker, no overlapped
 
 Every non-match scored 16–48 (21 speakers across the three runs; median about 29). Matches scored 78–90. The gap between 48 and 78 is wide, so the overnight thresholds (accept at ≥ 60 with a margin ≥ 10) are not sensitive to their exact values. AOM's link is the weakest: the same voice scored 67 against a second 21-9 person, so it should be confirmed by ear. Thresholds are to be re-calibrated on audited data.
 
-**Blocker:** pyannote returned `402 Insufficient credits and no active subscription` during the third voiceprint batch. The 8 diarizations, 10 voiceprints and 3 identify jobs had completed. Voices of AOM, Prachar and 200 therefore exist as anonymous people with sample clips but **no voiceprints yet**; until a top-up only 21-9's four voices can be recognised elsewhere. `npm run p2:identity -w @meetingid/api -- AOM Prachar 200` (no `--submit` needed for voiceprints) enrols them and is safe to repeat.
+**Blocker:** pyannote refused `POST /v1/voiceprint` (`402 Insufficient credits and no active subscription`) after exactly 10 voiceprints, while diarization and identification kept working. That matches the free trial's 10-voiceprint allowance (DECISIONS #33; I first described it as "out of credits", which was too broad). Voices of AOM, Prachar and 200 therefore exist as anonymous people with sample clips but **no voiceprints yet**; until a paid plan only 21-9's four voices can be recognised elsewhere. `npm run p2:identity -w @meetingid/api -- AOM Prachar 200` enrols them once pyannote allows it and is safe to repeat.
 
 ## 4. Acceptance items
 
@@ -68,7 +68,7 @@ Every non-match scored 16–48 (21 speakers across the three runs; median about 
 | 1 | Speakers per meeting within ±1 of the true count | **Not judged** | pyannote finds 5 / 4 / 7 / 7; true counts needed |
 | 2 | Blind audit: ≥ 90 % of sampled lines under the right speaker, ≤ 5 % under a wrong named person | **Not judged** | audit page built and seeded; needs the auditor |
 | 3 | Naming 21/9's speakers recognises that person in AOM and Prachar | **Partly** | 21/9 Speaker D is linked to AOM and 200 (78, 85); 21/9 Speaker B to Prachar (90). Which of them is Ghanshyam Dholakia must be confirmed by ear |
-| 4 | Rename, merge, split, reassign one line; confirmations improve recognition | **Done, except the voiceprint part** | `speakers-review.test.ts` (10 tests) and the rehearsal on real data. A confirmed name gains a voiceprint only when pyannote has credit |
+| 4 | Rename, merge, split, reassign one line; confirmations improve recognition | **Done, except the voiceprint part** | `speakers-review.test.ts` (10 tests) and the rehearsal on real data. A confirmed name gains a voiceprint only when pyannote allows more voiceprints |
 | 5 | Lines ≤ 45 s, both scripts intact, coverage not lower than Phase 1 | **Done** | coverage 0.985 / 0.992 / 1.000 / 0.982 against 0.963 / 0.992 / 0.916 / 0.981; `demo:check` verifies the 45 s limit on every line |
 | 6 | Lint, typecheck, tests pass; report with measured numbers | **Done** | see section 6 |
 
@@ -76,7 +76,7 @@ Every non-match scored 16–48 (21 speakers across the three runs; median about 
 
 - **Gemini:** 0 new calls in Phase 2. Everything used stored output and cleaned turns.
 - **Deepgram:** 4 whole-file requests (one per meeting, 21-9, 200, AOM, Prachar), 143 minutes of audio; at the Phase 1 rate of $0.0043 per minute that is about $0.62.
-- **pyannote:** 8 diarize jobs (about 5.0 h of audio), 10 voiceprint jobs, 3 identify jobs (one per later meeting). **pyannote publishes no per-hour rate**: its plans are Developer €19 and Starter €99 per month, each with the same amount of usage credit. The cost per processed hour must be read from the credit balance in the pyannote billing page before and after a run; the dashboard shows hours diarized to divide by.
+- **pyannote:** 8 diarize jobs (about 5.0 h of audio), 10 voiceprint jobs, 3 identify jobs (one per later meeting). Published rates (DECISIONS #33): diarization €0.112 per audio hour on Developer (€0.096 Starter), voiceprints €0.015 each, identification billed by audio duration (rate unclear on the pricing page). Phase 2 so far is about €0.7–0.9, and one meeting-hour is estimated at about €0.15–0.45 (typically ≈ €0.3) for pyannote.
 
 ## 6. Tests
 
