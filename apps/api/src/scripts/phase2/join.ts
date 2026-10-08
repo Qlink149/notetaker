@@ -60,7 +60,8 @@ run(async () => {
     const dgWords: TimedWord[] = (
       dgRaw?.results?.channels?.[0]?.alternatives?.[0]?.words ?? []
     ).map((w) => ({ text: (w.punctuated_word ?? w.word).trim(), start: w.start, end: w.end }));
-    const turns = (data.turns as Turn[]).map((t) => ({ ...t }));
+    // Phase 1's turns: after an install, data.turns already holds a join's output
+    const turns = ((data.phase1?.turns ?? data.turns) as Turn[]).map((t) => ({ ...t }));
     const speechSegments = data.speechSegments ?? [];
     const speakerMap = labelSpeakersByTime(segments);
     const lineOf = (ts: Turn[]) => turnsToLines(ts, speakerMap);
@@ -74,7 +75,9 @@ run(async () => {
       speechSegments,
     });
     const m1 = assignByOverlap(turns, segments);
-    const m3 = dgWords.length ? wordClockJoin(turns, assignWordSpeakers(dgWords, segments)) : null;
+    const m3 = dgWords.length
+      ? wordClockJoin(turns, assignWordSpeakers(dgWords, segments), { segments })
+      : null;
 
     const phase1Cov = cov(turns);
     interface Variant {
@@ -96,7 +99,9 @@ run(async () => {
     for (const { method, turns: ts, extra } of variants) {
       const lines = lineOf(ts);
       const coverage = cov(ts);
-      const usable = coverage >= phase1Cov - 0.002;
+      // Phase 1's coverage counts a turn at the wrong time as covering speech nearby, so a join that
+      // puts text at its true time may score a little lower; refuse only a real loss (3 points)
+      const usable = coverage >= phase1Cov - 0.03;
       await P2JoinModel.updateOne(
         { meetingId: m.id, method },
         {
@@ -128,7 +133,9 @@ run(async () => {
     console.log(
       `${m.name} chunks: ${joined.decisions
         .map((d) => `${d.index}:${d.method}(${d.deepgramCoverage})`)
-        .join(' ')}; M1/M3 agreement ${joined.agreement.overall ?? 'n/a'}` +
+        .join(
+          ' ',
+        )}; turns by word clock ${joined.turnMethods.m3}, by time overlap ${joined.turnMethods.m1} (outlier matches rejected: ${joined.turnMethods.outliers}); M1/M3 agreement ${joined.agreement.overall ?? 'n/a'}` +
         (joined.m3Stats
           ? `; M3 matched ${joined.m3Stats.matched}/${joined.m3Stats.words} words`
           : ''),

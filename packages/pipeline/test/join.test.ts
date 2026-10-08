@@ -8,8 +8,11 @@ import {
   chunkOwnership,
   foldWord,
   joinMeeting,
+  keysMatch,
   labelSpeakersByTime,
+  speakerAtTime,
   wordClockJoin,
+  wordKey,
   wordsMatch,
   type TimedWord,
 } from '../src/index.js';
@@ -78,10 +81,10 @@ describe('M1 assignByOverlap', () => {
     expect(r.turns.map((t) => t.textNative)).toEqual(['a b c d', 'e f g h']);
     expect(r.tokenSpeakers[0]).toEqual(['A', 'A', 'A', 'A', 'B', 'B', 'B', 'B']);
   });
-  it('does not split for an interjection shorter than 1.5 s', () => {
+  it('does not split for an interjection shorter than 1 s', () => {
     const r = assignByOverlap(
       [turn(0, 10, 'long sentence here')],
-      [seg('A', 0, 4), seg('B', 4, 5), seg('A', 5, 10)],
+      [seg('A', 0, 4), seg('B', 4, 4.8), seg('A', 4.8, 10)],
     );
     expect(r.turns).toHaveLength(1);
     expect(r.turns[0]!.speaker).toBe('A');
@@ -91,8 +94,8 @@ describe('M1 assignByOverlap', () => {
     expect(assignByOverlap([turn(6, 7, 'x')], gapSegs).turns[0]!.speaker).toBe('A');
     expect(assignByOverlap([turn(10, 12, 'x')], gapSegs).turns[0]!.speaker).toBe('unknown');
   });
-  it('keeps the majority speaker when the minority side is under 1.5 s', () => {
-    const r = assignByOverlap([turn(0, 10, 'x y z')], [seg('A', 0, 1), seg('B', 1, 10)]);
+  it('keeps the majority speaker when the minority side is under 1 s', () => {
+    const r = assignByOverlap([turn(0, 10, 'x y z')], [seg('A', 0, 0.8), seg('B', 0.8, 10)]);
     expect(r.turns).toHaveLength(1);
     expect(r.turns[0]!.speaker).toBe('B');
   });
@@ -230,5 +233,113 @@ describe('labelSpeakersByTime', () => {
     const segs = Array.from({ length: 28 }, (_, i) => seg(`S${i}`, i * 10, i * 10 + 10 - i * 0.1));
     const m = labelSpeakersByTime(segs);
     expect(m['S26']).toBe('Speaker AA');
+  });
+});
+
+describe('phonetic word keys', () => {
+  it('match English words Gemini writes in Devanagari to Deepgram’s Latin spelling', () => {
+    for (const [dev, latin] of [
+      ['प्रिंट', 'print'],
+      ['डिजिटल', 'digital'],
+      ['टीवी', 'TV'],
+      ['मीडियम', 'medium'],
+      ['पर्सेंट', 'percent'],
+      ['कन्वेंशनल', 'conventional'],
+    ] as const)
+      expect(keysMatch(wordKey(dev), wordKey(latin)), `${dev} / ${latin}`).toBe(true);
+  });
+  it('do not match unrelated words, short function words, or two Latin words of one letter class', () => {
+    expect(keysMatch(wordKey('गया'), wordKey('बजट'))).toBe(false);
+    expect(keysMatch(wordKey('है'), wordKey('he'))).toBe(false);
+    expect(keysMatch(wordKey('का'), wordKey('ka'))).toBe(false);
+    expect(keysMatch(wordKey('budget'), wordKey('print'))).toBe(false);
+  });
+});
+
+describe('speakerAtTime', () => {
+  const segs = [seg('A', 0, 5), seg('B', 8, 12)];
+  it('finds the containing segment, else the nearest within the gap, else null', () => {
+    expect(speakerAtTime(segs, 3, 0.5)).toBe('A');
+    expect(speakerAtTime(segs, 5.3, 0.5)).toBe('A');
+    expect(speakerAtTime(segs, 6.5, 0.5)).toBeNull();
+    expect(speakerAtTime(segs, 10, 0.5)).toBe('B');
+  });
+});
+
+describe('word clock: words without a Deepgram match', () => {
+  const text = 'a1 a2 a3 a4 m1 m2 m3 m4 z1 z2 z3 z4';
+  // Deepgram heard only the first and last four words, both from speaker A
+  const dg = (): TimedWord[] => [
+    ...words('a1 a2 a3 a4', 0, 4).map((w) => ({ ...w, speaker: 'A' })),
+    ...words('z1 z2 z3 z4', 8, 12).map((w) => ({ ...w, speaker: 'A' })),
+  ];
+  it('keep the surrounding speaker when another voice has only a short flicker there', () => {
+    const r = wordClockJoin([turn(0, 12, text)], dg(), {
+      segments: [seg('A', 0, 12), seg('B', 5.5, 6.1)],
+      timeMode: 'index',
+    });
+    expect(r.tokenSpeakers[0]!.every((s) => s === 'A')).toBe(true);
+  });
+  it('take the other voice when pyannote has a solid segment there', () => {
+    const r = wordClockJoin([turn(0, 12, text)], dg(), {
+      segments: [seg('A', 0, 4), seg('B', 4, 8), seg('A', 8, 12)],
+      timeMode: 'index',
+    });
+    expect(r.tokenSpeakers[0]!.slice(4, 8)).toEqual(['B', 'B', 'B', 'B']);
+    expect(r.tokens.filter((t) => t.matched)).toHaveLength(8);
+  });
+});
+
+describe('joinMeeting with Gemini’s clock off', () => {
+  const t1 = 'alpha bravo charlie delta echo foxtrot golf hotel india juliet';
+  const t2 = 'kilo lima mike november oscar papa';
+  const t3 = 'quebec romeo sierra tango uniform victor whiskey xray yankee zulu';
+  const segments = [seg('A', 0, 10), seg('B', 10, 14), seg('A', 14, 24)];
+  const base = {
+    chunks: [{ index: 0, startSec: 0, endSec: 60 }],
+    segments,
+    speechSegments: [{ start: 0, end: 24 }],
+  };
+  const total = (ts: Turn[]) => ts.reduce((n, t) => n + t.textNative.split(' ').length, 0);
+
+  it('shifts a turn Deepgram did not hear by the drift measured on its neighbours', () => {
+    // Gemini's clock is 30 s late; Deepgram has words for turns 1 and 3 only
+    const turns = [turn(30, 40, t1), turn(40, 44, t2), turn(44, 54, t3)];
+    const j = joinMeeting({
+      ...base,
+      turns,
+      dgWords: [...words(t1, 0, 10), ...words(t3, 14, 24)],
+    });
+    const middle = j.turns.find((t) => t.textNative.includes('kilo'))!;
+    expect(middle.speaker).toBe('B');
+    expect(middle.start).toBeGreaterThan(9);
+    expect(middle.start).toBeLessThan(11.5);
+    expect(j.turnMethods).toMatchObject({ m3: 2, m1: 1 });
+    expect(total(j.turns)).toBe(total(turns));
+  });
+
+  it('does not let a few common words pull a turn into a later stretch', () => {
+    // turn 2 has 20 words; Deepgram heard nothing at 10-14 s but has 3 of those words at 60 s
+    const filler = Array.from({ length: 17 }, (_, i) => `filler${i}`).join(' ');
+    const long = `kilo lima mike ${filler}`;
+    const turns = [turn(0, 10, t1), turn(10, 14, long), turn(66, 76, t3)];
+    const j = joinMeeting({
+      ...base,
+      chunks: [{ index: 0, startSec: 0, endSec: 90 }],
+      segments: [seg('A', 0, 10), seg('B', 10, 14), seg('A', 58, 80)],
+      speechSegments: [{ start: 0, end: 80 }],
+      turns,
+      dgWords: [...words(t1, 0, 10), ...words('kilo lima mike', 60.5, 61.5), ...words(t3, 66, 76)],
+    });
+    const middle = j.turns.find((t) => t.textNative.includes('kilo'))!;
+    expect(middle.start).toBeLessThan(15); // 3 of 20 matches (15%) do not define the turn's time
+    expect(middle.speaker).toBe('B');
+    expect(total(j.turns)).toBe(total(turns));
+  });
+
+  it('never loses or duplicates words', () => {
+    const turns = [turn(30, 40, t1), turn(40, 44, t2), turn(44, 54, t3)];
+    const j = joinMeeting({ ...base, turns, dgWords: words(t1, 0, 10) });
+    expect(total(j.turns)).toBe(total(turns));
   });
 });

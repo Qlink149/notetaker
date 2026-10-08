@@ -1,9 +1,15 @@
 import type { Segment, Turn } from '@meetingid/shared';
 import { computeCoverage } from '../coverage.js';
 import type { DiarSegment } from '../diarization.js';
-import { UNKNOWN_SPEAKER, type JoinResult, type TimedWord } from './types.js';
+import { UNKNOWN_SPEAKER, type TimedWord } from './types.js';
 import { assignByOverlap } from './m1.js';
-import { assignWordSpeakers, wordClockJoin, type WordClockStats } from './m3.js';
+import { splitWords } from './tokens.js';
+import {
+  assignWordSpeakers,
+  wordClockJoin,
+  type TokenPlacement,
+  type WordClockStats,
+} from './m3.js';
 
 export interface ChunkSpan {
   index: number;
@@ -75,6 +81,7 @@ export function chooseMethods(
 
 export interface MeetingJoin {
   turns: Turn[];
+  /** Per chunk: how much of the speech Deepgram's words cover (informational; see `turnMethods`). */
   decisions: ChunkDecision[];
   /** Share of Gemini words given the same pyannote speaker by M1 and M3 (all words, and per chunk). */
   agreement: {
@@ -82,6 +89,8 @@ export interface MeetingJoin {
     perChunk: { index: number; agreement: number | null; words: number }[];
   };
   m3Stats: WordClockStats | null;
+  /** Turns joined by the word clock and by time overlap, and how many matches were rejected as outliers. */
+  turnMethods: { m3: number; m1: number; outliers: number };
 }
 
 /** Share of equal entries across two per-turn token-speaker arrays. */
@@ -104,10 +113,134 @@ function agreementOf(
   return { share: total ? Math.round((same / total) * 1000) / 1000 : null, words: total };
 }
 
+/** A turn is "poorly anchored" below this many matched Deepgram words, or this share of its words. */
+export const POOR_ANCHORS = 4;
+export const POOR_SHARE = 0.3;
 /**
- * Join a meeting's Gemini turns to pyannote speakers. M1 and M3 are both computed; each turn takes
- * the method chosen for the chunk that owns it (M3 where Deepgram covers ≥ 0.70 of the speech).
- * Where the two disagree M3 wins, because it uses real word times. Output turns carry pyannote ids.
+ * A poorly anchored turn is shifted by Gemini's clock drift, interpolated between the nearest
+ * anchored turns before and after it, when those two are at most SHIFT_MAX_GAP_SEC apart and their
+ * drifts agree within SHIFT_MAX_DISAGREE_SEC. Otherwise the drift is unknown and the turn keeps
+ * its own times. (Gemini's clock is often seconds to minutes out; settled on held-out Deepgram
+ * blocks, see DECISIONS.)
+ */
+export const SHIFT_MAX_GAP_SEC = 80;
+export const SHIFT_MAX_DISAGREE_SEC = 8;
+/** A turn with at least this many matched words (and POOR_SHARE of its words) has a drift of its own (their median). */
+const OWN_DRIFT_ANCHORS = 3;
+/**
+ * A turn whose own drift is more than this from both anchored neighbours and from the line
+ * between them is an outlier: its matches are a few common words aligned to a distant spot, not
+ * the real place.
+ */
+export const OUTLIER_SEC = 8;
+
+const median = (v: number[]): number => [...v].sort((a, b) => a - b)[Math.floor(v.length / 2)]!;
+
+export interface TurnTrust {
+  anchors: number[];
+  words: number[];
+  poor: boolean[];
+  /** Seconds to add to Gemini's times for the turn; 0 where unknown. */
+  shift: number[];
+  /** Whether `shift` rests on two agreeing anchored neighbours (or the turn's own anchors). */
+  shiftKnown: boolean[];
+  /** Turns whose matches were rejected as inconsistent with their neighbours. */
+  outlier: boolean[];
+}
+
+/**
+ * Per turn: matched Deepgram words, whether it is poorly anchored, and the drift of Gemini's clock
+ * (Deepgram time of a matched word minus Gemini's even-pacing time for it, median per turn,
+ * interpolated across turns without enough anchors).
+ */
+export function turnTrust(turns: Turn[], tokens: TokenPlacement[]): TurnTrust {
+  const anchors: number[] = [];
+  const words: number[] = [];
+  const own: (number | null)[] = [];
+  let at = 0;
+  for (const t of turns) {
+    const n = splitWords(t.textNative).length;
+    words.push(n);
+    const offs: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const tok = tokens[at + k]!;
+      if (tok.matched) offs.push(tok.start - (t.start + ((k + 0.5) / n) * (t.end - t.start)));
+    }
+    anchors.push(offs.length);
+    offs.sort((x, y) => x - y);
+    // Only a dense match counts: a few common words (aur, yeh, hai) align almost anywhere, and a run
+    // of such false matches even agrees with its own neighbours.
+    own.push(
+      offs.length >= OWN_DRIFT_ANCHORS && offs.length / Math.max(1, n) >= POOR_SHARE
+        ? median(offs)
+        : null,
+    );
+    at += n;
+  }
+  const outlier = new Array<boolean>(turns.length).fill(false);
+  const anchored = own.flatMap((o, i) => (o === null ? [] : [i]));
+  const midOf = (i: number): number => (turns[i]!.start + turns[i]!.end) / 2;
+  anchored.forEach((i, k) => {
+    const prev = anchored[k - 1];
+    const next = anchored[k + 1];
+    // Drift is smooth (a steady stretch or a steep ramp: it agrees with the line between the
+    // neighbours) or jumps at a chunk seam (it agrees with one neighbour). A false match, a few
+    // common words aligned to a distant spot, agrees with none of the three.
+    const candidates: number[] = [];
+    if (prev !== undefined) candidates.push(own[prev]!);
+    if (next !== undefined) candidates.push(own[next]!);
+    if (prev !== undefined && next !== undefined) {
+      const f = (midOf(i) - midOf(prev)) / Math.max(1e-6, midOf(next) - midOf(prev));
+      candidates.push(own[prev]! + f * (own[next]! - own[prev]!));
+    }
+    // with one neighbour only, a ramp cannot be told from a jump: be twice as lenient
+    const tolerance = candidates.length === 1 ? 2 * OUTLIER_SEC : OUTLIER_SEC;
+    if (candidates.length && candidates.every((c) => Math.abs(own[i]! - c) > tolerance))
+      outlier[i] = true;
+  });
+  outlier.forEach((o, i) => {
+    if (o) own[i] = null;
+  });
+  const mid = turns.map((t) => (t.start + t.end) / 2);
+  const poor = turns.map(
+    (_, i) =>
+      outlier[i]! ||
+      anchors[i]! < POOR_ANCHORS ||
+      anchors[i]! / Math.max(1, words[i]!) < POOR_SHARE,
+  );
+  const shift = new Array<number>(turns.length).fill(0);
+  const shiftKnown = new Array<boolean>(turns.length).fill(false);
+  turns.forEach((_, i) => {
+    if (own[i] !== null) {
+      shift[i] = own[i]!;
+      shiftKnown[i] = true;
+      return;
+    }
+    let p = i - 1;
+    while (p >= 0 && own[p] === null) p--;
+    let n = i + 1;
+    while (n < turns.length && own[n] === null) n++;
+    if (p < 0 || n >= turns.length) return;
+    if (
+      mid[n]! - mid[p]! > SHIFT_MAX_GAP_SEC ||
+      Math.abs(own[n]! - own[p]!) > SHIFT_MAX_DISAGREE_SEC
+    )
+      return;
+    const f = (mid[i]! - mid[p]!) / Math.max(1e-6, mid[n]! - mid[p]!);
+    shift[i] = own[p]! + f * (own[n]! - own[p]!);
+    shiftKnown[i] = true;
+  });
+  return { anchors, words, poor, shift, shiftKnown, outlier };
+}
+
+/**
+ * Join a meeting's Gemini turns to pyannote speakers. Deepgram's word clock is the base for time
+ * and speaker wherever Gemini's words can be matched to Deepgram's: Gemini's own times drift by
+ * seconds to minutes, so the aligned words give both the right moment and the right voice. A turn
+ * with too few matched words (Deepgram missed or garbled it) keeps Gemini's turn boundaries, which
+ * mark speaker changes the word clock cannot see, and is joined by time overlap (M1) after being
+ * shifted by the locally measured drift of Gemini's clock. Without Deepgram words every turn is M1.
+ * Output turns carry pyannote ids.
  */
 export function joinMeeting(input: {
   turns: Turn[];
@@ -119,42 +252,49 @@ export function joinMeeting(input: {
 }): MeetingJoin {
   const { turns, chunks, segments, speechSegments } = input;
   const decisions = chooseMethods(chunks, input.dgWords, speechSegments, input.minCoverage);
-  const m1 = assignByOverlap(turns, segments);
   const dgWords = assignWordSpeakers(input.dgWords, segments);
-  const useM3 = decisions.some((d) => d.method === 'm3') && dgWords.length > 0;
-  const m3: (JoinResult & { stats: WordClockStats }) | null = useM3
-    ? wordClockJoin(turns, dgWords)
-    : null;
-
-  const owner = chunkOwnership(chunks);
-  const methodFor = (t: Turn): JoinMethod => {
-    const o = owner.find((c) => t.start >= c.from && t.start < c.to) ?? owner[owner.length - 1];
-    return decisions.find((d) => d.index === o?.index)?.method ?? 'm1';
-  };
+  const m3 = dgWords.length > 0 ? wordClockJoin(turns, dgWords, { segments }) : null;
+  const trust = m3 ? turnTrust(turns, m3.tokens) : null;
+  const useM1 = turns.map((_, i) => !trust || trust.poor[i]!);
+  // M1 on Gemini's turns, shifted by the drift where it is known
+  const m1Input = turns.map((t, i) =>
+    trust && useM1[i] && trust.shiftKnown[i]
+      ? { ...t, start: t.start + trust.shift[i]!, end: t.end + trust.shift[i]! }
+      : t,
+  );
+  const m1 = assignByOverlap(m1Input, segments);
 
   const out: Turn[] = [];
+  turns.forEach((_, i) => {
+    const src = useM1[i] || !m3 ? m1 : m3;
+    src.turns.forEach((o, k) => {
+      if (src.sourceIndex[k] === i) out.push(trust && useM1[i] ? { ...o, timeEstimated: true } : o);
+    });
+  });
+
+  const owner = chunkOwnership(chunks);
   const turnsByChunk = new Map<number, number[]>();
   turns.forEach((t, i) => {
-    const method = m3 ? methodFor(t) : 'm1';
-    const src = method === 'm3' && m3 ? m3 : m1;
-    src.turns.forEach((o, k) => {
-      if (src.sourceIndex[k] === i) out.push(o);
-    });
     const o = owner.find((c) => t.start >= c.from && t.start < c.to) ?? owner[owner.length - 1];
     if (o) turnsByChunk.set(o.index, [...(turnsByChunk.get(o.index) ?? []), i]);
   });
-
   const all = turns.map((_, i) => i);
   const overall = m3 ? agreementOf(m1.tokenSpeakers, m3.tokenSpeakers, all).share : null;
   const perChunk = [...turnsByChunk].map(([index, idx]) => {
     const a = m3 ? agreementOf(m1.tokenSpeakers, m3.tokenSpeakers, idx) : { share: null, words: 0 };
     return { index, agreement: a.share, words: a.words };
   });
+  const m1Count = useM1.filter(Boolean).length;
   return {
     turns: out.sort((a, b) => a.start - b.start),
     decisions,
     agreement: { overall, perChunk },
     m3Stats: m3?.stats ?? null,
+    turnMethods: {
+      m3: turns.length - m1Count,
+      m1: m1Count,
+      outliers: trust ? trust.outlier.filter(Boolean).length : 0,
+    },
   };
 }
 

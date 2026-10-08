@@ -1,8 +1,42 @@
 import type { Turn } from '@meetingid/shared';
 import type { DiarSegment } from '../diarization.js';
 import { alignTokens } from './alignTokens.js';
-import { foldWord, splitWords } from './tokens.js';
+import { keysMatch, splitWords, wordKey } from './tokens.js';
 import { cutPoints, type JoinResult, type TimedWord } from './types.js';
+
+/**
+ * The pyannote speaker at time `mid`: the segment containing it, else the nearest segment within
+ * `maxGapSec`, else null. `segs` must be sorted by start.
+ */
+export function speakerAtTime(segs: DiarSegment[], mid: number, maxGapSec: number): string | null {
+  let lo = 0;
+  let hi = segs.length - 1;
+  let at = -1; // last segment starting at or before mid
+  while (lo <= hi) {
+    const m = (lo + hi) >> 1;
+    if (segs[m]!.start <= mid) {
+      at = m;
+      lo = m + 1;
+    } else hi = m - 1;
+  }
+  let speaker: string | null = null;
+  for (let k = Math.max(0, at - 2); k <= Math.min(segs.length - 1, at + 1); k++) {
+    const s = segs[k]!;
+    if (s.start <= mid && mid <= s.end) speaker = s.speaker;
+  }
+  if (!speaker) {
+    let best = maxGapSec;
+    for (let k = Math.max(0, at - 2); k <= Math.min(segs.length - 1, at + 2); k++) {
+      const s = segs[k]!;
+      const gap = mid < s.start ? s.start - mid : mid - s.end;
+      if (gap <= best) {
+        best = gap;
+        speaker = s.speaker;
+      }
+    }
+  }
+  return speaker;
+}
 
 /**
  * Give every word the pyannote speaker active at its midpoint. A word outside every segment takes
@@ -15,36 +49,10 @@ export function assignWordSpeakers(
   maxGapSec = 0.7,
 ): TimedWord[] {
   const segs = [...segments].sort((a, b) => a.start - b.start);
-  const out = words.map((w) => {
-    const mid = (w.start + w.end) / 2;
-    let lo = 0;
-    let hi = segs.length - 1;
-    let at = -1; // last segment starting at or before mid
-    while (lo <= hi) {
-      const m = (lo + hi) >> 1;
-      if (segs[m]!.start <= mid) {
-        at = m;
-        lo = m + 1;
-      } else hi = m - 1;
-    }
-    let speaker: string | null = null;
-    for (let k = Math.max(0, at - 2); k <= Math.min(segs.length - 1, at + 1); k++) {
-      const s = segs[k]!;
-      if (s.start <= mid && mid <= s.end) speaker = s.speaker;
-    }
-    if (!speaker) {
-      let best = maxGapSec;
-      for (let k = Math.max(0, at - 2); k <= Math.min(segs.length - 1, at + 2); k++) {
-        const s = segs[k]!;
-        const gap = mid < s.start ? s.start - mid : mid - s.end;
-        if (gap <= best) {
-          best = gap;
-          speaker = s.speaker;
-        }
-      }
-    }
-    return { ...w, speaker };
-  });
+  const out = words.map((w) => ({
+    ...w,
+    speaker: speakerAtTime(segs, (w.start + w.end) / 2, maxGapSec),
+  }));
   // Fill the rest from the nearest word that has a speaker.
   const known = out.map((w, i) => (w.speaker ? i : -1)).filter((i) => i >= 0);
   if (!known.length) return out;
@@ -73,14 +81,47 @@ export interface WordClockOptions {
   blockWords?: number;
   /** How far Gemini times may be off from the Deepgram clock. */
   slackSec?: number;
-  /** A speaker run shorter than this many words inside a turn joins its neighbour. */
+  /**
+   * A speaker run inside a turn joins its neighbour when it is shorter than this. These limits apply
+   * to runs that are not anchored: with fewer than 2 matched Deepgram words their times are
+   * estimates (about a second off), too coarse to tell a short answer from timing noise.
+   */
   minRunWords?: number;
   minRunSec?: number;
+  /** The (smaller) limits for a run of at least 2 matched Deepgram words, whose times are real. */
+  minAnchoredRunWords?: number;
+  minAnchoredRunSec?: number;
+  /**
+   * pyannote's exclusive diarization. When given, a word without a Deepgram match takes the speaker
+   * active at its interpolated time (not the speaker of the nearest matched word), so a short
+   * answer inside a long turn is attributed to the voice that spoke at that moment.
+   */
+  segments?: DiarSegment[];
+  /** Longest-allowed solo segment test: see the unmatched-word rule (seconds, seconds). */
+  soloSegmentSec?: number;
+  soloMarginSec?: number;
+  /**
+   * How a word without a match is timed between two matched neighbours: "index" spreads the words
+   * evenly; "gemini" keeps Gemini's own pacing (its pauses between turns) and shifts it by the
+   * offset to the Deepgram clock measured at the two neighbours. Default "gemini".
+   */
+  timeMode?: 'index' | 'gemini';
+  /** Match on a consonant skeleton too, so Devanagari "प्रिंट" meets Deepgram's "print". Default true. */
+  phonetic?: boolean;
 }
 
 export interface WordClockStats {
   words: number;
   matched: number;
+}
+
+/** What the join decided for one Gemini word (native-script word order across all turns). */
+export interface TokenPlacement {
+  start: number;
+  end: number;
+  speaker: string | null;
+  /** True when the word was aligned to a Deepgram word. */
+  matched: boolean;
 }
 
 interface Tok {
@@ -111,10 +152,27 @@ function firstStartAtOrAfter(words: TimedWord[], t: number): number {
 export function wordClockJoin(
   turns: Turn[],
   dgWords: TimedWord[],
-  { blockWords = 700, slackSec = 75, minRunWords = 3, minRunSec = 0.8 }: WordClockOptions = {},
-): JoinResult & { stats: WordClockStats } {
+  {
+    blockWords = 700,
+    slackSec = 75,
+    minRunWords = 3,
+    minRunSec = 1.5,
+    minAnchoredRunWords = 2,
+    minAnchoredRunSec = 0.4,
+    segments,
+    phonetic = true,
+    timeMode = 'gemini',
+    soloSegmentSec = 0.8,
+    soloMarginSec = 0.3,
+  }: WordClockOptions = {},
+): JoinResult & { stats: WordClockStats; tokens: TokenPlacement[] } {
   const dg = [...dgWords].sort((a, b) => a.start - b.start);
-  const dgFolded = dg.map((w) => foldWord(w.text));
+  const key = phonetic ? wordKey : (w: string): string => wordKey(w).split('|')[0]!;
+  const same = phonetic
+    ? keysMatch
+    : (a: string, b: string): boolean => keysMatch(`${a}|`, `${b}|`);
+  const segs = segments ? [...segments].sort((a, b) => a.start - b.start) : null;
+  const dgFolded = dg.map((w) => key(w.text));
   const perTurn = turns.map((t) => splitWords(t.textNative));
   const toks: Tok[] = [];
   perTurn.forEach((words, turn) => {
@@ -123,7 +181,7 @@ export function wordClockJoin(
       toks.push({
         turn,
         k,
-        folded: foldWord(w),
+        folded: key(w),
         approx: t.start + ((k + 0.5) / words.length) * (t.end - t.start),
       }),
     );
@@ -143,6 +201,7 @@ export function wordClockJoin(
     const hits = alignTokens(
       block.map((x) => x.folded),
       dgFolded.slice(from, to),
+      same,
     );
     let lastHit = -1;
     hits.forEach((j, i) => {
@@ -181,17 +240,53 @@ export function wordClockJoin(
     const next = nextAnchor[i]! >= 0 ? nextAnchor[i]! : undefined;
     const t = turns[toks[i]!.turn]!;
     if (prev !== undefined && next !== undefined) {
-      const f = (i - prev) / (next - prev);
-      start[i] = end[prev]! + f * (start[next]! - end[prev]!);
-      end[i] =
-        start[i]! + Math.min(0.4, Math.max(0.05, (start[next]! - end[prev]!) / (next - prev)));
+      const gapStart = end[prev]!;
+      const gapEnd = start[next]!;
+      const span = toks[next]!.approx - toks[prev]!.approx;
+      if (timeMode === 'gemini' && span > 0.05 && gapEnd > gapStart) {
+        const offPrev = start[prev]! - toks[prev]!.approx;
+        const offNext = start[next]! - toks[next]!.approx;
+        const f = (toks[i]!.approx - toks[prev]!.approx) / span;
+        const s0 = toks[i]!.approx + offPrev + f * (offNext - offPrev);
+        start[i] = Math.min(gapEnd, Math.max(gapStart, s0));
+      } else {
+        const f = (i - prev) / (next - prev);
+        start[i] = gapStart + f * (gapEnd - gapStart);
+      }
+      end[i] = Math.min(
+        gapEnd,
+        start[i]! + Math.min(0.4, Math.max(0.05, (gapEnd - gapStart) / (next - prev))),
+      );
     } else {
       start[i] = toks[i]!.approx;
       end[i] = Math.min(t.end, toks[i]!.approx + 0.4);
     }
     const pick =
       prev === undefined ? next : next === undefined ? prev : i - prev <= next - i ? prev : next;
-    spk[i] = pick === undefined ? null : spk[pick]!;
+    // Between two anchors the interpolated time says who spoke (to about a second). Between two
+    // anchors of the same speaker a different voice is believed only for a solid, well-enclosed
+    // pyannote segment: shorter ones are within the timing error of the estimate.
+    let byTime: string | null = null;
+    if (segs && prev !== undefined && next !== undefined) {
+      const mid = (start[i]! + end[i]!) / 2;
+      const found = speakerAtTime(segs, mid, 0.4);
+      const same = spk[prev] === spk[next];
+      if (!same) byTime = found;
+      else if (found === spk[prev]) byTime = found;
+      else if (found) {
+        const seg = segs.find(
+          (x) =>
+            x.speaker === found && x.start - soloMarginSec <= mid && mid <= x.end + soloMarginSec,
+        );
+        const solid =
+          seg &&
+          seg.end - seg.start >= soloSegmentSec &&
+          mid - seg.start >= soloMarginSec &&
+          seg.end - mid >= soloMarginSec;
+        byTime = solid ? found : (spk[prev] ?? null);
+      }
+    }
+    spk[i] = byTime ?? (pick === undefined ? null : spk[pick]!);
   }
 
   // 3. regroup per turn into speaker runs, absorbing tiny runs
@@ -226,7 +321,13 @@ export function wordClockJoin(
     const secs = (r: WRun): number => end[r.to - 1]! - start[r.from]!;
     for (;;) {
       if (runs.length < 2) break;
-      const small = runs.findIndex((r) => size(r) < minRunWords || secs(r) < minRunSec);
+      const anchored = (r: WRun): boolean =>
+        matchOf.slice(r.from, r.to).filter((m) => m >= 0).length >= 2;
+      const small = runs.findIndex((r) =>
+        anchored(r)
+          ? size(r) < minAnchoredRunWords || secs(r) < minAnchoredRunSec
+          : size(r) < minRunWords || secs(r) < minRunSec,
+      );
       if (small < 0) break;
       const left = runs[small - 1];
       const right = runs[small + 1];
@@ -273,5 +374,11 @@ export function wordClockJoin(
     tokenSpeakers,
     sourceIndex,
     stats: { words: n, matched: matchOf.filter((m) => m >= 0).length },
+    tokens: toks.map((_, i) => ({
+      start: start[i]!,
+      end: end[i]!,
+      speaker: spk[i] ?? null,
+      matched: matchOf[i]! >= 0,
+    })),
   };
 }

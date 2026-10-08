@@ -83,7 +83,7 @@ function runsInside(
 export function assignByOverlap(
   turns: Turn[],
   segments: DiarSegment[],
-  { minSplitSec = 1.5, nearestSec = 2 }: OverlapOptions = {},
+  { minSplitSec = 1, nearestSec = 2 }: OverlapOptions = {},
 ): JoinResult {
   const segs = [...segments].sort((a, b) => a.start - b.start);
   const out: Turn[] = [];

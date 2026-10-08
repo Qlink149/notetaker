@@ -388,3 +388,32 @@ Sources read: pyannote.ai/pricing, docs.pyannote.ai/administration/billing, pyan
 - **Estimated use in Phase 2 so far:** 8 diarizations = 4.8 audio hours × €0.112 ≈ €0.53 (if both models are priced alike); 3 identifications = 1.7 hours × €0.015–0.112 ≈ €0.03–0.19; 10 voiceprints × €0.015 = €0.15. About **€0.7–0.9 in total**, inside the trial.
 - **Estimated pyannote cost of one 1-hour meeting:** diarization €0.112 + identification €0.015–0.112 + voiceprints (about 3 per new voice, 1 per recognised voice; 5 new voices ≈ €0.23) = roughly **€0.15–0.45, typically about €0.3**. €19 of Developer credit covers roughly 55 such meeting-hours a month, or about 170 hours of diarization alone.
 - **Still to confirm with pyannote or the dashboard:** the identification unit price, whether precision-2 is billed like precision-3, and what the Developer plan's overage does after the credit is used.
+
+## 34. The join rebuilt around Deepgram's clock (8 Oct, afternoon)
+
+**What was found.** A listener heard a second, lower voice asking "hoarding kidhar gaya?" inside one line of Prachar (7:41) that showed one speaker. Tracing it through every stored layer showed three separate causes, not one:
+
+1. **Gemini's clock is wrong, often by a lot.** Matching Gemini's words to Deepgram's (which have real word times), Gemini's own turn times are off by seconds to minutes, and not smoothly: in 21-9, 89 of 265 well-matched turns were more than 10 s off and 39 more than 40 s; in AOM one turn was 139 s off; in 200 the offset is about 30 s for a stretch, then jumps to about 0 at a chunk seam. Spot checks confirmed it is real (at Gemini's time Deepgram hears other words; at the aligned time it hears exactly the Gemini text). The old M1 looked up the pyannote speaker at that wrong time, and the old chooser (M3 only if Deepgram covered ≥ 0.70 of a 10-minute chunk) sent whole chunks to M1: Prachar's first chunk scored 0.669.
+2. **Few Gemini words could be matched** (40-69 %) because Gemini writes English words in Devanagari ("टीवी, प्रिंट, डिजिटल") where Deepgram writes Latin ("TV print digital"), and digits where Deepgram writes number words. Deepgram also simply misses speech in places (Prachar: 3,570 Deepgram words against 5,897 Gemini words; none at all for about 90 s near 34:00).
+3. **Short interjections were smoothed away**, and unmatched words took the speaker of the nearest matched *word* instead of the speaker at their time.
+
+**What was built** (`packages/pipeline/src/join`):
+- A **phonetic key** (consonant skeleton, voicing and aspiration folded; प्रिंट = print, डिजिटल = digital, टीवी = TV) so Devanagari and Latin spellings align. Matched words: 59→67 % (21-9), 47→49 % (200), 69→76 % (AOM), 40→44 % (Prachar).
+- Unmatched words are timed from Gemini's own pacing shifted by the offset at their matched neighbours, and take the pyannote speaker at that time; between two anchors of the same speaker another voice is believed only for a solid segment (≥ 0.8 s, word at least 0.3 s inside it). Short runs are kept only if anchored by ≥ 2 matched Deepgram words (2 words / 0.4 s), otherwise 3 words / 1.5 s.
+- **`joinMeeting` is now word clock first, everywhere** (no per-chunk chooser). A turn with fewer than 4 matched words, or under 30 % of its words matched, keeps **Gemini's turn boundaries** (they mark speaker changes the word clock cannot see) and is joined by time overlap (M1, minimum split 1.0 s) after being **shifted by the drift** interpolated between the nearest dense anchored turns (only if those are at most 80 s apart and agree within 8 s; otherwise its own time is kept and the turn is marked time-estimated).
+- **Safeguards found by failures on real data:** a turn's drift counts only from a *dense* match (≥ 3 matched words and ≥ 30 % of its words), because a few common words (aur, yeh, hai) align almost anywhere and a run of such false matches even agrees with its own neighbours (this collapsed 90 s of Prachar into one 82-second block and teleported a turn 92 s); a turn whose drift disagrees with both neighbours and the line between them is rejected, while a real jump at a chunk seam (agrees with one side) and a steep ramp (agrees with the line) are kept.
+- The installed join gate is now "coverage not more than 3 points below Phase 1" (was 0.2). Phase 1's coverage counts a turn at the wrong time as covering the speech near it, so a join that puts text at its true time can legitimately score a little lower.
+
+**How it was measured** (`npm run p2:holdout`, `npm run p2:joincheck`; no engine calls). Hide every third block of Deepgram words, join again, and compare the hidden words with what the full run knew:
+
+| | 10 s holes (mean of 4) | 60 s holes (mean of 4) |
+|---|---|---|
+| old M1 on Gemini's times | 79.7 % speaker right | 79.4 % |
+| word clock only | 86.7 % | 59.9 % (it collapses in long holes) |
+| **final rule** | **89.4 %** | **83.3 %** |
+
+Time error of a hidden word (median): Gemini as it is 1.0-7.3 s (p90 up to 49 s), word clock 1.0-1.3 s (24 s in 60 s holes), Gemini plus the measured drift 0.8-1.7 s. On the stored joins: Deepgram words found in the line text at their time rose from 22 / 29 / 37 / 53 % (M1) to 40 / 35 / 53 / 55 % on 21-9 / 200 / AOM / Prachar; Deepgram words under a different speaker than pyannote heard fell from 9.6 / 6.8 / 0.8 / 6.8 % to 3.7 / 4.4 / 0.4 / 3.6 %; no words are lost or duplicated.
+
+**What this does not prove.** "Right" here means "the speaker pyannote gave at the Deepgram word's time", so a pyannote mistake is invisible to every number above. Only a listener can say how many speakers there really are and who said what; the blind audit at `/audit` is still the real test. Roman/native splitting was checked and is fine (word counts equal in 92-99 % of turns, proportional cuts within one word of a phonetic alignment in 97-100 %).
+
+**Known limits after this change.** About 3 % (21-9), 4 % (200 and AOM) and 14 % (Prachar) of turn time has no verified time (no dense anchors and no trustworthy drift neighbours): those lines keep Gemini's own time and are marked time-estimated; the web UI does not show that mark yet. 24-83 s of pyannote speech per meeting has no text near it (Gemini omissions; Phase 1's gap-fill is the remedy and is waiting for Gemini quota). Short interjections inside poorly anchored turns are split only if pyannote's segment lasts ≥ 1 s.

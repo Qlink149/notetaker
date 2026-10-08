@@ -46,3 +46,107 @@ export function wordsMatch(foldedA: string, foldedB: string): boolean {
   if (foldedA === foldedB) return true;
   return Math.min(foldedA.length, foldedB.length) >= 4 && withinOneEdit(foldedA, foldedB);
 }
+
+/** Devanagari consonants (after foldWord: Gujarati is already Devanagari) to a coarse Latin class. */
+const DEV_CONSONANT: Record<string, string> = {
+  क: 'k',
+  ख: 'k',
+  ग: 'k',
+  घ: 'k',
+  ङ: 'n',
+  च: 'j',
+  छ: 'j',
+  ज: 'j',
+  झ: 'j',
+  ञ: 'n',
+  ट: 't',
+  ठ: 't',
+  ड: 't',
+  ढ: 't',
+  ण: 'n',
+  त: 't',
+  थ: 't',
+  द: 't',
+  ध: 't',
+  न: 'n',
+  प: 'p',
+  फ: 'p',
+  ब: 'p',
+  भ: 'p',
+  म: 'm',
+  र: 'r',
+  ल: 'l',
+  व: 'v',
+  श: 's',
+  ष: 's',
+  स: 's',
+};
+
+/**
+ * A coarse consonant skeleton that the same spoken word has in Devanagari, Gujarati and Latin
+ * spelling (प्रिंट, print → "prnt"; डिजिटल, digital → "tjtl" / "tktl", one edit apart). Voicing and
+ * aspiration are folded, vowels and h/y dropped. Gemini writes English words in Devanagari where
+ * Deepgram writes them in Latin, which plain folding cannot match.
+ */
+export function phoneticSkeleton(word: string): string {
+  const s = foldWord(word);
+  let out = '';
+  const push = (c: string): void => {
+    if (out[out.length - 1] !== c) out += c;
+  };
+  const latin = s
+    .replace(/sh/g, 's')
+    .replace(/ch/g, 'j')
+    .replace(/[tdbkgp]h/g, (m) => m[0]!)
+    .replace(/ck/g, 'k')
+    .replace(/c(?=[eiy])/g, 's')
+    .replace(/c/g, 'k');
+  for (const ch of Array.from(latin)) {
+    const dev = DEV_CONSONANT[ch];
+    if (dev) push(dev);
+    else if (ch === 'ं' || ch === 'ँ') push('n');
+    else if (/[0-9]/.test(ch)) push(ch);
+    else if (/[a-z]/.test(ch)) {
+      const m = (
+        {
+          b: 'p',
+          d: 't',
+          g: 'k',
+          f: 'p',
+          q: 'k',
+          w: 'v',
+          z: 'j',
+          x: 'ks',
+          k: 'k',
+          j: 'j',
+          l: 'l',
+          m: 'm',
+          n: 'n',
+          p: 'p',
+          r: 'r',
+          s: 's',
+          t: 't',
+          v: 'v',
+        } as Record<string, string>
+      )[ch];
+      if (m) for (const c of m) push(c);
+    }
+  }
+  return out;
+}
+
+/** Alignment key: the folded word and its skeleton, joined by "|". */
+export function wordKey(word: string): string {
+  return `${foldWord(word)}|${phoneticSkeleton(word)}`;
+}
+
+/** Match two `wordKey`s: equal or near-equal folded words, or the same skeleton (3+ consonants). */
+export function keysMatch(a: string, b: string): boolean {
+  const [fa = '', sa = ''] = a.split('|');
+  const [fb = '', sb = ''] = b.split('|');
+  if (wordsMatch(fa, fb)) return true;
+  // two-consonant skeletons (टीवी / TV) only when one side is Devanagari and the other Latin
+  if (sa.length === 2 && sa === sb) return /[ऀ-ॿ]/.test(fa) !== /[ऀ-ॿ]/.test(fb);
+  if (sa.length < 3 || sb.length < 3) return false;
+  return sa === sb || (Math.min(sa.length, sb.length) >= 4 && withinOneEdit(sa, sb));
+}
