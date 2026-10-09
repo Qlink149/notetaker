@@ -59,6 +59,12 @@ const EnvSchema = z.object({
   DEEPGRAM_API_KEY: optional,
   ANTHROPIC_API_KEY: optional,
   PYANNOTEAI_API_KEY: optional,
+  /**
+   * A second pyannote account used ONLY for voiceprints (/voiceprint, the clip upload it reads and its
+   * job polling: media and jobs belong to the account that made them). Optional: voiceprints use
+   * PYANNOTEAI_API_KEY when it is not set. Needed when the main account has no voiceprint allowance.
+   */
+  PYANNOTEAI_VOICEPRINT_API_KEY: optional,
   SARVAM_API_KEY: optional,
   /** Unused in Phase 1 (kept from the Base44 app). */
   OPENAI_API_KEY: optional,

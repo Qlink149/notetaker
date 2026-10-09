@@ -44,7 +44,7 @@ run(async () => {
   );
   const playbackUrl = cloudinaryStorage.trimmedWavUrl(up.publicId, 0, 600);
 
-  const media = await uploadMedia(flac, `p2-enrol-${slug}-${Date.now()}.flac`);
+  const media = await uploadMedia(flac, `p2-enrol-${slug}-${Date.now()}.flac`, 'voiceprint');
   const doc = await runJob(
     {
       meetingId: null,

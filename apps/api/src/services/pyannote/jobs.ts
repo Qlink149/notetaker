@@ -14,7 +14,13 @@ import {
 } from '../../models/phase2.js';
 import { probe, toAnalysisFlac } from '../audio/ffmpeg.js';
 import { cloudinaryStorage } from '../storage/cloudinary.js';
-import { PYANNOTE_KEY_LABEL, uploadMedia, waitForJob, type PyannoteModel } from './client.js';
+import {
+  PYANNOTE_KEY_LABEL,
+  keyLabelFor,
+  uploadMedia,
+  waitForJob,
+  type PyannoteModel,
+} from './client.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 /** Local cache (gitignored /scratch) for analysis FLACs and clips. */
@@ -92,6 +98,8 @@ const RESULT_TTL_MS = 24 * 3600_000;
  * a job submitted earlier is resumed while its result can still exist, otherwise resubmitted.
  */
 export async function runJob(spec: JobSpec, log = console.log): Promise<P2PyannoteResponseDoc> {
+  // voiceprints may live on a second account; their jobs can only be polled with that account's key
+  const account = spec.kind === 'voiceprint' ? 'voiceprint' : 'main';
   const key = { meetingId: spec.meetingId, kind: spec.kind, model: spec.model, tag: spec.tag };
   const prior = await P2PyannoteResponseModel.findOne(key).sort({ submittedAt: -1 }).lean();
   if (prior?.status === 'succeeded' && prior.output) return prior;
@@ -111,12 +119,13 @@ export async function runJob(spec: JobSpec, log = console.log): Promise<P2Pyanno
       jobId,
       status: 'submitted',
       submittedAt: new Date(),
-      keyLabel: PYANNOTE_KEY_LABEL,
+      keyLabel: keyLabelFor(account),
     });
     log(`submitted ${spec.kind} ${spec.model} ${spec.meetingId} job ${jobId}`);
   }
   try {
     const job = await waitForJob(jobId, {
+      account,
       onPoll: (s, ms) => log(`  ${jobId} ${s} ${Math.round(ms / 1000)}s`),
     });
     return (await P2PyannoteResponseModel.findOneAndUpdate(

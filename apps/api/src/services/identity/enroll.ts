@@ -88,7 +88,7 @@ export async function addVoiceprints(
     const file = scratchDir(meetingId, `clip-${diar}-${key}.flac`);
     await mkdir(dirname(file), { recursive: true });
     await cutFlac(flac, file, clip.start, clip.end);
-    const media = await uploadMedia(file, `p2-clip-${meetingId}-${diar}-${key}.flac`);
+    const media = await uploadMedia(file, `p2-clip-${meetingId}-${diar}-${key}.flac`, 'voiceprint');
     const doc = await runJob(
       {
         meetingId,

@@ -40,6 +40,7 @@ Environment variables (`sync: false` ones are asked for in the dashboard; names 
 | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | as local |
 | `GEMINI_API_KEY1`, `GEMINI_API_KEY2`, `GEMINI_API_KEY3` | as local (keys 1 and 2 were out of quota until Fri 9 Oct 05:29 IST; 3 was fresh on 8 Oct) |
 | `DEEPGRAM_API_KEY` | as local (needed: the word clock that places every line in time comes from it) |
+| `PYANNOTEAI_VOICEPRINT_API_KEY` | optional second pyannote account used **only for voiceprints** (the request, the clip upload and the job polling all use it, because a job and its media belong to the account that made them). Set it when the main account's trial voiceprint allowance is used up; otherwise voiceprints use `PYANNOTEAI_API_KEY`. Each voiceprint costs about 0.015 EUR on that account |
 | `PYANNOTEAI_API_KEY` | the project key (diarization and identification work; new **voiceprints** are refused until a paid plan, the trial allowance is used) |
 | `ANTHROPIC_API_KEY` | needed for summaries of **new** meetings (`SUMMARY_PROVIDER=anthropic` in the blueprint). Without it, summarising fails; the five existing meetings already have summaries. For testing only, `SUMMARY_PROVIDER=handoff` waits for someone to answer, as in the demo |
 | `WORKSPACE_ACCESS_CODE` | not needed to log in: only a hash is stored in the database, so the **login code is the same one you use locally**. It is only read by `npm run seed` |
