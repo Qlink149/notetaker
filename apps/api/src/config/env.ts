@@ -92,6 +92,8 @@ const EnvSchema = z.object({
   CLOUDINARY_API_SECRET: optional,
 
   WORKER_ID: optional,
+  /** true = the worker also listens on PORT with GET /health (for running it as a Render web service). */
+  WORKER_HTTP: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   FFMPEG_PATH: optional,
   FFPROBE_PATH: optional,
