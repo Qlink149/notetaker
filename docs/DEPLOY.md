@@ -19,9 +19,26 @@ Updated 12 Oct. The first deployment (one combined free service, `meetingid-phas
 - **Do not make both free.** Render gives a workspace 750 free instance hours a month in total; one always-on service is about 744. Two would be suspended mid-month. Background workers are not free, and a free web service sleeps after 15 minutes without traffic (a sleeping worker does no work).
 - The free API stays awake only while an uptime monitor pings `https://<api>/api/v1/health` every 10 minutes. It must be the only free service in the workspace.
 - `render.paid.yaml` is the same layout with the API on Starter too ($14/month, nothing sleeps, no pinger needed).
+- The heap caps are in the **start commands** (`NODE_OPTIONS=--max-old-space-size=320 npm run start:worker ...`), never in environment variables: variables also apply to the build, and a compile capped at 320 MB runs out of memory (this broke the first worker build on 12 Oct).
 - A 512 MB worker leaves about 130 MB of headroom for a 74-minute recording. Two recordings never overlap (concurrency is 1). If you ever see the worker killed for memory (Render dashboard, service, Events: "out of memory"), move it to the 2 GB plan ($25).
 
 Create it: Render, New, Blueprint, pick the repo and branch `phase-2-speaker-identity`; fill the `meetingid-shared` group once. Pushing does **not** redeploy by itself unless Render's GitHub app is connected to the repo: use Manual Deploy otherwise.
+
+### The layout running now: two free services in two Render workspaces
+
+Each Render workspace has its own 750 free hours, so one always-on free service fits in each:
+
+| Service | Workspace | Address | Ping with the uptime monitor |
+|---|---|---|---|
+| `meetingid-phase2` (API only) | 1 | `https://meetingid-phase2.onrender.com` | `/api/v1/health` every 5 to 10 minutes |
+| `meetingid-worker` (processing, `WORKER_HTTP=true`) | 2 | `https://meetingid-worker.onrender.com` | `/health` every 5 to 10 minutes |
+
+Both must be pinged: a free web service sleeps after 15 minutes without traffic, and a sleeping worker does no work. A free instance has 0.1 CPU, so conversion of a long recording is slow (minutes, not seconds); the $7 Starter plan removes that. Check Render's terms about using several free workspaces.
+
+### Auto-deploy
+
+- **Vercel (website):** deploys by itself on every push (verified: the live bundle is rebuilt minutes after a push).
+- **Render:** services created through the API have no GitHub hook. `.github/workflows/ci-deploy.yml` runs lint, typecheck and all tests on every push to `phase-2-speaker-identity`, and if they pass it asks Render to deploy both services. One-time: add two repository secrets (GitHub, Settings, Secrets and variables, Actions): `RENDER_API_KEY` (workspace 1) and `RENDER_API_KEY2` (workspace 2). Without them the deploy step fails with a clear message; the tests still run.
 
 ## 2. Settings (the `meetingid-shared` group; names match your local `.env`)
 

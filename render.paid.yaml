@@ -88,14 +88,14 @@ services:
     region: singapore
     branch: phase-2-speaker-identity
     buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
-    startCommand: npm run start -w @meetingid/api
+    # the heap cap is on the start command, NOT an environment variable: variables also apply to the build,
+    # and a capped TypeScript compile runs out of memory
+    startCommand: NODE_OPTIONS=--max-old-space-size=256 npm run start -w @meetingid/api
     healthCheckPath: /api/v1/health
     envVars:
       - fromGroup: meetingid-shared
       - key: SERVICE_NAME
         value: meetingid-api
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=256
       # the website's addresses, comma separated (https://notetaker.example,https://x.vercel.app)
       - key: CORS_ORIGINS
         sync: false
@@ -107,14 +107,12 @@ services:
     region: singapore
     branch: phase-2-speaker-identity
     buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
-    startCommand: npm run start:worker -w @meetingid/api
+    startCommand: NODE_OPTIONS=--max-old-space-size=320 npm run start:worker -w @meetingid/api
     envVars:
       - fromGroup: meetingid-shared
       - key: SERVICE_NAME
         value: meetingid-worker
       - key: WORKER_CONCURRENCY
         value: "1"
-      - key: NODE_OPTIONS
-        value: --max-old-space-size=320
       - key: CORS_ORIGINS
         sync: false

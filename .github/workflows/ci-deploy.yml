@@ -1,0 +1,60 @@
+# On every push to the Phase 2 branch: lint, typecheck and run all tests; if they pass, ask Render to deploy
+# the API (workspace 1) and the worker (workspace 2). Pull requests only run the tests.
+#
+# One-time set-up (GitHub: repository, Settings, Secrets and variables, Actions, New repository secret):
+#   RENDER_API_KEY    the Render API key of the workspace that holds meetingid-phase2 (the API)
+#   RENDER_API_KEY2   the Render API key of the workspace that holds meetingid-worker
+# The service ids below are not secret. Vercel needs nothing here: it deploys the website on every push.
+name: CI and deploy
+
+on:
+  push:
+    branches: [phase-2-speaker-identity]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --include=dev
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/phase-2-speaker-identity'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_API_KEY2: ${{ secrets.RENDER_API_KEY2 }}
+    steps:
+      - name: Deploy the API and the worker
+        run: |
+          deploy() {
+            local name="$1" service="$2" key="$3"
+            if [ -z "$key" ]; then echo "::error::the secret for $name is not set"; return 1; fi
+            local code
+            code=$(curl -s -o /tmp/render.out -w '%{http_code}' -X POST \
+              "https://api.render.com/v1/services/$service/deploys" \
+              -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+              -d '{"clearCache":"do_not_clear"}')
+            echo "$name: HTTP $code"
+            if [ "$code" != "201" ]; then cat /tmp/render.out; echo; return 1; fi
+          }
+          failed=0
+          deploy "API (meetingid-phase2)" srv-db4963vlot8c7388nku0 "$RENDER_API_KEY" || failed=1
+          deploy "worker (meetingid-worker)" srv-db6dbr5ckfvc73d26e0g "$RENDER_API_KEY2" || failed=1
+          exit $failed
