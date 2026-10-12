@@ -32,6 +32,8 @@ export type Stage = z.infer<typeof Stage>;
 export const RetryableStage = z.enum([
   'ingest',
   'transcribe',
+  // re-run the voice analysis (speakers); the transcript is rebuilt when it finishes
+  'diarize',
   'assemble',
   'gapfill',
   'summarise',

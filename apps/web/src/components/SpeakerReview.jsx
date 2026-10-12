@@ -249,6 +249,32 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
 }
 
 /** Speaker cards for one meeting: samples to listen to, who the voice matches, rename / merge. */
+/**
+ * Shown when the speakers were guessed from the text (the voice analysis did not run): the number of
+ * speakers and who said what may be wrong, and the person can run the voice analysis again.
+ */
+export function TextSpeakersNotice({ onRerun, busy }) {
+  return (
+    <section
+      className="mb-6 rounded-xl border border-border bg-secondary p-4 text-sm"
+      aria-label="Speaker detection"
+    >
+      <p className="flex items-center gap-2 font-medium">
+        <AlertTriangle className="w-4 h-4 text-muted-foreground" />
+        Speakers were guessed from the text, not from voices.
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        The voice analysis did not run for this recording, so the number of speakers and who said
+        what may be wrong. Running it again takes a few minutes and rebuilds the transcript.
+      </p>
+      <Button size="sm" variant="outline" className="mt-3" disabled={busy} onClick={onRerun}>
+        {busy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null}
+        Re-run voice analysis
+      </Button>
+    </section>
+  );
+}
+
 export default function SpeakerReview({ meetingId, source, cards, onPlay, onChanged }) {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);

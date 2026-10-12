@@ -141,6 +141,19 @@ export function meetingsRouter(deps: ApiDeps): Router {
           },
         },
       );
+    } else if (stage === 'diarize') {
+      // Re-run the voice analysis. The meeting waits at `transcribe`, the point where the pipeline moves
+      // on to assemble once transcription AND voice analysis are done (maybeAdvanceToAssemble), so the
+      // transcript, identification and summary are rebuilt with the speakers when it finishes.
+      await MeetingDataModel.updateOne(
+        { meetingId: m._id },
+        { $set: { diarize: { state: 'pending', jobId: null, reason: null } } },
+      );
+      await MeetingModel.updateOne(
+        { _id: m._id },
+        { $set: { status: 'processing', stage: 'transcribe', error: null } },
+      );
+      await enqueue({ meetingId: m._id, stage: 'diarize' });
     } else {
       await MeetingModel.updateOne(
         { _id: m._id },
