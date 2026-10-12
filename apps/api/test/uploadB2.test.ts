@@ -129,7 +129,10 @@ describe('upload to private storage', () => {
     expect(uploaded[0]!.seconds).toBeGreaterThan(29);
     expect(voiceprintUrls).toEqual([`https://b2.example/get/${uploaded[0]!.publicId}`]);
     const person = await SpeakerModel.findOne({ name: 'Heet' }).lean();
-    expect(person!.voiceprints[0]!.audioUrl).toBe(audioLink(uploaded[0]!.publicId));
+    // stored as a stable address, shown through a signed playback link
+    expect(person!.voiceprints[0]!.audioUrl).toBe(`b2://${uploaded[0]!.publicId}`);
+    const list = await auth(request(app).get('/api/v1/speakers')).expect(200);
+    expect(list.body.speakers[0].enrollmentAudioUrl).toBe(audioLink(uploaded[0]!.publicId));
     expect(res.body.speaker.name).toBe('Heet');
   });
 });

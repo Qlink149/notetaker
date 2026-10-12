@@ -6,7 +6,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { audioLink } from '../lib/audioLink.js';
+import { playableUrl } from '../lib/audioLink.js';
 import { ws } from '../lib/auth.js';
 import { cutFlac } from '../services/audio/ffmpeg.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
@@ -34,7 +34,7 @@ const speakerView = (s: SpeakerDoc) => ({
   hasVoiceprint: s.voiceprints.length > 0,
   voiceprintCount: s.voiceprints.length,
   anonymous: s.anonymous ?? false,
-  enrollmentAudioUrl: s.voiceprints.at(-1)?.audioUrl ?? null,
+  enrollmentAudioUrl: playableUrl(s.voiceprints.at(-1)?.audioUrl) ?? null,
   createdAt: s.createdAt,
 });
 
@@ -100,7 +100,7 @@ export function speakersRouter(deps: ApiDeps): Router {
           await cutFlac(path, clip, 0, MAX_CLIP_SEC);
           const up = await deps.storage.uploadAudio(clip, id);
           voiceprintUrl = await deps.storage.presignGet!(up.publicId, 3600);
-          playbackUrl = audioLink(up.publicId);
+          playbackUrl = `b2://${up.publicId}`; // shown through a signed link (playableUrl)
         }
       } finally {
         await rm(dir, { recursive: true, force: true });

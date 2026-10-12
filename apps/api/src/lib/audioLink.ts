@@ -14,6 +14,13 @@ export function audioLink(key: string): string {
   return `${base}/api/v1/audio?k=${encodeURIComponent(key)}&t=${sign(key)}`;
 }
 
+/** What to give a player for a stored address: a signed link for b2://<key>, anything else as it is. */
+export function playableUrl<T extends string | null | undefined>(url: T): T | string {
+  return typeof url === 'string' && url.startsWith('b2://')
+    ? audioLink(url.slice('b2://'.length))
+    : url;
+}
+
 export function audioLinkValid(key: string, token: string): boolean {
   const want = Buffer.from(sign(key));
   const got = Buffer.from(token);
