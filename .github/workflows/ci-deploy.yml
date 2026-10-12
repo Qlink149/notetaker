@@ -30,7 +30,19 @@ jobs:
       - run: npm ci --include=dev
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Test
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          npm test 2>&1 | tee test.log || status=$?
+          if [ "$status" != "0" ]; then
+            # put the failing lines in the run's annotations, where they are readable without logging in
+            summary=$(grep -E 'FAIL|AssertionError|Error:|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' test.log | head -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/
+/%0A/g')
+            echo "::error title=Tests failed::${summary}"
+          fi
+          exit $status
 
   deploy:
     needs: test
