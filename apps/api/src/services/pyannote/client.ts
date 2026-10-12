@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { fileBody } from '../../lib/fileBody.js';
 import type { DiarizationOutput } from '@meetingid/pipeline';
 import { env, requireEnv } from '../../config/env.js';
 
@@ -219,7 +219,13 @@ export async function uploadMedia(
     5,
     account,
   );
-  const res = await fetch(url, { method: 'PUT', body: await readFile(localPath) });
+  const file = await fileBody(localPath);
+  const res = await fetch(url, {
+    method: 'PUT',
+    body: file.body,
+    headers: file.init.headers,
+    duplex: file.init.duplex,
+  } as RequestInit);
   if (!res.ok) throw new PyannoteError(`pyannote media upload failed: ${res.status}`, res.status);
   return mediaUrl;
 }

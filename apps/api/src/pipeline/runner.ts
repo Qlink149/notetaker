@@ -111,6 +111,12 @@ export class Runner {
     const started = Date.now();
     try {
       log.info({ attempt: job.attempts }, 'job started');
+      // A job whose worker died is claimed again without ever recording an error, so nothing else stops
+      // a recording that crashes the server (out of memory) from being retried for ever.
+      if (job.attempts > job.maxAttempts)
+        throw new FatalError(
+          'Processing this recording stopped the server several times (it probably ran out of memory). Try again, or use a shorter recording.',
+        );
       await handler.run(ctx);
       await markDone(job._id, this.workerId);
       log.info({ ms: Date.now() - started }, 'job done');

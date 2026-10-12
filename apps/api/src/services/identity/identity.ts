@@ -21,7 +21,13 @@ export function shortTitle(title: string): string {
   const t = title.replace(/\(.*?\)/g, '').trim();
   const date = /^(?:Meeting-)?(\d{1,2})-(\d{1,2})-\d{4}$/.exec(t);
   if (date) return `${date[1]}/${date[2]}`;
-  return t.split(/\s+/)[0] ?? t;
+  // "Meeting 8 Oct (WhatsApp audio)" must not become "Meeting": skip generic leading words and keep
+  // two words then (at most 18 characters); otherwise the first word, as before
+  const words = t.split(/\s+/).filter(Boolean);
+  const rest = words.filter((w, i) => i > 0 || !/^(meeting|call|recording|audio)$/i.test(w));
+  const skipped = rest.length < words.length && rest.length > 0;
+  const picked = (rest.length ? rest : words).slice(0, skipped ? 2 : 1).join(' ');
+  return picked.length > 18 ? picked.slice(0, 18).trim() : picked || t;
 }
 
 /** Name shown for a card: the person's real name once a human has typed it, else the meeting's label. */

@@ -442,3 +442,13 @@ describe('closest phone hint (group recordings)', () => {
     expect(byDiar['S0']!.displayName).toBe('Speaker A');
   });
 });
+
+import { shortTitle } from '../src/services/identity/identity.js';
+describe('shortTitle', () => {
+  it('keeps one word, skips a generic first word, and reads dates', () => {
+    expect(shortTitle('AOM Meeting part 1 (acceptance)')).toBe('AOM');
+    expect(shortTitle('Meeting 8 Oct (WhatsApp audio)')).toBe('8 Oct');
+    expect(shortTitle('Meeting-21-9-2026')).toBe('21/9');
+    expect(shortTitle('Meeting')).toBe('Meeting');
+  });
+});

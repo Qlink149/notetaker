@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { fileBody } from '../../lib/fileBody.js';
 import type { Language } from '@meetingid/shared';
 import { glossaryKeyterms, type RawTurn } from '@meetingid/pipeline';
 import { requireEnv } from '../../config/env.js';
@@ -102,13 +102,17 @@ export class DeepgramEngine implements TranscriptionEngine {
     const headers: Record<string, string> = {
       Authorization: `Token ${requireEnv('DEEPGRAM_API_KEY')}`,
     };
-    let body: string | Uint8Array;
+    let body: string | ReadableStream<Uint8Array>;
+    let streamInit: Record<string, unknown> = {};
     if (input.audio.kind === 'url') {
       headers['Content-Type'] = 'application/json';
       body = JSON.stringify({ url: input.audio.url });
     } else if (input.audio.kind === 'path') {
       headers['Content-Type'] = input.audio.mimeType;
-      body = new Uint8Array(await readFile(input.audio.path));
+      const file = await fileBody(input.audio.path);
+      body = file.body;
+      headers['Content-Length'] = file.init.headers['Content-Length']!;
+      streamInit = { duplex: file.init.duplex };
     } else {
       throw new RetryableError('DeepgramEngine cannot read a Gemini file', 'other');
     }
@@ -119,8 +123,9 @@ export class DeepgramEngine implements TranscriptionEngine {
         method: 'POST',
         headers,
         body,
+        ...streamInit,
         signal: AbortSignal.timeout(7 * 60_000),
-      });
+      } as RequestInit);
     } catch (err) {
       throw classify(err);
     }
@@ -174,15 +179,18 @@ export async function deepgramWordClock(
   });
   let res: Response;
   try {
+    const file = await fileBody(path);
     res = await fetch(`${DEEPGRAM_URL}?${params}`, {
       method: 'POST',
       headers: {
         Authorization: `Token ${requireEnv('DEEPGRAM_API_KEY')}`,
         'Content-Type': mimeType,
+        ...file.init.headers,
       },
-      body: new Uint8Array(await readFile(path)),
+      body: file.body,
+      duplex: file.init.duplex,
       signal: AbortSignal.timeout(20 * 60_000),
-    });
+    } as RequestInit);
   } catch (err) {
     throw classify(err);
   }

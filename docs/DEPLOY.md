@@ -47,7 +47,7 @@ Environment variables (`sync: false` ones are asked for in the dashboard; names 
 
 Build and start (already in the blueprint): `npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api`, then `npm run start:all -w @meetingid/api`. Order matters: `shared`, then `pipeline`, then `api`.
 
-Free instances have 512 MB and sleep after 15 minutes without traffic: put an uptime pinger on `/api/v1/health` every 10 minutes. A long recording (about 30 minutes or more) is likely to need more memory than the free instance has: use the Starter plan if you want to process new recordings there.
+Free instances have 512 MB and sleep after 15 minutes without traffic: put an uptime pinger on `/api/v1/health` every 10 minutes. Uploads are streamed (never held whole in memory) since 12 Oct, after a 74-minute recording ran the 512 MB instance out of memory in a loop. Render's Starter plan also has 512 MB: for client use pick **Standard (2 GB)**, which also removes the 15-minute sleep.
 
 ## 4. Vercel (frontend)
 
