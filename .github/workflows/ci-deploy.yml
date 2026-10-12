@@ -1,6 +1,9 @@
 # On every push to the Phase 2 branch: lint, typecheck and run all tests; if they pass, ask Render to deploy
 # the API (workspace 1) and the worker (workspace 2). Pull requests only run the tests.
 #
+# Two Node versions on purpose: the server (API, worker, pipeline) runs on Render with Node 20, so it is tested
+# on Node 20; the website's test tooling (jsdom 30) needs Node 22.22 or newer, so the website is tested on 24.
+#
 # One-time set-up (GitHub: repository, Settings, Secrets and variables, Actions, New repository secret):
 #   RENDER_API_KEY    the Render API key of the workspace that holds meetingid-phase2 (the API)
 #   RENDER_API_KEY2   the Render API key of the workspace that holds meetingid-worker
@@ -18,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  test-server:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,21 +33,43 @@ jobs:
       - run: npm ci --include=dev
       - run: npm run lint
       - run: npm run typecheck
-      - name: Test
+      - name: Test (pipeline and API)
         shell: bash
         run: |
           set -o pipefail
           status=0
-          npm test 2>&1 | tee test.log || status=$?
+          npm test -w @meetingid/pipeline -w @meetingid/api 2>&1 | tee test.log || status=$?
           if [ "$status" != "0" ]; then
             # put the failing lines in the run's annotations, where they are readable without logging in
-            summary=$(grep -E 'FAIL|AssertionError|Error:|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' test.log | head -40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
-            echo "::error title=Tests failed::${summary}"
+            summary=$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' test.log | grep -E 'FAIL|AssertionError|Error|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' | head -40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=Server tests failed::${summary}"
+          fi
+          exit $status
+
+  test-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --include=dev
+      - name: Test (website)
+        shell: bash
+        run: |
+          set -o pipefail
+          status=0
+          npm test -w @meetingid/web 2>&1 | tee test.log || status=$?
+          if [ "$status" != "0" ]; then
+            summary=$(sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' test.log | grep -E 'FAIL|AssertionError|Error|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' | head -40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=Website tests failed::${summary}"
           fi
           exit $status
 
   deploy:
-    needs: test
+    needs: [test-server, test-web]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/phase-2-speaker-identity'
     runs-on: ubuntu-latest
     timeout-minutes: 5
