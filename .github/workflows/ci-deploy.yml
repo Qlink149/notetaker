@@ -38,8 +38,7 @@ jobs:
           npm test 2>&1 | tee test.log || status=$?
           if [ "$status" != "0" ]; then
             # put the failing lines in the run's annotations, where they are readable without logging in
-            summary=$(grep -E 'FAIL|AssertionError|Error:|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' test.log | head -40 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/
-/%0A/g')
+            summary=$(grep -E 'FAIL|AssertionError|Error:|×|npm error|Test Files|Tests |Cannot find|ENOENT|EACCES' test.log | head -40 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
             echo "::error title=Tests failed::${summary}"
           fi
           exit $status
