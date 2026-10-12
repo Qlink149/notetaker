@@ -4,14 +4,14 @@ import { connectMongo, disconnectMongo } from './db/mongo.js';
 import { logger } from './lib/logger.js';
 import { deleteGeminiFile, uploadToGeminiFiles } from './services/engines/gemini.js';
 import { createVoiceprint } from './services/pyannote/client.js';
-import { cloudinaryStorage } from './services/storage/cloudinary.js';
+import { getStorage } from './services/storage/index.js';
 
 // Render web service entrypoint. Long work never runs here; it is queued for the worker.
 async function main(): Promise<void> {
   const cfg = env();
   await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
   const app = createApp({
-    storage: cloudinaryStorage,
+    storage: getStorage(),
     geminiFiles: { upload: uploadToGeminiFiles, delete: deleteGeminiFile },
     createVoiceprint,
   });

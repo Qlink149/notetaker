@@ -1,6 +1,17 @@
 import type { EvalRun, Meeting, MeetingDataView, Workspace } from '@meetingid/shared';
 import { emptyCost } from '@meetingid/shared';
 import type { EvalRunDoc, MeetingDataDoc, MeetingDoc, WorkspaceDoc } from '../models/index.js';
+import { audioLink } from './audioLink.js';
+import { isB2Url } from '../services/storage/b2.js';
+
+/** Where the browser plays a meeting from: a signed link for private storage, else the stored link. */
+export function playbackUrlOf(m: {
+  audio: { originalUrl: string; originalPublicId: string; playbackUrl?: string | null };
+}): string | null {
+  return isB2Url(m.audio.originalUrl)
+    ? audioLink(m.audio.originalPublicId)
+    : (m.audio.playbackUrl ?? null);
+}
 
 const iso = (d: Date | string | null | undefined): string =>
   d ? new Date(d).toISOString() : new Date(0).toISOString();
@@ -25,7 +36,7 @@ export function meetingView(m: MeetingDoc): Meeting {
     audio: {
       originalUrl: m.audio.originalUrl,
       originalPublicId: m.audio.originalPublicId,
-      playbackUrl: m.audio.playbackUrl ?? null,
+      playbackUrl: playbackUrlOf(m),
       analysisUrl: m.audio.analysisUrl ?? null,
       analysisPublicId: m.audio.analysisPublicId ?? null,
     },

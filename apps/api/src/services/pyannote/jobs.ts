@@ -13,7 +13,7 @@ import {
   type PyannoteKind,
 } from '../../models/phase2.js';
 import { probe, toAnalysisFlac } from '../audio/ffmpeg.js';
-import { cloudinaryStorage } from '../storage/cloudinary.js';
+import { getStorage } from '../storage/index.js';
 import {
   PYANNOTE_KEY_LABEL,
   keyLabelFor,
@@ -21,6 +21,7 @@ import {
   waitForJob,
   type PyannoteModel,
 } from './client.js';
+import { trimOutput } from './output.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 /** Local cache (gitignored /scratch) for analysis FLACs and clips. */
@@ -35,7 +36,7 @@ export async function analysisFlac(meetingId: string): Promise<string> {
   if (!meeting?.audio?.originalUrl) throw new Error(`meeting ${meetingId} has no original audio`);
   await mkdir(dir, { recursive: true });
   const original = join(dir, 'original');
-  await cloudinaryStorage.download(meeting.audio.originalUrl, original);
+  await getStorage().download(meeting.audio.originalUrl, original);
   await toAnalysisFlac(original, flac);
   return flac;
 }
@@ -130,7 +131,13 @@ export async function runJob(spec: JobSpec, log = console.log): Promise<P2Pyanno
     });
     return (await P2PyannoteResponseModel.findOneAndUpdate(
       { jobId },
-      { $set: { status: 'succeeded', output: job.output ?? null, completedAt: new Date() } },
+      {
+        $set: {
+          status: 'succeeded',
+          output: trimOutput(job.output) ?? null,
+          completedAt: new Date(),
+        },
+      },
       { returnDocument: 'after' },
     ).lean())!;
   } catch (err) {

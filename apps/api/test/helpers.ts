@@ -79,7 +79,8 @@ export async function fakeStorage(): Promise<StorageService & { root: string }> 
   };
   return {
     root,
-    signUpload: (folder) => ({
+    trimsRemotely: true,
+    signUpload: async (folder) => ({
       cloudName: 'test',
       apiKey: 'k',
       folder,

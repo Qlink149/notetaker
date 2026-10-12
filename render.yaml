@@ -1,70 +1,125 @@
-# Render blueprint — Phase 2 (speaker identity) deployment: ONE Free web service running the API and the
-# worker in one process (Render has no free background workers). Region Singapore: closest to the
-# Atlas cluster (AWS ap-south-1, Mumbai). Free instances: 512 MB, 0.1 CPU, sleep after 15 min
-# without inbound traffic, 750 free hours per workspace per month — so point an uptime pinger
-# (e.g. cron-job.org) at /api/v1/health every 10 minutes. render.paid.yaml has the
-# two-service layout (api + Starter background worker) for production.
-# Secrets are set in the dashboard or through the Render API, never committed.
-services:
-  - type: web
-    name: meetingid
-    runtime: node
-    plan: free
-    region: singapore
-    # the Phase 2 work lives on this branch; change it to main once it is merged
-    branch: phase-2-speaker-identity
-    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
-    startCommand: npm run start:all -w @meetingid/api
-    healthCheckPath: /api/v1/health
+# Render blueprint: two services from one codebase (apps/api), each with 512 MB.
+#
+#   meetingid-api     web service, FREE. Serves the website's API only; long work is queued for the worker.
+#                     It stays awake only while something pings /api/v1/health every ~10 minutes (an uptime
+#                     monitor). A free service uses ~744 of the workspace's 750 free hours a month, so it must
+#                     be the ONLY free service in the workspace. (Use render.paid.yaml to put it on Starter.)
+#   meetingid-worker  background worker, STARTER ($7/month), always on. Does the processing, one job at a
+#                     time. Measured: a 74-minute recording peaks near 400 MB, so its heap is capped so that
+#                     garbage collection keeps it under the 512 MB limit.
+#
+# Why not two free services: Render gives a workspace 750 free instance hours a month in total, background
+# workers are not free, and a free web service sleeps without traffic (a sleeping worker does no work).
+#
+# Secrets are never committed: values marked sync: false are entered in the dashboard (once, in the
+# "meetingid-shared" group). docs/DEPLOY.md lists every variable.
+envVarGroups:
+  - name: meetingid-shared
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
         value: "20.18.1"
-      - key: SERVICE_NAME
-        value: meetingid
-      - key: WORKER_CONCURRENCY
-        value: "1"
-      - key: SUMMARY_PROVIDER
-        value: anthropic
-      - key: SPEND_CAP_USD
-        value: "5"
-      - key: GEMINI_MODEL
-        value: gemini-3.8-flash
-      - key: GEMINI_FALLBACK_MODEL
-        value: gemini-3.5-flash
+      - key: LOG_LEVEL
+        value: info
+      # --- database
       - key: MONGODB_URI
         sync: false
-      # NOT `meetingid`: that is Phase 1's database and its own worker is running against it.
-      # meetingid_demo holds the five demo meetings, the people and their voiceprints. Do not run a
-      # local worker (npm run demo) against the same database at the same time: two workers would
-      # share one job queue.
+      # the production database name (NOT `meetingid`, Phase 1's database)
       - key: MONGODB_DB
-        value: meetingid_demo
+        sync: false
       - key: JWT_SECRET
         sync: false
-      - key: WORKSPACE_ACCESS_CODE
-        sync: false
-      - key: CORS_ORIGINS
-        sync: false
+      # --- where recordings are kept: `cloudinary` (old) or `b2` (Backblaze, private bucket)
+      - key: STORAGE_PROVIDER
+        value: cloudinary
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_REGION
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      # public address of the API (https://meetingid-api.onrender.com); builds audio playback links
+      - key: PUBLIC_API_URL
+        sync: false
+      # --- engines
       - key: GEMINI_API_KEY1
         sync: false
       - key: GEMINI_API_KEY2
         sync: false
       - key: GEMINI_API_KEY3
         sync: false
-      - key: DEEPGRAM_API_KEY
+      # names of the keys above that are on Google's FREE tier (e.g. GEMINI_API_KEY1,GEMINI_API_KEY2):
+      # they are not used on recordings (Google may use free-tier content to improve its products)
+      - key: GEMINI_FREE_KEYS
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_PAID
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_FALLBACK_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_TRANSCRIBE_MODEL
+        value: gemini-3.5-transcribe
+      - key: DEEPGRAM_API_KEY
         sync: false
       - key: PYANNOTEAI_API_KEY
         sync: false
-      # optional second account used only for voiceprints (see docs/DEPLOY.md)
+      # optional second pyannote account used only for voiceprints
       - key: PYANNOTEAI_VOICEPRINT_API_KEY
+        sync: false
+      - key: SUMMARY_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SPEND_CAP_USD
+        value: "5"
+
+services:
+  - type: web
+    name: meetingid-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: phase-2-speaker-identity
+    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+    startCommand: npm run start -w @meetingid/api
+    healthCheckPath: /api/v1/health
+    envVars:
+      - fromGroup: meetingid-shared
+      - key: SERVICE_NAME
+        value: meetingid-api
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=256
+      # the website's addresses, comma separated (https://notetaker.example,https://x.vercel.app)
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: worker
+    name: meetingid-worker
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: phase-2-speaker-identity
+    buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+    startCommand: npm run start:worker -w @meetingid/api
+    envVars:
+      - fromGroup: meetingid-shared
+      - key: SERVICE_NAME
+        value: meetingid-worker
+      - key: WORKER_CONCURRENCY
+        value: "1"
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=320
+      - key: CORS_ORIGINS
         sync: false

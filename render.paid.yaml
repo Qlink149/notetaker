@@ -1,7 +1,13 @@
-# Render blueprint (production layout): one codebase (apps/api), two services: api web service +
-# Starter background worker (~$14/month). The Phase 1 testing deploy uses render.yaml instead.
-# Secrets live in the "meetingid-shared" env group (create it once in the dashboard;
-# values marked sync: false are entered there, never committed).
+# Render blueprint, paid variant: the same two services as render.yaml, but the API is on STARTER too
+# ($7 + $7 = $14/month). Nothing sleeps, so no uptime pinger is needed and the free-hours limit does not
+# apply. Use this when the site is used by clients every day. Generated from render.yaml: change that
+# file first, then copy the changes here.
+#
+#   meetingid-api     web service, Starter (512 MB, 0.5 CPU).
+#   meetingid-worker  background worker, Starter (512 MB, 0.5 CPU), one job at a time.
+#
+# Secrets are never committed: values marked sync: false are entered in the dashboard (once, in the
+# "meetingid-shared" group). docs/DEPLOY.md lists every variable.
 envVarGroups:
   - name: meetingid-shared
     envVars:
@@ -9,34 +15,78 @@ envVarGroups:
         value: production
       - key: NODE_VERSION
         value: "20.18.1"
+      - key: LOG_LEVEL
+        value: info
+      # --- database
       - key: MONGODB_URI
+        sync: false
+      # the production database name (NOT `meetingid`, Phase 1's database)
+      - key: MONGODB_DB
         sync: false
       - key: JWT_SECRET
         sync: false
+      # --- where recordings are kept: `cloudinary` (old) or `b2` (Backblaze, private bucket)
+      - key: STORAGE_PROVIDER
+        value: cloudinary
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      - key: GEMINI_API_KEY
+      - key: B2_ENDPOINT
+        sync: false
+      - key: B2_REGION
+        sync: false
+      - key: B2_BUCKET
+        sync: false
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      # public address of the API (https://meetingid-api.onrender.com); builds audio playback links
+      - key: PUBLIC_API_URL
+        sync: false
+      # --- engines
+      - key: GEMINI_API_KEY1
+        sync: false
+      - key: GEMINI_API_KEY2
+        sync: false
+      - key: GEMINI_API_KEY3
+        sync: false
+      # names of the keys above that are on Google's FREE tier (e.g. GEMINI_API_KEY1,GEMINI_API_KEY2):
+      # they are not used on recordings (Google may use free-tier content to improve its products)
+      - key: GEMINI_FREE_KEYS
+        sync: false
+      - key: GEMINI_PAID
         sync: false
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
+      - key: GEMINI_FALLBACK_MODEL
+        value: gemini-3.5-flash
       - key: GEMINI_TRANSCRIBE_MODEL
         value: gemini-3.5-transcribe
       - key: DEEPGRAM_API_KEY
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: PYANNOTEAI_API_KEY
         sync: false
+      # optional second pyannote account used only for voiceprints
+      - key: PYANNOTEAI_VOICEPRINT_API_KEY
+        sync: false
+      - key: SUMMARY_PROVIDER
+        value: anthropic
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SPEND_CAP_USD
+        value: "5"
 
 services:
   - type: web
     name: meetingid-api
     runtime: node
     plan: starter
+    region: singapore
+    branch: phase-2-speaker-identity
     buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
     startCommand: npm run start -w @meetingid/api
     healthCheckPath: /api/v1/health
@@ -44,17 +94,18 @@ services:
       - fromGroup: meetingid-shared
       - key: SERVICE_NAME
         value: meetingid-api
-      # The Vercel origin(s), comma-separated, e.g. https://meetingid.vercel.app
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=256
+      # the website's addresses, comma separated (https://notetaker.example,https://x.vercel.app)
       - key: CORS_ORIGINS
-        sync: false
-      # Used by `npm run seed` (run once from the Render shell)
-      - key: WORKSPACE_ACCESS_CODE
         sync: false
 
   - type: worker
     name: meetingid-worker
     runtime: node
     plan: starter
+    region: singapore
+    branch: phase-2-speaker-identity
     buildCommand: npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
     startCommand: npm run start:worker -w @meetingid/api
     envVars:
@@ -62,4 +113,8 @@ services:
       - key: SERVICE_NAME
         value: meetingid-worker
       - key: WORKER_CONCURRENCY
-        value: "2"
+        value: "1"
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=320
+      - key: CORS_ORIGINS
+        sync: false

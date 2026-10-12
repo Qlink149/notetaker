@@ -1,76 +1,85 @@
-# Deploying Phase 2: Render (API + worker) and Vercel (web)
+# Deploying Phase 2: Render (API + worker), Vercel (web), Backblaze B2 (recordings)
 
-Nothing here has been pushed or deployed by the build sessions. Written 9 Oct for the person who deploys.
+Updated 12 Oct. The first deployment (one combined free service, `meetingid-phase2`) is live; this is the target layout and how to move to it.
 
-## 0. What was checked before you start
+## 0. What was checked
 
-- **Secrets:** every commit on `phase-2-speaker-identity` (76 at the time) was searched for the real values in both `.env` files and for the keys pasted into chat: no match. `.env` is git-ignored and was never committed.
-- **A fresh clone builds and runs.** The branch was cloned into an empty folder, installed (`npm ci --include=dev`, about 2 minutes) and built with Render's build command and Vercel's build command: all three server packages compile, the web app builds, the embedded fonts are present. The built `dist/server.js` was then started with `NODE_ENV=production` against the demo database and checked: health answers with the database up; a wrong access code gives 401 and the right one logs in; the five meetings list; the new meeting shows Heet as Speaker B; the Word export returns a valid file; the meetings list refuses a request without login; an unknown origin gets no CORS header and `localhost:5173` does.
-- **Nothing large or sensitive is tracked** (no audio, no `.env`, no scratch files).
+- **Secrets:** every commit was searched for the real values in both `.env` files and for keys pasted into chat: no match. `.env` is git-ignored.
+- **A fresh clone builds and runs** with Render's and Vercel's build commands (install about 2 minutes), and the built server answers health, login, the meetings list, speakers and the Word export.
+- **Memory, measured on the compiled worker with a real 74-minute recording** (33.9 MB MP3, 127 MB as 16 kHz FLAC): the worker process peaked at **272 MB** while converting and cutting (ffmpeg adds about 23 MB), **377 MB** while uploading to pyannote and Deepgram, and 364 MB while calling Gemini; start-up is 105 MB. Overall peak **377 MB** with no heap limit on a machine with 8 GB. The assemble, identify and summary stages were not reached (Gemini's free daily quota ran out) but handle only text. The API process alone is about 120 MB.
+- **What caused the crashes before:** the pyannote and Deepgram uploads read the whole file into memory (510-590 MB measured for a 127 MB file). Uploads are now streamed.
 
-## 1. Push the branch
+## 1. Layout: two services, 512 MB each (`render.yaml`)
 
-The worktree has no remote yet.
+| Service | Type and plan | What it does | Memory |
+|---|---|---|---|
+| `meetingid-api` | web, **Free** | the website's API; queues long work | about 120 MB, heap capped at 256 MB |
+| `meetingid-worker` | background worker, **Starter, $7/month** | processes recordings, one at a time | peak about 380 MB, heap capped at 320 MB |
 
-```
-git remote add origin https://github.com/Qlink149/notetaker.git
-git push -u origin phase-2-speaker-identity
-```
+- **Do not make both free.** Render gives a workspace 750 free instance hours a month in total; one always-on service is about 744. Two would be suspended mid-month. Background workers are not free, and a free web service sleeps after 15 minutes without traffic (a sleeping worker does no work).
+- The free API stays awake only while an uptime monitor pings `https://<api>/api/v1/health` every 10 minutes. It must be the only free service in the workspace.
+- `render.paid.yaml` is the same layout with the API on Starter too ($14/month, nothing sleeps, no pinger needed).
+- A 512 MB worker leaves about 130 MB of headroom for a 74-minute recording. Two recordings never overlap (concurrency is 1). If you ever see the worker killed for memory (Render dashboard, service, Events: "out of memory"), move it to the 2 GB plan ($25).
 
-Push the branch, not `main`: `main` and `phase-1-gemini-rebuild` belong to Phase 1 and its running service.
+Create it: Render, New, Blueprint, pick the repo and branch `phase-2-speaker-identity`; fill the `meetingid-shared` group once. Pushing does **not** redeploy by itself unless Render's GitHub app is connected to the repo: use Manual Deploy otherwise.
 
-## 2. MongoDB Atlas
-
-- **Database name:** the blueprint uses `meetingid_demo` (the five demo meetings, the people and their voiceprints). Do **not** use `meetingid`: it is Phase 1's database and its own worker is running against it.
-- **Network Access:** add Render's outbound addresses for the Singapore region (Render dashboard, service, Connect, Outbound). Use those addresses, not 0.0.0.0/0.
-- **One worker per database.** The deployed process runs the API and a worker. If the local demo (`npm run demo`) is running against the same database at the same time, both workers share one job queue and a job can be taken by the one that has no Gemini key. Close the local demo window once Render is up, or point Render at a copy.
-
-## 3. Render (backend)
-
-New, Blueprint, pick the repo and the branch `phase-2-speaker-identity` (`render.yaml` already names it; change it to `main` after merging).
-
-Environment variables (`sync: false` ones are asked for in the dashboard; names are the same as in your local `.env`):
+## 2. Settings (the `meetingid-shared` group; names match your local `.env`)
 
 | Variable | Value |
 |---|---|
-| `MONGODB_URI` | your Atlas connection string (the same cluster as local) |
-| `MONGODB_DB` | `meetingid_demo` (already in the blueprint) |
-| `JWT_SECRET` | a **new** random string, 32+ characters (do not reuse the local one) |
-| `CORS_ORIGINS` | the Vercel URL, for example `https://your-app.vercel.app` (set after step 4, then redeploy) |
-| `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | as local |
-| `GEMINI_API_KEY1`, `GEMINI_API_KEY2`, `GEMINI_API_KEY3` | as local (keys 1 and 2 were out of quota until Fri 9 Oct 05:29 IST; 3 was fresh on 8 Oct) |
-| `DEEPGRAM_API_KEY` | as local (needed: the word clock that places every line in time comes from it) |
-| `PYANNOTEAI_VOICEPRINT_API_KEY` | optional second pyannote account used **only for voiceprints** (the request, the clip upload and the job polling all use it, because a job and its media belong to the account that made them). Set it when the main account's trial voiceprint allowance is used up; otherwise voiceprints use `PYANNOTEAI_API_KEY`. Each voiceprint costs about 0.015 EUR on that account |
-| `PYANNOTEAI_API_KEY` | the project key (diarization and identification work; new **voiceprints** are refused until a paid plan, the trial allowance is used) |
-| `ANTHROPIC_API_KEY` | needed for summaries of **new** meetings (`SUMMARY_PROVIDER=anthropic` in the blueprint). Without it, summarising fails; the five existing meetings already have summaries. For testing only, `SUMMARY_PROVIDER=handoff` waits for someone to answer, as in the demo |
-| `WORKSPACE_ACCESS_CODE` | not needed to log in: only a hash is stored in the database, so the **login code is the same one you use locally**. It is only read by `npm run seed` |
+| `MONGODB_URI`, `MONGODB_DB` | the production database; **not** `meetingid` (Phase 1's) |
+| `JWT_SECRET` | a new random string, 32+ characters |
+| `CORS_ORIGINS` | the website's address(es), comma separated, no trailing slash |
+| `PUBLIC_API_URL` | the API's own address, `https://meetingid-api.onrender.com`; builds audio playback links |
+| `STORAGE_PROVIDER` | `cloudinary` (old) or `b2` (see section 3) |
+| `CLOUDINARY_*` | still needed to read and delete meetings stored on Cloudinary |
+| `B2_ENDPOINT`, `B2_REGION`, `B2_BUCKET`, `B2_KEY_ID`, `B2_APPLICATION_KEY` | Backblaze B2, S3-compatible (for example `https://s3.us-west-004.backblazeb2.com` and `us-west-004`) |
+| `GEMINI_API_KEY1..9` | Gemini keys |
+| `GEMINI_FREE_KEYS` | names of the keys that are on Google's **free tier**, e.g. `GEMINI_API_KEY1,GEMINI_API_KEY2`. Google may use free-tier content to improve its products and humans may read it, so these keys are **not used on recordings** unless `GEMINI_ALLOW_FREE_KEYS=true` (demos with non-client audio only). With every key listed, Gemini is disabled |
+| `GEMINI_PAID` | `true` once billing is on, so the spend cap counts Gemini cost |
+| `DEEPGRAM_API_KEY` | needed: the word clock that places every line comes from it |
+| `PYANNOTEAI_API_KEY` | diarization and identification |
+| `PYANNOTEAI_VOICEPRINT_API_KEY` | optional second account used only for voiceprints (a job and its media belong to the account that made them, so the request, the clip upload and the polling all use it) |
+| `SUMMARY_PROVIDER`, `ANTHROPIC_API_KEY` | `anthropic` and the key: summaries of new meetings fail without it |
+| `SPEND_CAP_USD` | 5 by default; raise it deliberately |
 
-Build and start (already in the blueprint): `npm ci --include=dev && npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api`, then `npm run start:all -w @meetingid/api`. Order matters: `shared`, then `pipeline`, then `api`.
+The login code is the one already hashed in the database (the same as local); `WORKSPACE_ACCESS_CODE` is only read by `npm run seed`.
 
-Free instances have 512 MB and sleep after 15 minutes without traffic: put an uptime pinger on `/api/v1/health` every 10 minutes. Uploads are streamed (never held whole in memory) since 12 Oct, after a 74-minute recording ran the 512 MB instance out of memory in a loop. Render's Starter plan also has 512 MB: for client use pick **Standard (2 GB)**, which also removes the 15-minute sleep.
+## 3. Moving recordings to Backblaze B2
 
-## 4. Vercel (frontend)
+Why: Cloudinary's free plan caps one audio file at 100 MB and is 75 % used; B2 is about $6.95 per TB a month with free downloads up to 3 times what you store. Check on Backblaze's signup page whether the free 10 GB needs a card (sources disagree).
 
-- Import the same repo. **Root Directory:** `apps/web`. `vercel.json` there already sets the install command, build command, output directory and the single-page rewrite.
-- **Environment variable:** `VITE_API_URL` = the Render URL, no trailing slash (for example `https://meetingid.onrender.com`). It is read at **build** time: change it, then redeploy.
-- After the first deploy, copy the Vercel URL into Render's `CORS_ORIGINS` and redeploy the API. Preview deployments use other URLs; add them to `CORS_ORIGINS` (comma separated) if you want to test on them.
+1. Create a **private** bucket and an application key limited to it. Note the S3 endpoint, region, key ID, application key and bucket name.
+2. Put the five `B2_*` values in the group and set `PUBLIC_API_URL`.
+3. Apply the bucket's browser permissions once: `npm run storage:b2-setup -w @meetingid/api` (allows PUT, GET and HEAD from `CORS_ORIGINS` and localhost).
+4. Prove it end to end with a throw-away file: `STORAGE_PROVIDER=b2 npm run storage:b2-check -w @meetingid/api` (presigned upload, worker download, presigned download, range request, refused tampered link, delete).
+5. Set `STORAGE_PROVIDER=b2` and redeploy. New recordings go to B2; **older meetings stay on Cloudinary and keep working** (download, playback and delete all fall back to it).
 
-## 5. After it is up (five minutes)
+How it behaves: the browser uploads straight to B2 with a presigned PUT (real progress); the worker streams the download; playback goes through a signed link on our API (`/api/v1/audio?k=...&t=...`, signed with `JWT_SECRET`, revoked by rotating it) that redirects to a link valid for 6 hours. B2 cannot cut clips, so voice samples are cut to 30 s on the server first. Keeping a 74-minute recording (30-60 MB) costs about $0.0003-0.0004 a month.
 
-1. `https://<render>/api/v1/health` answers.
-2. Log in on the Vercel site with the same access code you use locally.
-3. The meetings list shows the five meetings. Open Prachar: Heet appears as a speaker; play a line.
-4. Open Meeting 8 Oct: Heet is Speaker B. Use Export, Word: the file opens and Devanagari and Gujarati show.
-5. Open Insights (`/dashboard`) and the blind audit (`/audit`).
-6. Group recording: start one and open the join link on a phone. It needs the public Vercel address, which is why it cannot be tried from `localhost`.
+## 4. What a meeting stores in the database
 
-## 6. Known limits to say out loud
+About 2 MB for a 34-minute meeting (about 4.5 MB for 74 minutes): the transcript turns and lines, a Phase 1 snapshot, Gemini's raw replies (about 1 MB), pyannote's replies (diarization and identification) and the Deepgram words. Pyannote's frame-by-frame confidence curve (1.1 MB per reply, nothing reads it) is no longer stored; `npm run p2:trim-responses -w @meetingid/api` (dry run by default, `-- --apply` to change) removes it from replies saved earlier (17.6 MB across the 18 in the demo database). Atlas's free tier holds 512 MB: roughly 100 meetings of 74 minutes (more if shorter), shared with anything else on that cluster.
 
-- Speaker names beyond Heet are anonymous ("Speaker A (Meeting AOM)") until someone names them in the UI.
-- Prachar Speaker A and C may be one person split in two by pyannote (the matches flip between runs); do not claim either is a specific person.
-- Roughly 3-4 % of each meeting's time (14 % in Prachar) has no verified time and keeps Gemini's own, which can be off; those lines are marked internally but not in the UI yet.
-- The blind audit has not been done: no accuracy figure is measured against people, only agreement with pyannote.
+## 5. Vercel
 
-## 7. Keys that were pasted into chat
+Root Directory `apps/web`; `VITE_API_URL` = the API's address (build-time: redeploy after changing it). Put the site's address in the API's `CORS_ORIGINS`.
 
-The Base44 pyannote key (`sk_0b3e...`) and the Gemini key 3 were pasted in the conversation. Rotate the pyannote one when you are done. The Render API key in `.env` was never used by the build sessions.
+## 6. After it is up (five minutes)
+
+1. `https://<api>/api/v1/health` answers.
+2. Log in, open a meeting, play a line, export Word.
+3. Upload a short recording and record one from the phone: it processes and shows a summary.
+4. Group recording (QR) is not part of the current client scope.
+
+## 7. Known limits to say out loud
+
+- With free Gemini keys: 5 requests a minute and daily quotas (a 74-minute recording did not finish transcribing in a day) and free-tier data terms. Paid keys remove both; keep the free keys out of client recordings (`GEMINI_FREE_KEYS`).
+- Speaker names are anonymous until someone names them in the UI; Prachar Speaker A and C may be one person split in two.
+- About 3-4 % of each meeting's time (14 % in Prachar) has no verified time and keeps Gemini's own; not shown in the UI yet.
+- The blind audit has not been done: no accuracy measured against people.
+- Voiceprints are biometric data: add a consent line and a delete-this-person action before real client use.
+
+## 8. Keys that were pasted into chat
+
+Rotate the Base44 pyannote key (`sk_0b3e...`) when you are done. Gemini key 3 is on the free tier.

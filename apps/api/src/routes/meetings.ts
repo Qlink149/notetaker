@@ -35,10 +35,10 @@ export function meetingsRouter(deps: ApiDeps): Router {
   };
 
   /** Signed browser upload bound to a fresh meeting id and its own folder. */
-  r.post('/uploads/sign', (req, res) => {
+  r.post('/uploads/sign', async (req, res) => {
     const meetingId = new Types.ObjectId().toHexString();
     const folder = meetingFolder(ws(req).slug, meetingId);
-    res.json({ meetingId, ...deps.storage.signUpload(folder) });
+    res.json({ meetingId, ...(await deps.storage.signUpload(folder)) });
   });
 
   r.post('/meetings', async (req, res) => {

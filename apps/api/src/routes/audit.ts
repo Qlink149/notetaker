@@ -17,6 +17,7 @@ import {
   type P2AuditDoc,
 } from '../models/phase2.js';
 import { seedAudit } from '../services/audit.js';
+import { playbackUrlOf } from '../lib/views.js';
 import { shortTitle, speakerSeconds } from '../services/identity/identity.js';
 
 // Blind audit of the speaker join (Block 1). The auditor first names each pyannote speaker from
@@ -143,7 +144,7 @@ export function auditRouter(): Router {
       return audit.naming[c] || audit.naming[diar] || labels[c] || labels[diar] || diar;
     };
     res.json({
-      meeting: { id: String(m._id), title: shortTitle(m.title), playbackUrl: m.audio.playbackUrl },
+      meeting: { id: String(m._id), title: shortTitle(m.title), playbackUrl: playbackUrlOf(m) },
       clusters,
       items: audit.items.map((i) => ({
         id: i.id,

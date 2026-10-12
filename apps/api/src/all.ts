@@ -7,7 +7,7 @@ import { Runner } from './pipeline/runner.js';
 import { stages } from './pipeline/stages/index.js';
 import { deleteGeminiFile, uploadToGeminiFiles } from './services/engines/gemini.js';
 import { createVoiceprint } from './services/pyannote/client.js';
-import { cloudinaryStorage } from './services/storage/cloudinary.js';
+import { getStorage } from './services/storage/index.js';
 
 // API and worker in one process, for a single Render Free web service (Render has no free
 // background workers). Keep it awake with an uptime ping on /api/v1/health every ≤10 minutes;
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const cfg = env();
   await connectMongo(cfg.MONGODB_URI, cfg.MONGODB_DB);
   const app = createApp({
-    storage: cloudinaryStorage,
+    storage: getStorage(),
     geminiFiles: { upload: uploadToGeminiFiles, delete: deleteGeminiFile },
     createVoiceprint,
   });

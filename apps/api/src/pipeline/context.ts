@@ -9,7 +9,8 @@ import {
   uploadToGeminiFiles,
   type UploadedFile,
 } from '../services/engines/gemini.js';
-import { cloudinaryStorage, type StorageService } from '../services/storage/cloudinary.js';
+import type { StorageService } from '../services/storage/cloudinary.js';
+import { getStorage } from '../services/storage/index.js';
 import { env } from '../config/env.js';
 import { ClaudeSummariser, type Summariser } from '../services/summary/claude.js';
 import { HandoffSummariser } from '../services/summary/handoff.js';
@@ -45,7 +46,7 @@ export interface Deps {
 
 export function defaultDeps(): Deps {
   return {
-    storage: cloudinaryStorage,
+    storage: getStorage(),
     engine: createEngine,
     summariser:
       env().SUMMARY_PROVIDER === 'handoff' ? new HandoffSummariser() : new ClaudeSummariser(),

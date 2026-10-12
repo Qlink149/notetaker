@@ -264,7 +264,7 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     const input = body(Auth, req);
     await participant(s, input);
     uploadsOpen(s);
-    res.json(deps.storage.signUpload(`${s.folder}/${input.pid}`));
+    res.json(await deps.storage.signUpload(`${s.folder}/${input.pid}`));
   });
 
   r.post('/join/:code/parts', async (req, res) => {

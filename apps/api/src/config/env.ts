@@ -40,6 +40,24 @@ const EnvSchema = z.object({
     z.string().default('gemini-3.5-flash'),
   ),
   /** Set to "true" when the Gemini keys are on a paid tier; free-tier usage costs nothing and is not counted against the cap. */
+  /**
+   * Names (comma separated, e.g. GEMINI_API_KEY4) of Gemini keys on the FREE tier. Google may use content
+   * sent through a free key to improve its products and humans may read it, so such keys are left out
+   * of the pool unless GEMINI_ALLOW_FREE_KEYS is true (demos and tests with non-client audio only).
+   */
+  GEMINI_FREE_KEYS: z.string().default(''),
+  /** Where recordings are kept: Cloudinary (the original setup) or Backblaze B2 (S3-compatible, private). */
+  STORAGE_PROVIDER: z.enum(['cloudinary', 'b2']).default('cloudinary'),
+  B2_ENDPOINT: optional, // e.g. https://s3.us-west-004.backblazeb2.com
+  B2_REGION: optional, // e.g. us-west-004
+  B2_BUCKET: optional,
+  B2_KEY_ID: optional,
+  B2_APPLICATION_KEY: optional,
+  /** Public address of this API (https://...), used to build audio playback links. */
+  PUBLIC_API_URL: optional,
+  GEMINI_ALLOW_FREE_KEYS: z
+    .preprocess((v) => v === 'true' || v === '1', z.boolean())
+    .default(false),
   GEMINI_PAID: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   /**
    * Who writes summaries: 'anthropic' (production, Messages API) or 'handoff' (testing: the request is
@@ -134,7 +152,10 @@ export function engineStatus(): Record<EngineId, { enabled: boolean; reason?: st
   };
 }
 
-/** Gemini keys from GEMINI_API_KEY and GEMINI_API_KEY1..GEMINI_API_KEY9, in that order, de-duplicated. */
+/**
+ * Gemini keys from GEMINI_API_KEY and GEMINI_API_KEY1..GEMINI_API_KEY9, in that order, de-duplicated.
+ * Keys listed in GEMINI_FREE_KEYS are skipped unless GEMINI_ALLOW_FREE_KEYS is true.
+ */
 export function geminiKeyEntries(): { name: string; value: string }[] {
   const names = [
     'GEMINI_API_KEY',
@@ -142,9 +163,16 @@ export function geminiKeyEntries(): { name: string; value: string }[] {
   ];
   const seen = new Set<string>();
   const out: { name: string; value: string }[] = [];
+  const e = env();
+  const free = new Set(
+    e.GEMINI_FREE_KEYS.split(',')
+      .map((n) => n.trim())
+      .filter(Boolean),
+  );
   for (const name of names) {
     const value = process.env[name]?.trim();
     if (!value || seen.has(value)) continue;
+    if (free.has(name) && !e.GEMINI_ALLOW_FREE_KEYS) continue;
     seen.add(value);
     out.push({ name, value });
   }

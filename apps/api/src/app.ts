@@ -8,6 +8,7 @@ import { errorHandler } from './lib/http.js';
 import { logger } from './lib/logger.js';
 import { HeartbeatModel } from './models/index.js';
 import { auditRouter } from './routes/audit.js';
+import { audioRouter } from './routes/audio.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { exportsRouter } from './routes/exports.js';
 import { benchmarkRouter } from './routes/benchmark.js';
@@ -59,6 +60,8 @@ export function createApp(deps: ApiDeps): Express {
   v1.use(authRouter());
   // group recording (must come before workspaceRouter, which requires login for everything after it): guests are not logged in; they present the token they got when joining
   v1.use(sessionsGuestRouter(deps));
+  // signed playback links authenticate themselves (an <audio> tag cannot send a login token)
+  v1.use(audioRouter(deps));
   v1.use(workspaceRouter());
   const authed = Router();
   authed.use(requireAuth);

@@ -27,15 +27,29 @@ export type RetryBody = z.infer<typeof RetryBody>;
 export const SummariseBody = z.object({ force: z.boolean().default(false) });
 export type SummariseBody = z.infer<typeof SummariseBody>;
 
-export const UploadSignResponse = z.object({
-  meetingId: z.string(),
-  cloudName: z.string(),
-  apiKey: z.string(),
-  folder: z.string(),
-  timestamp: z.number(),
-  signature: z.string(),
-  uploadUrl: z.string(),
-});
+export const UploadSignResponse = z.union([
+  // signed form POST to Cloudinary
+  z.object({
+    meetingId: z.string(),
+    provider: z.literal('cloudinary').optional(),
+    cloudName: z.string(),
+    apiKey: z.string(),
+    folder: z.string(),
+    timestamp: z.number(),
+    signature: z.string(),
+    uploadUrl: z.string(),
+  }),
+  // presigned PUT to private (S3-compatible) storage
+  z.object({
+    meetingId: z.string(),
+    provider: z.literal('b2'),
+    method: z.literal('PUT'),
+    uploadUrl: z.string(),
+    folder: z.string(),
+    publicId: z.string(),
+    url: z.string(),
+  }),
+]);
 export type UploadSignResponse = z.infer<typeof UploadSignResponse>;
 
 export const BenchmarkRunBody = z.object({

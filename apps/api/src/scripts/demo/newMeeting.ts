@@ -17,7 +17,8 @@ import { defaultDeps } from '../../pipeline/context.js';
 import { enqueue } from '../../pipeline/queue.js';
 import { Runner } from '../../pipeline/runner.js';
 import { stages } from '../../pipeline/stages/index.js';
-import { cloudinaryStorage, meetingFolder } from '../../services/storage/cloudinary.js';
+import { meetingFolder } from '../../services/storage/cloudinary.js';
+import { getStorage } from '../../services/storage/index.js';
 
 // Bring a new recording into the demo without disturbing it.
 //
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
       keys: { type: 'string', default: '3' },
       gapfill: { type: 'boolean' },
       resume: { type: 'boolean' },
+      'enqueue-only': { type: 'boolean' },
     },
   });
   const cmd = positionals[0];
@@ -81,7 +83,7 @@ async function main(): Promise<void> {
       const id = new Types.ObjectId();
       const publicId = `${meetingFolder(workspace.slug, String(id))}/original-${Date.now()}`;
       console.log(`uploading ${basename(values.file)} ...`);
-      const up = await cloudinaryStorage.uploadAudio(values.file, publicId);
+      const up = await getStorage().uploadAudio(values.file, publicId);
       await MeetingModel.create({
         _id: id,
         workspaceId: workspace._id,
@@ -97,6 +99,12 @@ async function main(): Promise<void> {
       await enqueue({ meetingId: id, stage: 'ingest' });
       meetingId = String(id);
       console.log(`meeting ${meetingId} created; running stages`);
+    }
+    if (values['enqueue-only']) {
+      // a separate worker process (dist/worker.js) will do the work
+      console.log(`meeting ${meetingId} queued; start a worker on this database`);
+      await disconnectMongo();
+      return;
     }
     const deps = defaultDeps();
     console.log(

@@ -13,6 +13,7 @@ import {
   type PyannoteModel,
 } from '../../services/pyannote/client.js';
 import { ensureAnalysisFlac } from '../chunkAudio.js';
+import { trimOutput } from '../../services/pyannote/output.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { RetryableError } from '../errors.js';
 import { loadMeeting } from '../meetings.js';
@@ -189,7 +190,11 @@ export const diarizeStage: StageHandler = {
           await P2PyannoteResponseModel.updateOne(
             { jobId: prior.jobId },
             {
-              $set: { status: 'succeeded', output: state.output ?? null, completedAt: deps.now() },
+              $set: {
+                status: 'succeeded',
+                output: trimOutput(state.output) ?? null,
+                completedAt: deps.now(),
+              },
             },
           );
         } else if (state.status === 'failed' || state.status === 'canceled') {

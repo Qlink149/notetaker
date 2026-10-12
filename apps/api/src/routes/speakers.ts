@@ -6,7 +6,9 @@ import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../config/env.js';
+import { audioLink } from '../lib/audioLink.js';
 import { ws } from '../lib/auth.js';
+import { cutFlac } from '../services/audio/ffmpeg.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import { MeetingDataModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
 import type { ApiDeps } from './deps.js';
@@ -87,9 +89,19 @@ export function speakersRouter(deps: ApiDeps): Router {
         const path = join(dir, 'clip');
         await writeFile(path, req.file.buffer);
         const id = `workspaces/${workspace.slug}/speakers/voiceprint-${Date.now()}-${randomBytes(3).toString('hex')}`;
-        const up = await deps.storage.uploadAudio(path, id);
-        playbackUrl = deps.storage.trimmedWavUrl(up.publicId, 0, 600);
-        voiceprintUrl = deps.storage.trimmedWavUrl(up.publicId, 0, MAX_CLIP_SEC);
+        if (deps.storage.trimsRemotely) {
+          const up = await deps.storage.uploadAudio(path, id);
+          playbackUrl = deps.storage.trimmedWavUrl(up.publicId, 0, 600);
+          voiceprintUrl = deps.storage.trimmedWavUrl(up.publicId, 0, MAX_CLIP_SEC);
+        } else {
+          // private storage cannot cut a clip: keep the first 30 s ourselves, then hand pyannote a
+          // short-lived link and the app a signed playback link
+          const clip = join(dir, 'clip.flac');
+          await cutFlac(path, clip, 0, MAX_CLIP_SEC);
+          const up = await deps.storage.uploadAudio(clip, id);
+          voiceprintUrl = await deps.storage.presignGet!(up.publicId, 3600);
+          playbackUrl = audioLink(up.publicId);
+        }
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

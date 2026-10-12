@@ -24,15 +24,35 @@ function cld(): typeof cloudinary {
 export const meetingFolder = (workspaceSlug: string, meetingId: string): string =>
   `workspaces/${workspaceSlug}/meetings/${meetingId}`;
 
+/** What the browser needs to upload one file straight to storage. */
+export type UploadSignature =
+  | {
+      provider?: 'cloudinary';
+      cloudName: string;
+      apiKey: string;
+      folder: string;
+      timestamp: number;
+      signature: string;
+      uploadUrl: string;
+    }
+  | {
+      provider: 'b2';
+      /** The browser PUTs the file to `uploadUrl`. */
+      method: 'PUT';
+      uploadUrl: string;
+      folder: string;
+      /** Object key; what the meeting is created with. */
+      publicId: string;
+      /** Stable address the pipeline downloads from (b2://<key>). */
+      url: string;
+    };
+
 export interface StorageService {
-  signUpload(folder: string): {
-    cloudName: string;
-    apiKey: string;
-    folder: string;
-    timestamp: number;
-    signature: string;
-    uploadUrl: string;
-  };
+  signUpload(folder: string): Promise<UploadSignature>;
+  /** Whether clips can be cut on the storage side (Cloudinary can; B2 cannot: cut them locally). */
+  trimsRemotely: boolean;
+  /** A short-lived download link for an object key (private storage only). */
+  presignGet?(key: string, seconds?: number): Promise<string>;
   /** Upload a local audio file as a `video` asset so Cloudinary can transcode it. */
   uploadAudio(path: string, publicId: string): Promise<{ url: string; publicId: string }>;
   /** WAV derivative of [startSec, endSec] of an audio asset (voiceprint clips). */
@@ -44,7 +64,9 @@ export interface StorageService {
 }
 
 export const cloudinaryStorage: StorageService = {
-  signUpload(folder) {
+  trimsRemotely: true,
+
+  async signUpload(folder) {
     const c = cld();
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = c.utils.api_sign_request(
