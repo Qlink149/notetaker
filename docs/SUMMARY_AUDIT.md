@@ -57,6 +57,13 @@ complete. What remains are comprehension slips on Hinglish and Gujarati (reverse
 Adding the original script does not help Haiku. A stronger model does: about 40% fewer high and 25% fewer medium issues.
 Sonnet without the original script was not tested.
 
+## The live "Charlesh Lunch" summary
+Every automated version still had 1 or 2 high issues on this meeting (the lab-grown venture and the diamond-layout figures
+kept being tied to Kisna). The summary now stored was written by hand against the full transcript, then audited twice:
+first pass 1 high / 5 medium / 13 low (the high one: a hypothetical about Charles being a Kisna franchisee, removed),
+second pass 0 high / 2 medium / 8 low (wording slips, all corrected). The previous stored text and action items are kept
+in the working notes of this session; the 4 other meetings with stale labels are flagged `summaryOutdated`.
+
 ## Still open
 - Remaining errors are mostly attribution and reading Hinglish/Gujarati; the stronger model reduces them (about 40% fewer high, 25% fewer medium) but does not remove them.
 - Two lines of the 8 Oct meeting are labelled with the wrong speaker, and some Prachar sentences are split across
