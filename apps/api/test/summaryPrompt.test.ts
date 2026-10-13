@@ -40,7 +40,8 @@ describe('summary prompt', () => {
 
   it('does not invent conflicts, insights or open questions', () => {
     expect(prompt).toMatch(/Do not call figures "not reconciled"/);
-    expect(prompt).toMatch(/at most five short bullets/);
+    expect(prompt).toMatch(/Write each point here or in Key Topics, not in both/);
+    expect(prompt).toMatch(/Leave the advice, opinions and warnings that speakers gave to Insights/);
     expect(prompt).toMatch(/Not a target, an uncertain figure or a doubt of your own turned into a question/);
   });
 
