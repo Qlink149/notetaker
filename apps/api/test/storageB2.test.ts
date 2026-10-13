@@ -65,6 +65,18 @@ describe('B2 storage', () => {
     expect(u.pathname).toContain('k/o');
   });
 
+  it('gives the same playback link for the whole hour, carries a cache header, and keeps explicit links exact', async () => {
+    const s = createB2Storage({ bucket: 'bkt', client: fakeClient(() => ({})).client });
+    const a = await s.presignGet!('k/o');
+    await new Promise((r) => setTimeout(r, 1100)); // a second later: the signature must not change
+    const b = await s.presignGet!('k/o');
+    expect(b).toBe(a);
+    expect(new URL(a).searchParams.get('response-cache-control')).toBe('private, max-age=3600');
+    const short = new URL(await s.presignGet!('k/o', 600));
+    expect(short.searchParams.get('X-Amz-Expires')).toBe('600');
+    expect(short.searchParams.get('response-cache-control')).toBeNull();
+  });
+
   it('uploads a file with its length and returns a b2:// address', async () => {
     const { client, sent } = fakeClient(() => ({}));
     const file = join(dir, 'a.wav');

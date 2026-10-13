@@ -12,6 +12,7 @@ import {
 import type { StorageService } from '../services/storage/cloudinary.js';
 import { getStorage } from '../services/storage/index.js';
 import { env } from '../config/env.js';
+import { createAnalysisCache, type AnalysisCache } from '../lib/analysisCache.js';
 import { ClaudeSummariser, type Summariser } from '../services/summary/claude.js';
 import { HandoffSummariser } from '../services/summary/handoff.js';
 
@@ -42,6 +43,8 @@ export interface Deps {
   /** "pyannote": diarize and join; "text": Phase 1's text linker only. */
   speakerSource: 'pyannote' | 'text';
   now: () => Date;
+  /** Keeps the analysis FLAC between jobs (the worker). Absent in tests: every job then starts from the original. */
+  analysisCache?: AnalysisCache;
 }
 
 export function defaultDeps(): Deps {
@@ -64,6 +67,7 @@ export function defaultDeps(): Deps {
     },
     speakerSource: env().SPEAKER_SOURCE ?? (env().PYANNOTEAI_API_KEY ? 'pyannote' : 'text'),
     now: () => new Date(),
+    analysisCache: createAnalysisCache(),
   };
 }
 

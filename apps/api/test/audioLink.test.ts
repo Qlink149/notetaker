@@ -63,7 +63,7 @@ describe('signed audio links', () => {
     const res = await request(app).get(`/api/v1/audio${u.search}`).redirects(0);
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('https://b2.example/ws/a/original-1?signed=1');
-    expect(res.headers['cache-control']).toContain('no-store');
+    expect(res.headers['cache-control']).toBe('private, max-age=1800');
     expect(presigned).toEqual(['ws/a/original-1|default']);
   });
 

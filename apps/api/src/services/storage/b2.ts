@@ -27,6 +27,7 @@ export const keyOfB2Url = (url: string): string => url.slice(B2_SCHEME.length);
 
 const UPLOAD_LINK_SECONDS = 3600;
 const DOWNLOAD_LINK_SECONDS = 6 * 3600;
+const PLAYBACK_CACHE_SECONDS = 3600;
 
 export interface B2Options {
   bucket: string;
@@ -103,10 +104,27 @@ export function createB2Storage(o: B2Options): StorageService {
       return '';
     },
 
-    async presignGet(key, seconds = DOWNLOAD_LINK_SECONDS) {
-      return getSignedUrl(client, new GetObjectCommand({ Bucket, Key: key }), {
-        expiresIn: seconds,
-      });
+    /**
+     * Without `seconds` this is a playback link: signed at the start of the current hour, so the same
+     * address is returned for a whole hour (the browser can reuse what it already fetched instead of
+     * downloading again) and still has at least five hours to run. B2 is asked to send a cache header.
+     * With `seconds` the link is exact and short-lived (handing a file to another service).
+     */
+    async presignGet(key, seconds) {
+      if (seconds !== undefined)
+        return getSignedUrl(client, new GetObjectCommand({ Bucket, Key: key }), {
+          expiresIn: seconds,
+        });
+      const hour = 3600_000;
+      return getSignedUrl(
+        client,
+        new GetObjectCommand({
+          Bucket,
+          Key: key,
+          ResponseCacheControl: `private, max-age=${PLAYBACK_CACHE_SECONDS}`,
+        }),
+        { expiresIn: DOWNLOAD_LINK_SECONDS, signingDate: new Date(Math.floor(Date.now() / hour) * hour) },
+      );
     },
 
     async download(url, dest) {

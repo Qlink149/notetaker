@@ -29,6 +29,8 @@ export const ingestStage: StageHandler = {
     const info = await deps.audio.probe(original);
     const analysis = join(tmpDir, 'analysis.flac');
     await deps.audio.toAnalysisFlac(original, analysis);
+    // later stages (speaker analysis, gap fill, re-uploads) reuse this instead of fetching the original again
+    await deps.analysisCache?.put(meeting.audio.originalUrl, analysis).catch(() => null);
     let durationSec = (await deps.audio.probe(analysis)).durationSec;
     if (!(durationSec > 0)) durationSec = await deps.audio.decodedDuration(analysis);
     if (!(durationSec >= 1))
