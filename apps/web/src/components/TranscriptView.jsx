@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { fmtTime, lineText } from "@/lib/format";
 
+// Height reserved for the sticky player bar.
+const STICKY_OFFSET = 72;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
 const PALETTE = [
   "bg-blue-100 text-blue-700",
   "bg-emerald-100 text-emerald-700",
@@ -41,24 +45,71 @@ export default function TranscriptView({
   speakers = [],
   onReassign,
   onSplit,
+  follow = false,
+  onUserScroll,
+  onActiveVisible,
+  jumpRef,
 }) {
   const rowRefs = useRef([]);
-  const firstRun = useRef(true);
   const [menu, setMenu] = useState(-1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const active = activeIndexFor(lines, currentTime);
   const editable = Boolean(onReassign || onSplit);
 
-  // Keep the active line in view during playback, but don't jump on first render.
+  // The active line is always highlighted. The page only moves when the user turned follow on.
+  const isVisible = (el) => {
+    if (!el) return true;
+    const r = el.getBoundingClientRect();
+    return r.top >= STICKY_OFFSET && r.bottom <= window.innerHeight;
+  };
+  const centre = (el) => el?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  // Follow on: jump to the active line once, then only when it leaves the screen (no jitter on every line).
+  const wasFollowing = useRef(false);
   useEffect(() => {
-    if (active < 0) return;
-    if (firstRun.current) {
-      firstRun.current = false;
-      return;
-    }
-    rowRefs.current[active]?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [active]);
+    const justTurnedOn = follow && !wasFollowing.current;
+    wasFollowing.current = follow;
+    if (!follow || active < 0) return;
+    const el = rowRefs.current[active];
+    if (justTurnedOn || !isVisible(el)) centre(el);
+  }, [active, follow]);
+
+  // Any manual scroll (wheel, trackpad, touch, keyboard) turns follow off and never pulls the user back.
+  useEffect(() => {
+    if (!follow || !onUserScroll) return;
+    const stop = () => onUserScroll();
+    const key = (e) => {
+      if (/^(INPUT|TEXTAREA|SELECT|AUDIO)$/.test(e.target?.tagName || "")) return;
+      if (SCROLL_KEYS.has(e.key)) stop();
+    };
+    window.addEventListener("wheel", stop, { passive: true });
+    window.addEventListener("touchmove", stop, { passive: true });
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("wheel", stop);
+      window.removeEventListener("touchmove", stop);
+      window.removeEventListener("keydown", key);
+    };
+  }, [follow, onUserScroll]);
+
+  // Tell the page whether the active line is on screen (for the "Now playing" pill).
+  useEffect(() => {
+    if (!onActiveVisible) return;
+    const report = () => onActiveVisible(active < 0 || isVisible(rowRefs.current[active]));
+    report();
+    window.addEventListener("scroll", report, { passive: true });
+    window.addEventListener("resize", report);
+    return () => {
+      window.removeEventListener("scroll", report);
+      window.removeEventListener("resize", report);
+    };
+  }, [active, onActiveVisible]);
+
+  // "Now playing" pill: scroll to the active line once, without turning follow on.
+  useEffect(() => {
+    if (jumpRef) jumpRef.current = () => centre(rowRefs.current[active]);
+  });
 
   const act = async (fn) => {
     setBusy(true);

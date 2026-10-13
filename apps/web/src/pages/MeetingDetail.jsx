@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { useAuth } from '@/lib/AuthContext';
-import { fmtDuration } from '@/lib/format';
+import { fmtDuration, fmtTime } from '@/lib/format';
 import TranscriptView from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
@@ -92,6 +92,15 @@ export default function MeetingDetail() {
   const [currentTime, setCurrentTime] = useState(0);
   const [speakers, setSpeakers] = useState(null);
   const [summaryStale, setSummaryStale] = useState(false);
+  const [follow, setFollow] = useState(() => {
+    try {
+      return localStorage.getItem('liveTranscript') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [activeVisible, setActiveVisible] = useState(true);
+  const jumpRef = useRef(null);
   const audioRef = useRef(null);
   const stopAt = useRef(null);
   const dataKey = useRef(null);
@@ -179,6 +188,16 @@ export default function MeetingDetail() {
     }
   };
 
+  const setFollowing = useCallback((on) => {
+    setFollow(on);
+    try {
+      localStorage.setItem('liveTranscript', on ? '1' : '0');
+    } catch {
+      /* private mode: the choice just isn't remembered */
+    }
+  }, []);
+  const stopFollowing = useCallback(() => setFollowing(false), [setFollowing]);
+
   const seekTo = (t) => {
     const a = audioRef.current;
     if (!a) return;
@@ -263,19 +282,45 @@ export default function MeetingDetail() {
       </p>
 
       {meeting.audio?.playbackUrl && (
-        <audio
-          ref={audioRef}
-          src={meeting.audio.playbackUrl}
-          controls
-          className="w-full mb-6"
-          onTimeUpdate={(e) => {
-            setCurrentTime(e.target.currentTime);
-            if (stopAt.current !== null && e.target.currentTime >= stopAt.current) {
-              e.target.pause();
-              stopAt.current = null;
-            }
-          }}
-        />
+        <div className="sticky top-0 z-30 -mx-4 px-4 py-2 mb-4 bg-background/95 backdrop-blur border-b border-border flex items-center gap-2">
+          <audio
+            ref={audioRef}
+            src={meeting.audio.playbackUrl}
+            controls
+            className="flex-1 min-w-0"
+            onTimeUpdate={(e) => {
+              setCurrentTime(e.target.currentTime);
+              if (stopAt.current !== null && e.target.currentTime >= stopAt.current) {
+                e.target.pause();
+                stopAt.current = null;
+              }
+            }}
+          />
+          {hasTranscript && (
+            <button
+              type="button"
+              aria-pressed={follow}
+              onClick={() => setFollowing(!follow)}
+              className={`shrink-0 h-9 px-3 rounded-full text-xs font-medium border transition-colors ${
+                follow
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-background text-muted-foreground border-input hover:bg-secondary'
+              }`}
+            >
+              Live transcript: {follow ? 'On' : 'Off'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {hasTranscript && !follow && !activeVisible && currentTime > 0 && (
+        <button
+          type="button"
+          onClick={() => jumpRef.current?.()}
+          className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 rounded-full bg-primary text-primary-foreground shadow-lg px-4 py-2 text-sm font-medium"
+        >
+          ↓ Now playing {fmtTime(currentTime)}
+        </button>
       )}
 
       {processing && (
@@ -526,6 +571,10 @@ export default function MeetingDetail() {
             lines={data?.lines}
             currentTime={currentTime}
             onSeek={seekTo}
+            follow={follow}
+            onUserScroll={stopFollowing}
+            onActiveVisible={setActiveVisible}
+            jumpRef={jumpRef}
             scriptMode={scriptMode}
             speakers={speakers?.cards ?? []}
             {...(speakers?.source === 'pyannote' && !processing
