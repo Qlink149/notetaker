@@ -60,6 +60,7 @@ export const summariseStage: StageHandler = {
         $set: result
           ? {
               summaryStatus: 'completed',
+              summaryOutdated: false,
               summary: result.summaryMarkdown,
               actionItems: result.actionItems,
               stage: 'finalise',

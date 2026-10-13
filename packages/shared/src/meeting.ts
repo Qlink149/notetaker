@@ -144,6 +144,8 @@ export const Meeting = z.object({
   participants: z.array(z.string()),
   unknownCount: z.number(),
   summaryStatus: SummaryStatus,
+  /** Speaker names changed after the summary was written; it is refreshed on request. */
+  summaryOutdated: z.boolean().optional(),
   summary: z.string().nullable(),
   actionItems: z.array(ActionItem),
   error: MeetingError.nullable(),

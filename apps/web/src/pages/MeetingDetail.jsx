@@ -455,7 +455,7 @@ export default function MeetingDetail() {
         </div>
       )}
 
-      {summaryStale && meeting.summary && !processing && (
+      {(summaryStale || meeting.summaryOutdated) && meeting.summary && !processing && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap">
           <span className="flex-1 min-w-48">
             Names changed. The summary above was written with the earlier speaker labels until it is

@@ -151,6 +151,49 @@ describe('naming a voice', () => {
     expect(aomView.cards.find((c) => c.diar === 'S5')!.match!.name).toBe('Ghanshyam Dholakia');
   });
 
+  it('marks the summary of every meeting whose speaker names changed as out of date', async () => {
+    const person = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker B (Meeting 21/9)',
+      anonymous: true,
+    });
+    const pid = String(person._id);
+    const a = await seedMeeting(
+      'Meeting-21-9-2026',
+      [turn('S0', 0, 5, 'one'), turn('S1', 5, 10, 'two')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', pid)],
+    );
+    const b = await seedMeeting(
+      'AOM Meeting part 1',
+      [turn('S4', 0, 5, 'three'), turn('S5', 5, 10, 'four')],
+      [card('S4', 'Speaker A', null), card('S5', 'Speaker C', pid)],
+    );
+    const other = await seedMeeting(
+      'Unrelated',
+      [turn('S0', 0, 5, 'five'), turn('S1', 5, 10, 'six')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null)],
+    );
+    await MeetingModel.updateMany(
+      { _id: { $in: [a, b, other] } },
+      { $set: { summary: 'Speaker B said something.', summaryStatus: 'completed' } },
+    );
+    const flag = async (id: string) =>
+      (await auth(request(app).get(`/api/v1/meetings/${id}`)).expect(200)).body.meeting
+        .summaryOutdated as boolean;
+    expect([await flag(a), await flag(b), await flag(other)]).toEqual([false, false, false]);
+
+    await auth(request(app).post(`/api/v1/meetings/${a}/speakers/S1/name`))
+      .send({ name: 'Ghanshyam Dholakia' })
+      .expect(200);
+
+    // both meetings that show the voice are flagged, the unrelated one is not
+    expect([await flag(a), await flag(b), await flag(other)]).toEqual([true, true, false]);
+
+    // writing the summary again clears the flag
+    await MeetingModel.updateOne({ _id: a }, { $set: { summaryOutdated: false } });
+    expect(await flag(a)).toBe(false);
+  });
+
   it('asks before creating a near-duplicate name, and can link to the existing person', async () => {
     const existing = await SpeakerModel.create({
       workspaceId: workspace._id,

@@ -199,11 +199,15 @@ export async function applyNames(meetingId: string): Promise<ApplyResult | null>
       },
     },
   );
-  return {
-    lines: lines.length,
-    coverage: coverage.ratio,
-    namesChanged: before !== JSON.stringify(lines.map((l) => l.speakerName)),
-  };
+  const namesChanged = before !== JSON.stringify(lines.map((l) => l.speakerName));
+  // A summary written with the old names is out of date: record it on the meeting, so it shows even for
+  // meetings that were changed by naming a voice in another meeting.
+  if (namesChanged)
+    await MeetingModel.updateOne(
+      { _id: meetingId, summary: { $nin: [null, ''] } },
+      { $set: { summaryOutdated: true } },
+    );
+  return { lines: lines.length, coverage: coverage.ratio, namesChanged };
 }
 
 /** Meetings where this person has a speaker card. */

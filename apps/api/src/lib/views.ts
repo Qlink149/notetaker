@@ -44,6 +44,7 @@ export function meetingView(m: MeetingDoc): Meeting {
     participants: m.participants ?? [],
     unknownCount: m.unknownCount ?? 0,
     summaryStatus: m.summaryStatus,
+    summaryOutdated: m.summaryOutdated === true,
     summary: m.summary ?? null,
     actionItems: (m.actionItems ?? []).map((a) => ({ speakerName: a.speakerName, text: a.text })),
     error: m.error ?? null,

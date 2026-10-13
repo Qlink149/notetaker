@@ -120,6 +120,8 @@ export interface MeetingDoc {
   participants: string[];
   unknownCount: number;
   summaryStatus: SummaryStatusT;
+  /** Speaker names changed after the summary was written: it still uses the old names until it is refreshed. */
+  summaryOutdated?: boolean;
   summary: string | null;
   actionItems: ActionItem[];
   error: MeetingError | null;
@@ -156,6 +158,7 @@ const meetingSchema = new Schema<MeetingDoc>(
     participants: { type: [String], default: [] },
     unknownCount: { type: Number, default: 0 },
     summaryStatus: { type: String, enum: SummaryStatus.options, default: 'pending' },
+    summaryOutdated: { type: Boolean, default: false },
     summary: { type: String, default: null },
     actionItems: { type: [new Schema({ speakerName: String, text: String }, opts)], default: [] },
     error: {
