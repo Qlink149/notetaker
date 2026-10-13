@@ -155,7 +155,7 @@ export function engineStatus(): Record<EngineId, { enabled: boolean; reason?: st
   const key = (v: string | undefined, name: string) =>
     v ? { enabled: true } : { enabled: false, reason: `${name} is not set` };
   return {
-    gemini: key(geminiKeyEntries()[0]?.value, 'GEMINI_API_KEY (or GEMINI_API_KEY1..9)'),
+    gemini: key(geminiKeyEntries()[0]?.value, 'GEMINI_PAID_API_KEY (or GEMINI_API_KEY, GEMINI_API_KEY1..9)'),
     deepgram: key(e.DEEPGRAM_API_KEY, 'DEEPGRAM_API_KEY'),
     'gemini-transcribe': key(
       geminiKeyEntries()[0]?.value,
@@ -166,11 +166,13 @@ export function engineStatus(): Record<EngineId, { enabled: boolean; reason?: st
 }
 
 /**
- * Gemini keys from GEMINI_API_KEY and GEMINI_API_KEY1..GEMINI_API_KEY9, in that order, de-duplicated.
+ * Gemini keys from GEMINI_PAID_API_KEY (the paid key, used first), GEMINI_API_KEY and GEMINI_API_KEY1..GEMINI_API_KEY9,
+ * in that order, de-duplicated.
  * Keys listed in GEMINI_FREE_KEYS are skipped unless GEMINI_ALLOW_FREE_KEYS is true.
  */
 export function geminiKeyEntries(): { name: string; value: string }[] {
   const names = [
+    'GEMINI_PAID_API_KEY',
     'GEMINI_API_KEY',
     ...Array.from({ length: 9 }, (_, i) => `GEMINI_API_KEY${i + 1}`),
   ];

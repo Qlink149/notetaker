@@ -34,7 +34,8 @@ export function usdFor(
 /** Whether a provider's spend counts against the cap (Deepgram is excluded; free-tier Gemini costs nothing). */
 function capped(provider: Provider): boolean {
   if (provider === 'deepgram') return false;
-  if (provider === 'gemini') return env().GEMINI_PAID;
+  // a paid key is in use (GEMINI_PAID_API_KEY, or GEMINI_PAID=true): its spend counts against the cap
+  if (provider === 'gemini') return env().GEMINI_PAID || Boolean(process.env.GEMINI_PAID_API_KEY?.trim());
   return true;
 }
 

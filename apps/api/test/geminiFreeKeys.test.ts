@@ -11,6 +11,7 @@ beforeEach(() => {
     JWT_SECRET: 'x'.repeat(40),
   });
   for (const k of [
+    'GEMINI_PAID_API_KEY',
     'GEMINI_API_KEY',
     ...Array.from({ length: 9 }, (_, i) => `GEMINI_API_KEY${i + 1}`),
   ])
@@ -50,5 +51,33 @@ describe('free-tier Gemini keys', () => {
     process.env.GEMINI_FREE_KEYS = 'GEMINI_API_KEY1,GEMINI_API_KEY2,GEMINI_API_KEY4';
     resetEnvCache();
     expect(geminiKeyEntries()).toHaveLength(0);
+  });
+});
+
+describe('the paid Gemini key', () => {
+  it('is read from GEMINI_PAID_API_KEY and used before the other keys', () => {
+    process.env.GEMINI_PAID_API_KEY = 'the-paid-key';
+    resetEnvCache();
+    expect(geminiKeyEntries().map((k) => k.name)).toEqual([
+      'GEMINI_PAID_API_KEY',
+      'GEMINI_API_KEY1',
+      'GEMINI_API_KEY2',
+      'GEMINI_API_KEY4',
+    ]);
+  });
+  it('stays the only key when every other key is listed as free', () => {
+    process.env.GEMINI_PAID_API_KEY = 'the-paid-key';
+    process.env.GEMINI_FREE_KEYS = 'GEMINI_API_KEY1,GEMINI_API_KEY2,GEMINI_API_KEY4';
+    resetEnvCache();
+    expect(geminiKeyEntries().map((k) => k.name)).toEqual(['GEMINI_PAID_API_KEY']);
+  });
+  it('is not counted twice when the same key is also under another name', () => {
+    process.env.GEMINI_PAID_API_KEY = 'paid-key-1';
+    resetEnvCache();
+    expect(geminiKeyEntries().map((k) => k.name)).toEqual([
+      'GEMINI_PAID_API_KEY',
+      'GEMINI_API_KEY2',
+      'GEMINI_API_KEY4',
+    ]);
   });
 });
