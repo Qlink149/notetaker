@@ -20,6 +20,11 @@ describe('worker health endpoint', () => {
     expect(res.headers.get('content-type')).toContain('application/json');
     expect(await res.json()).toEqual({ ok: true, role: 'worker', uptimeSec: 7, concurrency: 1 });
   });
+  it('answers HEAD /health with 200 and no body (the free UptimeRobot plan checks with HEAD)', async () => {
+    const res = await fetch(`${url}/health`, { method: 'HEAD' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('');
+  });
   it('also answers / and ignores a query string (uptime monitors vary)', async () => {
     expect((await fetch(`${url}/`)).status).toBe(200);
     expect((await fetch(`${url}/health?x=1`)).status).toBe(200);
