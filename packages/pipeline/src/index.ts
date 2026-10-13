@@ -22,3 +22,4 @@ export * from './resolveNames.js';
 export * from './names.js';
 export * from './audit.js';
 export * from './multitrack.js';
+export * from './mergeSpeakers.js';

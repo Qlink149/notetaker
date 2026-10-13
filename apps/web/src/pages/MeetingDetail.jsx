@@ -486,6 +486,7 @@ export default function MeetingDetail() {
           meetingId={id}
           source={speakers.source}
           cards={speakers.cards}
+          autoMerged={speakers.autoMerged}
           onPlay={playRange}
           onChanged={afterEdit}
         />

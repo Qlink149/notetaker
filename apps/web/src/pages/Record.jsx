@@ -116,7 +116,7 @@ export default function Record() {
         </div>
 
         <div>
-          <label className="text-sm font-medium mb-1.5 block">Expected participants (optional)</label>
+          <label className="text-sm font-medium mb-1.5 block">How many people speak? (recommended)</label>
           <Input
             type="number"
             min={1}
@@ -127,6 +127,9 @@ export default function Record() {
             placeholder="e.g. 4"
             className="max-w-[8rem]"
           />
+          <p className="text-xs text-muted-foreground mt-1">
+            Helps tell similar voices apart. A rough number is fine.
+          </p>
         </div>
 
         <div>

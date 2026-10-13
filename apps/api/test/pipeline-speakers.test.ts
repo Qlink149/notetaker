@@ -176,6 +176,23 @@ async function drainAll(r: Runner, rounds = 12): Promise<void> {
   }
 }
 
+/** The same fixture, but pyannote split the odd voice in two (SPEAKER_01 and SPEAKER_02 hear each other). */
+const splitDiarization = () => {
+  const conf: Record<string, Record<string, number>> = {
+    SPEAKER_00: { SPEAKER_00: 90, SPEAKER_01: 16, SPEAKER_02: 16 },
+    SPEAKER_01: { SPEAKER_00: 16, SPEAKER_01: 89, SPEAKER_02: 87 },
+    SPEAKER_02: { SPEAKER_00: 17, SPEAKER_01: 84, SPEAKER_02: 86 },
+  };
+  const segs = turnsCovering(0, 120).map((t, i) => {
+    const speaker = i % 2 === 0 ? 'SPEAKER_00' : i % 4 === 3 ? 'SPEAKER_02' : 'SPEAKER_01';
+    return { speaker, start: t.start, end: t.end, confidence: conf[speaker] };
+  });
+  return {
+    diarization: segs,
+    exclusiveDiarization: segs.map(({ confidence: _c, ...x }) => x),
+  };
+};
+
 describe('speakers in the pipeline (pyannote mocked)', () => {
   it('diarizes beside transcription, joins at assembly, then names and summarises', async () => {
     let polls = 0;
@@ -220,6 +237,37 @@ describe('speakers in the pipeline (pyannote mocked)', () => {
       tag: 'pipeline',
       keyLabel: 'PYANNOTEAI_API_KEY',
     });
+  });
+
+  it('merges a voice that pyannote split in two, once, and keeps the decision for later steps', async () => {
+    pya.getJob = () => ({ jobId: 'x', status: 'succeeded', output: splitDiarization() });
+    const r = await runner();
+    const id = await createMeeting();
+    await drainAll(r);
+
+    const m = await MeetingModel.findById(id).lean();
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(m?.status).toBe('completed');
+    // two people, not three: SPEAKER_02 became SPEAKER_01 in the turns, the cards and the speaker map
+    expect(new Set(data?.turns.map((t) => t.speaker))).toEqual(new Set(['SPEAKER_00', 'SPEAKER_01']));
+    expect((data?.speakerCards ?? []).map((c: { diar: string }) => c.diar).sort()).toEqual([
+      'SPEAKER_00',
+      'SPEAKER_01',
+    ]);
+    expect(Object.keys(data?.speakerMap ?? {}).filter((k) => k !== 'unknown')).toHaveLength(2);
+    // the decision is stored, and the stored pyannote reply is untouched (still three labels)
+    expect(data?.speakerMerges).toMatchObject([{ from: 'SPEAKER_02', into: 'SPEAKER_01' }]);
+    const stored = await P2PyannoteResponseModel.findOne({ meetingId: id, kind: 'diarize' }).lean();
+    const out = stored?.output as { diarization: { speaker: string }[] };
+    expect(new Set(out.diarization.map((x) => x.speaker))).toEqual(
+      new Set(['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02']),
+    );
+    // a later step asking for the speakers gets the same merged view, not a fresh measurement
+    const { pyannoteSegments } = await import('../src/services/identity/identity.js');
+    const later = await pyannoteSegments(String(id));
+    expect(new Set(later?.segments.map((x) => x.speaker))).toEqual(
+      new Set(['SPEAKER_00', 'SPEAKER_01']),
+    );
   });
 
   it('submits again when pyannote no longer has the result (expired)', async () => {

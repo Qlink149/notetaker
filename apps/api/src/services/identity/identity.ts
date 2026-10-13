@@ -2,8 +2,11 @@ import { Types } from 'mongoose';
 import {
   computeCoverage,
   labelSpeakersByTime,
+  applySpeakerMerges,
+  mergeConfusableSpeakers,
   turnsToLines,
   type DiarSegment,
+  type SpeakerMerge,
   type DiarizationOutput,
 } from '@meetingid/pipeline';
 import type { Line, Turn } from '@meetingid/shared';
@@ -15,6 +18,7 @@ import {
   type SpeakerDoc,
 } from '../../models/index.js';
 import { P2JoinModel, P2PyannoteResponseModel } from '../../models/phase2.js';
+import { env } from '../../config/env.js';
 
 /** "Meeting-21-9-2026 (acceptance, ts fix)" → "21/9", "AOM Meeting part 1 (acceptance)" → "AOM". */
 export function shortTitle(title: string): string {
@@ -55,7 +59,7 @@ export function speakerSeconds(segments: DiarSegment[]): Map<string, number> {
 export async function pyannoteSegments(
   meetingId: string,
   model = 'precision-2',
-): Promise<{ segments: DiarSegment[]; all: DiarSegment[] } | null> {
+): Promise<{ segments: DiarSegment[]; all: DiarSegment[]; merges: SpeakerMerge[] } | null> {
   // The pipeline's own run is preferred over the Stage A experiment run.
   const docs = await P2PyannoteResponseModel.find({
     meetingId,
@@ -70,9 +74,24 @@ export async function pyannoteSegments(
   });
   const doc = usable.find((d) => d.tag === 'pipeline') ?? usable[0];
   if (!doc) return null;
-  const out = doc.output as DiarizationOutput;
+  const raw = doc.output as DiarizationOutput;
+  // One voice that pyannote split in two is merged here. The decision is taken once, before the meeting
+  // has cards, and stored with the meeting; later calls apply the stored decision, so the transcript,
+  // the cards and the identification always see the same speakers. A meeting made before this existed
+  // has cards and no stored decision, so it is left as it was. The stored pyannote reply is never changed.
+  const state = await MeetingDataModel.findOne(
+    { meetingId },
+    { speakerCards: 1, speakerMerges: 1 },
+  ).lean();
+  const hasCards = (state?.speakerCards ?? []).length > 0;
+  const stored = (state?.speakerMerges ?? []) as SpeakerMerge[];
+  const { output: out, merges } = hasCards
+    ? { output: applySpeakerMerges(raw, stored), merges: stored }
+    : env().SPEAKER_AUTOMERGE
+      ? mergeConfusableSpeakers(raw)
+      : { output: raw, merges: [] as SpeakerMerge[] };
   const segments = out.exclusiveDiarization ?? out.diarization;
-  return { segments, all: out.diarization ?? segments };
+  return { segments, all: out.diarization ?? segments, merges };
 }
 
 /**
@@ -95,7 +114,10 @@ export async function ensureCards(meetingId: string): Promise<SpeakerCardDoc[]> 
     status: 'new' as const,
     clips: [],
   }));
-  await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
+  await MeetingDataModel.updateOne(
+    { meetingId },
+    { $set: { speakerCards: cards, speakerMerges: pya.merges } },
+  );
   return cards;
 }
 

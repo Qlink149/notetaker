@@ -8,6 +8,7 @@ import {
   PyannoteError,
   diarizeBody,
   getJob,
+  speakerCountHint,
   submitDiarize,
   uploadMedia,
   type PyannoteModel,
@@ -107,9 +108,7 @@ async function submit(ctx: StageContext, meeting: MeetingDoc): Promise<void> {
     },
     { upsert: true },
   );
-  const counts = meeting.expectedParticipants
-    ? { minSpeakers: 1, maxSpeakers: meeting.expectedParticipants + 2 }
-    : {};
+  const counts = speakerCountHint(meeting.expectedParticipants);
   const jobId = await submitDiarize(media, { model: PIPELINE_MODEL, ...counts });
   await P2PyannoteResponseModel.create({
     meetingId: meeting._id,

@@ -27,6 +27,7 @@ import { P2IdentityRunModel, P2PyannoteResponseModel } from '../../models/phase2
 import { cutFlac } from '../audio/ffmpeg.js';
 import {
   identifyBody,
+  speakerCountHint,
   submitIdentify,
   PyannoteError,
   submitVoiceprint,
@@ -227,9 +228,7 @@ export async function identifyMeeting(
   if (refs.length) {
     try {
       const url = await meetingMedia(meetingId);
-      const counts = meeting.expectedParticipants
-        ? { minSpeakers: 1, maxSpeakers: meeting.expectedParticipants + 2 }
-        : {};
+      const counts = speakerCountHint(meeting.expectedParticipants);
       const body = identifyBody(url, { model: IDENTITY_MODEL, voiceprints: refs, ...counts });
       const hash = createHash('sha1')
         .update(refs.map((r) => r.label).join(','))
@@ -333,7 +332,10 @@ export async function identifyMeeting(
       match = { personId, name: res.name ?? personId, score: res.score, margin: res.margin };
       linked.push({ label, person: res.name ?? personId, score: res.score, margin: res.margin });
       if (!budget) await enrol(personId, diar, clips.slice(0, 1));
-    } else if (sec >= MIN_SPEECH_FOR_PERSON_SEC && clips.length) {
+    } else if (res?.status !== 'taken' && sec >= MIN_SPEECH_FOR_PERSON_SEC && clips.length) {
+      // (A voice whose best match is a known person already paired with another voice of this meeting is
+      // left unlinked, with that person shown as the closest match, instead of becoming a new anonymous
+      // person: that was how one speaker ended up in the library twice.)
       const existing = await SpeakerModel.findOne({
         workspaceId: new Types.ObjectId(workspaceId),
         'origin.meetingId': new Types.ObjectId(meetingId),
@@ -350,7 +352,7 @@ export async function identifyMeeting(
       personId = String(person._id);
       newPeople.push(person.name);
       await enrol(personId, diar, clips);
-      status = res?.status === 'low-margin' || res?.status === 'taken' ? 'review' : 'new';
+      status = res?.status === 'low-margin' ? 'review' : 'new';
     } else {
       status = 'review';
     }

@@ -243,6 +243,8 @@ export interface MeetingDataDoc {
   gapFills: GapFillDoc[];
   /** Phase 2: one card per pyannote speaker (who it is, how sure, sample clips). */
   speakerCards: SpeakerCardDoc[];
+  /** Voices merged automatically when the cards were created (pyannote had split one voice in two). */
+  speakerMerges?: { from: string; into: string; ambiguity: [number, number]; overlapShare: number }[];
   /** Where the speaker labels came from; "text-fallback" is Phase 1's text linker (no pyannote). */
   speakerSource: 'pyannote' | 'text-fallback';
   /** State of the pyannote diarization running beside transcription. Missing means "off". */
@@ -317,6 +319,7 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
     speechSegments: { type: [new Schema({ start: Number, end: Number }, opts)], default: [] },
     speakerMap: { type: Schema.Types.Mixed, default: {} },
     speakerCards: { type: Schema.Types.Mixed, default: [] },
+    speakerMerges: { type: Schema.Types.Mixed, default: [] },
     speakerSource: { type: String, enum: ['pyannote', 'text-fallback'], default: 'text-fallback' },
     diarize: { type: Schema.Types.Mixed, default: null },
     phase1: { type: Schema.Types.Mixed, default: null },

@@ -275,7 +275,7 @@ export function TextSpeakersNotice({ onRerun, busy }) {
   );
 }
 
-export default function SpeakerReview({ meetingId, source, cards, onPlay, onChanged }) {
+export default function SpeakerReview({ meetingId, source, cards, autoMerged = [], onPlay, onChanged }) {
   const [open, setOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -328,6 +328,14 @@ export default function SpeakerReview({ meetingId, source, cards, onPlay, onChan
             <p className="text-xs rounded-lg bg-amber-50 border border-amber-200 text-amber-900 p-2.5">
               These speaker labels come from matching text between recording chunks, not from
               voices. They can be wrong.
+            </p>
+          )}
+          {autoMerged.length > 0 && (
+            <p className="text-xs rounded-lg bg-secondary border border-border p-2.5">
+              {autoMerged.length === 1
+                ? 'One voice that sounded identical to another was combined with it automatically.'
+                : `${autoMerged.length} voices that sounded identical to others were combined with them automatically.`}{' '}
+              If two different people were combined, tell us which line to split.
             </p>
           )}
           {message && <p className="text-xs text-muted-foreground">{message}</p>}

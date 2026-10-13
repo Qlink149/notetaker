@@ -228,7 +228,11 @@ export const api = {
       return res.blob();
     },
     speakers: (id: string) =>
-      request<{ source: 'pyannote' | 'text-fallback'; cards: SpeakerCard[] }>(
+      request<{
+        source: 'pyannote' | 'text-fallback';
+        cards: SpeakerCard[];
+        autoMerged?: { from: string; into: string; intoLabel: string }[];
+      }>(
         'GET',
         `/meetings/${id}/speakers`,
       ),

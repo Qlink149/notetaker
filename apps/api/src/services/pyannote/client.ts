@@ -133,6 +133,19 @@ export interface IdentifyOptions extends DiarizeOptions {
  * Request body for /identify. Matching threshold stays 0 so every speaker gets a score for every
  * voiceprint; names are accepted or rejected by our own resolver.
  */
+/**
+ * Speaker-count hint for pyannote from the number of people the user said took part: one fewer to one more
+ * (someone may stay silent, or join late). Without a count pyannote decides alone and tends to split one
+ * voice into two. An exact count is not forced, because forcing a wrong one merges different people.
+ */
+export function speakerCountHint(expected: number | null | undefined): {
+  minSpeakers?: number;
+  maxSpeakers?: number;
+} {
+  if (!expected || expected < 1) return {};
+  return { minSpeakers: Math.max(1, expected - 1), maxSpeakers: expected + 1 };
+}
+
 export function identifyBody(url: string, o: IdentifyOptions): Record<string, unknown> {
   const voiceprints = o.voiceprints.filter((v) => v.voiceprint);
   if (!voiceprints.length) throw new Error('identify needs at least one voiceprint');

@@ -98,6 +98,12 @@ const EnvSchema = z.object({
    * after 15 minutes without a request). Set on the API to the worker's /health address.
    */
   KEEPALIVE_URLS: csv,
+  /**
+   * true (default): voices that pyannote split in two but that are clearly one voice (it hears each as the
+   * other, never at the same moment) are merged when a meeting's speakers are first set up. Set to false to
+   * switch the merge off without a deploy of new code.
+   */
+  SPEAKER_AUTOMERGE: z.preprocess((v) => !(v === 'false' || v === '0'), z.boolean()).default(true),
   WORKER_HTTP: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   FFMPEG_PATH: optional,
