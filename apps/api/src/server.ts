@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { connectMongo, disconnectMongo } from './db/mongo.js';
+import { startKeepAlive } from './lib/keepAlive.js';
 import { logger } from './lib/logger.js';
 import { deleteGeminiFile, uploadToGeminiFiles } from './services/engines/gemini.js';
 import { createVoiceprint } from './services/pyannote/client.js';
@@ -16,7 +17,9 @@ async function main(): Promise<void> {
     createVoiceprint,
   });
   const server = app.listen(cfg.PORT, () => logger.info({ port: cfg.PORT }, 'api listening'));
+  const stopKeepAlive = startKeepAlive(cfg.KEEPALIVE_URLS);
   const shutdown = (): void => {
+    stopKeepAlive();
     server.close(() => void disconnectMongo().then(() => process.exit(0)));
   };
   process.on('SIGTERM', shutdown);

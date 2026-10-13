@@ -93,6 +93,11 @@ const EnvSchema = z.object({
 
   WORKER_ID: optional,
   /** true = the worker also listens on PORT with GET /health (for running it as a Render web service). */
+  /**
+   * Addresses this process calls every 8 minutes to keep other free Render services awake (they sleep
+   * after 15 minutes without a request). Set on the API to the worker's /health address.
+   */
+  KEEPALIVE_URLS: csv,
   WORKER_HTTP: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   FFMPEG_PATH: optional,
