@@ -112,9 +112,9 @@ const EnvSchema = z.object({
    * fit on a small worker; the heavy stages (ingest, speaker analysis, gap fill) stay on the other lane.
    * 0 puts transcription back on the shared lane, one job at a time per WORKER_CONCURRENCY slot.
    */
-  WORKER_TRANSCRIBE_CONCURRENCY: z.coerce.number().int().min(0).max(8).default(4),
+  WORKER_TRANSCRIBE_CONCURRENCY: z.coerce.number().int().min(0).max(8).default(8),
   /** Most Gemini requests in flight at once from one worker, whichever stage sends them (rate-limit guard). */
-  GEMINI_MAX_CONCURRENT: z.coerce.number().int().min(1).max(16).default(6),
+  GEMINI_MAX_CONCURRENT: z.coerce.number().int().min(1).max(16).default(8),
   FFMPEG_PATH: optional,
   FFPROBE_PATH: optional,
 });
