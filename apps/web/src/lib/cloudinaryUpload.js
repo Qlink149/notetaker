@@ -85,17 +85,58 @@ function putOnce(file, signature, onProgress) {
     xhr.onerror = () => reject(failure('Network error during upload', true));
     xhr.onabort = () => reject(failure('Upload was interrupted', true));
     xhr.open(signature.method || 'PUT', signature.uploadUrl);
-    if (file.type) xhr.setRequestHeader('Content-Type', file.type);
+    const type = audioTypeOf(file);
+    if (type) xhr.setRequestHeader('Content-Type', type);
     xhr.send(file);
   });
 }
 
 const MAX_SIZE = 500 * 1024 * 1024; // 500 MB
 
+/**
+ * File extensions and the type to use for them. iPhone Safari often reports no type at all for files from WhatsApp,
+ * Voice Memos shared to Files, or screen/voice recordings (.opus, .caf, .amr, .3gp), so the name is the second check.
+ */
+const EXTENSION_TYPES = {
+  m4a: 'audio/mp4',
+  mp3: 'audio/mpeg',
+  mpga: 'audio/mpeg',
+  mpeg: 'audio/mpeg',
+  wav: 'audio/wav',
+  aac: 'audio/aac',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  webm: 'audio/webm',
+  flac: 'audio/flac',
+  amr: 'audio/amr',
+  caf: 'audio/x-caf',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  '3gp': 'video/3gpp',
+};
+
+/** What to pick in the file chooser: every audio and video type, plus the extensions iPhones use. */
+export const AUDIO_ACCEPT = [
+  'audio/*',
+  'video/*',
+  ...Object.keys(EXTENSION_TYPES).map((ext) => '.' + ext),
+].join(',');
+
+/** The audio or video type of a file: what the browser says, else what its extension says, else null. */
+export function audioTypeOf(file) {
+  const type = file?.type || '';
+  if (type.startsWith('audio/') || type.startsWith('video/')) return type;
+  const name = file?.name || '';
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? (EXTENSION_TYPES[name.slice(dot + 1).toLowerCase()] ?? null) : null;
+}
+
 export function validateAudioFile(file) {
   if (!file) return 'No file selected.';
-  if (!file.type?.startsWith('audio/') && !file.type?.startsWith('video/')) {
-    return 'Please select an audio or video file.';
+  if (!audioTypeOf(file)) {
+    return `This file type is not supported (${file.name || 'unnamed file'}). Choose an audio or video file such as .m4a, .mp3 or .wav.`;
   }
   if (file.size > MAX_SIZE) return 'File is too large (max 500 MB).';
   if (file.size < 1024) return 'This file is empty.';

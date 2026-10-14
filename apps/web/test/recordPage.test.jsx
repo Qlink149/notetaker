@@ -15,7 +15,8 @@ vi.mock('@/api/client', () => ({
     meetings: { create: (...a) => h.create(...a) },
   },
 }));
-vi.mock('@/lib/cloudinaryUpload', () => ({
+vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
+  ...(await orig()),
   getUploadSignature: vi.fn().mockResolvedValue({ meetingId: 'm1' }),
   uploadToCloudinary: vi.fn().mockResolvedValue({ publicId: 'p', url: 'b2://p' }),
   validateAudioFile: vi.fn(() => null),

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { saveChunk, setMeta, getMeta, getAllChunks, clearRecording } from '@/lib/recordingStore';
 import { createSilenceWatch, rmsDb } from '@/lib/micWatch';
 import { useLeaveWarning } from '@/lib/useLeaveWarning';
+import { AUDIO_ACCEPT } from '@/lib/cloudinaryUpload';
 
 function fmt(s) {
   s = Math.max(0, Math.floor(s));
@@ -392,12 +393,7 @@ export default function AudioRecorder({ onComplete }) {
             <Mic className="w-5 h-5 mr-2" /> Start recording
           </Button>
           <label className="w-full">
-            <input
-              type="file"
-              accept="audio/*,video/*"
-              className="hidden"
-              onChange={onFileChange}
-            />
+            <input type="file" accept={AUDIO_ACCEPT} className="hidden" onChange={onFileChange} />
             <span className="flex items-center justify-center h-14 w-full rounded-full border border-input bg-secondary text-secondary-foreground cursor-pointer text-base">
               <Upload className="w-5 h-5 mr-2" /> Upload audio file
             </span>

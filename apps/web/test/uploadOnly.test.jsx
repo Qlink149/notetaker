@@ -10,7 +10,8 @@ vi.mock('@/api/client', () => ({
     meetings: { create: (...a) => h.create(...a) },
   },
 }));
-vi.mock('@/lib/cloudinaryUpload', () => ({
+vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
+  ...(await orig()),
   getUploadSignature: vi.fn().mockResolvedValue({ meetingId: 'm1' }),
   uploadToCloudinary: (...a) => h.upload(...a),
   validateAudioFile: vi.fn(() => null),
@@ -54,7 +55,7 @@ describe('new meeting page while live recording is not offered', () => {
     const { container } = openRecord();
     await screen.findByText('Upload audio file');
     const input = container.querySelector('input[type="file"]');
-    expect(input.getAttribute('accept')).toBe('audio/*,video/*');
+    expect(input.getAttribute('accept')).toContain('.m4a');
     fireEvent.change(input, {
       target: { files: [new File(['x'.repeat(2048)], 'memo.m4a', { type: 'audio/x-m4a' })] },
     });
