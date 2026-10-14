@@ -14,6 +14,7 @@ import {
   type PyannoteModel,
 } from '../../services/pyannote/client.js';
 import { ensureAnalysisFlac } from '../chunkAudio.js';
+import { startIdentify } from '../../services/identity/enroll.js';
 import { meetingMediaKey } from '../../services/pyannote/jobs.js';
 import { trimOutput } from '../../services/pyannote/output.js';
 import type { StageContext, StageHandler } from '../context.js';
@@ -123,6 +124,17 @@ async function submit(ctx: StageContext, meeting: MeetingDoc): Promise<void> {
     keyLabel: PYANNOTE_KEY_LABEL,
   });
   ctx.log.info({ jobId }, 'pyannote diarization submitted');
+  // Voice identification is a second pyannote job on the same audio. Start it now so it runs while the chunks are
+  // transcribed; the identify stage later finds it by the same key and only collects the result. Never fatal:
+  // without it the identify stage submits the job itself.
+  try {
+    if (
+      await startIdentify(String(meeting._id), String(meeting.workspaceId), (m) => ctx.log.info(m))
+    )
+      ctx.log.info('voice identification started early');
+  } catch (err) {
+    ctx.log.warn({ err: (err as Error).message }, 'early voice identification not started');
+  }
 }
 
 const waiting = (msg: string): RetryableError =>

@@ -35,7 +35,14 @@ import {
   type PyannoteModel,
   type VoiceprintRef,
 } from '../pyannote/client.js';
-import { analysisFlac, meetingMedia, runJob, scratchDir } from '../pyannote/jobs.js';
+import {
+  analysisFlac,
+  meetingMedia,
+  runJob,
+  scratchDir,
+  submitOrResume,
+  type JobSpec,
+} from '../pyannote/jobs.js';
 import { pyannoteSegments, shortTitle, speakerSeconds } from './identity.js';
 
 export const IDENTITY_MODEL: PyannoteModel = 'precision-2';
@@ -155,6 +162,80 @@ export interface IdentityReport {
   warnings: string[];
 }
 
+/** The known people's voiceprints to compare a meeting against (this meeting's own voices are left out). */
+async function knownVoices(
+  meetingId: string,
+  workspaceId: string,
+): Promise<{
+  refs: VoiceprintRef[];
+  labelToPerson: Record<string, string>;
+  names: Record<string, string>;
+}> {
+  const people = await SpeakerModel.find({
+    workspaceId: new Types.ObjectId(workspaceId),
+  }).lean<SpeakerDoc[]>();
+  const others = people.filter((p) => String(p.origin?.meetingId) !== meetingId);
+  const labelToPerson: Record<string, string> = {};
+  const items = others.flatMap((p) =>
+    p.voiceprints
+      .filter((v) => (v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL)
+      .map((v, n) => ({
+        personId: String(p._id),
+        quality: v.quality ?? null,
+        label: `${p._id}-${n}`,
+        voiceprint: v.voiceprint ?? v.id,
+      })),
+  );
+  const picked = pickVoiceprints(items, 50);
+  const refs: VoiceprintRef[] = picked.map((v) => {
+    labelToPerson[v.label] = v.personId;
+    return { label: v.label, voiceprint: v.voiceprint };
+  });
+  const names = Object.fromEntries(others.map((p) => [String(p._id), p.name]));
+  return { refs, labelToPerson, names };
+}
+
+/** The pyannote identify job for a meeting against a set of voiceprints; its tag names that exact set. */
+function identifySpec(
+  meetingId: string,
+  url: string,
+  refs: VoiceprintRef[],
+  expectedParticipants: Parameters<typeof speakerCountHint>[0],
+): JobSpec {
+  const counts = speakerCountHint(expectedParticipants);
+  const hash = createHash('sha1')
+    .update(refs.map((r) => r.label).join(','))
+    .digest('hex')
+    .slice(0, 8);
+  return {
+    meetingId,
+    kind: 'identify',
+    model: IDENTITY_MODEL,
+    tag: `identity-${hash}`,
+    body: identifyBody(url, { model: IDENTITY_MODEL, voiceprints: refs, ...counts }),
+    submit: () => submitIdentify(url, { model: IDENTITY_MODEL, voiceprints: refs, ...counts }),
+  };
+}
+
+/**
+ * Start the identify job without waiting for it, so pyannote works on it while the meeting is still being
+ * transcribed. `identifyMeeting` later finds it by the same key and only collects the result. Returns false
+ * when there is nothing to compare against (no known voiceprints) or the meeting is gone.
+ */
+export async function startIdentify(
+  meetingId: string,
+  workspaceId: string,
+  log: Log = () => undefined,
+): Promise<boolean> {
+  const meeting = await MeetingModel.findById(meetingId).lean();
+  if (!meeting) return false;
+  const { refs } = await knownVoices(meetingId, workspaceId);
+  if (!refs.length) return false;
+  const url = await meetingMedia(meetingId);
+  await submitOrResume(identifySpec(meetingId, url, refs, meeting.expectedParticipants), log);
+  return true;
+}
+
 /**
  * Work out who each voice in a meeting is. Sends every known voiceprint (best per person first,
  * at most 50) to pyannote `identify`, scores our own speakers from its per-segment output,
@@ -195,27 +276,7 @@ export async function identifyMeeting(
   const meetingSec = meeting.durationSec ?? Math.max(...pya.segments.map((s) => s.end));
 
   // 1. known voices (this meeting's own are excluded so a rerun does not match itself)
-  const people = await SpeakerModel.find({
-    workspaceId: new Types.ObjectId(workspaceId),
-  }).lean<SpeakerDoc[]>();
-  const others = people.filter((p) => String(p.origin?.meetingId) !== meetingId);
-  const labelToPerson: Record<string, string> = {};
-  const items = others.flatMap((p) =>
-    p.voiceprints
-      .filter((v) => (v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL)
-      .map((v, n) => ({
-        personId: String(p._id),
-        quality: v.quality ?? null,
-        label: `${p._id}-${n}`,
-        voiceprint: v.voiceprint ?? v.id,
-      })),
-  );
-  const picked = pickVoiceprints(items, 50);
-  const refs: VoiceprintRef[] = picked.map((v) => {
-    labelToPerson[v.label] = v.personId;
-    return { label: v.label, voiceprint: v.voiceprint };
-  });
-  const names = Object.fromEntries(others.map((p) => [String(p._id), p.name]));
+  const { refs, labelToPerson, names } = await knownVoices(meetingId, workspaceId);
 
   // 2. identify
   let jobId: string | null = null;
@@ -228,34 +289,18 @@ export async function identifyMeeting(
   if (refs.length) {
     try {
       const url = await meetingMedia(meetingId);
-      const counts = speakerCountHint(meeting.expectedParticipants);
-      const body = identifyBody(url, { model: IDENTITY_MODEL, voiceprints: refs, ...counts });
-      const hash = createHash('sha1')
-        .update(refs.map((r) => r.label).join(','))
-        .digest('hex')
-        .slice(0, 8);
-      const tag = `identity-${hash}`;
+      const spec = identifySpec(meetingId, url, refs, meeting.expectedParticipants);
       const stored = await P2PyannoteResponseModel.findOne({
         meetingId,
         kind: 'identify',
         model: IDENTITY_MODEL,
-        tag,
+        tag: spec.tag,
         status: 'succeeded',
       }).lean();
       if (!stored && !submitNew)
         throw new Error('NO_STORED_IDENTIFY: no stored identify job; pass submitNew to run one');
-      const doc = await runJob(
-        {
-          meetingId,
-          kind: 'identify',
-          model: IDENTITY_MODEL,
-          tag: `identity-${hash}`,
-          body,
-          submit: () =>
-            submitIdentify(url, { model: IDENTITY_MODEL, voiceprints: refs, ...counts }),
-        },
-        log,
-      );
+      // a job started early (during transcription) is picked up here instead of being submitted again
+      const doc = await runJob(spec, log);
       jobId = doc.jobId;
       const out = doc.output as DiarizationOutput & { identification?: ScoredSegment[] };
       // pyannote's own per-speaker scores first; segment-level means only for voices it split differently

@@ -115,29 +115,9 @@ const RESULT_TTL_MS = 24 * 3600_000;
 export async function runJob(spec: JobSpec, log = console.log): Promise<P2PyannoteResponseDoc> {
   // voiceprints may live on a second account; their jobs can only be polled with that account's key
   const account = spec.kind === 'voiceprint' ? 'voiceprint' : 'main';
-  const key = { meetingId: spec.meetingId, kind: spec.kind, model: spec.model, tag: spec.tag };
-  const prior = await P2PyannoteResponseModel.findOne(key).sort({ submittedAt: -1 }).lean();
-  if (prior?.status === 'succeeded' && prior.output) return prior;
-  let jobId: string;
-  if (
-    prior &&
-    !['failed', 'canceled', 'expired'].includes(prior.status) &&
-    Date.now() - prior.submittedAt.getTime() < RESULT_TTL_MS
-  ) {
-    jobId = prior.jobId;
-    log(`resume ${spec.kind} ${spec.model} ${spec.meetingId} job ${jobId}`);
-  } else {
-    jobId = await spec.submit();
-    await P2PyannoteResponseModel.create({
-      ...key,
-      params: storableParams(spec.body),
-      jobId,
-      status: 'submitted',
-      submittedAt: new Date(),
-      keyLabel: keyLabelFor(account),
-    });
-    log(`submitted ${spec.kind} ${spec.model} ${spec.meetingId} job ${jobId}`);
-  }
+  const started = await submitOrResume(spec, log);
+  if ('stored' in started) return started.stored;
+  const { jobId } = started;
   try {
     const job = await waitForJob(jobId, {
       account,
@@ -161,4 +141,38 @@ export async function runJob(spec: JobSpec, log = console.log): Promise<P2Pyanno
     await P2PyannoteResponseModel.updateOne({ jobId }, { $set: { status, error: message } });
     throw err;
   }
+}
+
+/**
+ * The first half of runJob: a stored success is returned as it is; a job submitted earlier (and not failed or
+ * expired) is picked up; otherwise the job is submitted and recorded. It does not wait for the result, so a job
+ * can be started early and collected later by `runJob` with the same key.
+ */
+export async function submitOrResume(
+  spec: JobSpec,
+  log = console.log,
+): Promise<{ stored: P2PyannoteResponseDoc } | { jobId: string }> {
+  const account = spec.kind === 'voiceprint' ? 'voiceprint' : 'main';
+  const key = { meetingId: spec.meetingId, kind: spec.kind, model: spec.model, tag: spec.tag };
+  const prior = await P2PyannoteResponseModel.findOne(key).sort({ submittedAt: -1 }).lean();
+  if (prior?.status === 'succeeded' && prior.output) return { stored: prior };
+  if (
+    prior &&
+    !['failed', 'canceled', 'expired'].includes(prior.status) &&
+    Date.now() - prior.submittedAt.getTime() < RESULT_TTL_MS
+  ) {
+    log(`resume ${spec.kind} ${spec.model} ${spec.meetingId} job ${prior.jobId}`);
+    return { jobId: prior.jobId };
+  }
+  const jobId = await spec.submit();
+  await P2PyannoteResponseModel.create({
+    ...key,
+    params: storableParams(spec.body),
+    jobId,
+    status: 'submitted',
+    submittedAt: new Date(),
+    keyLabel: keyLabelFor(account),
+  });
+  log(`submitted ${spec.kind} ${spec.model} ${spec.meetingId} job ${jobId}`);
+  return { jobId };
 }

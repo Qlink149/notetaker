@@ -74,6 +74,7 @@ vi.mock('../src/services/engines/deepgram.js', async () => {
 vi.mock('../src/services/identity/enroll.js', async () => {
   const { ensureCards } = await import('../src/services/identity/identity.js');
   return {
+    startIdentify: vi.fn(async () => false),
     identifyMeeting: vi.fn(async (meetingId: string) => {
       const cards = await ensureCards(meetingId);
       return { voiceprintsSent: 0, linked: [], newPeople: [], warnings: [], cards };

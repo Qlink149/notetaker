@@ -10,6 +10,10 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 const pya = vi.hoisted(() => ({
   uploads: [] as string[],
   events: [] as { speaker: string; at: 'start' | 'end'; t: number }[],
+  identifySubmits: [] as number[],
+  transcribeCalls: [] as number[],
+  /** the known person's voiceprint label, once a test has created that person */
+  knownLabel: null as string | null,
 }));
 
 vi.mock('../src/services/pyannote/client.js', async () => {
@@ -28,11 +32,27 @@ vi.mock('../src/services/pyannote/client.js', async () => {
       pya.events.push({ speaker, at: 'end', t: Date.now() });
       return `vp-${speaker}-${pya.events.length}`;
     }),
-    waitForJob: vi.fn(async (id: string) => ({
-      jobId: id,
-      status: 'succeeded',
-      output: { voiceprint: `print-${id}` },
-    })),
+    submitIdentify: vi.fn(async () => {
+      pya.identifySubmits.push(Date.now());
+      return `identify-job-${pya.identifySubmits.length}`;
+    }),
+    waitForJob: vi.fn(async (id: string) => {
+      if (id.startsWith('identify-job-')) {
+        // SPEAKER_00 sounds like the known person; SPEAKER_01 like nobody we know
+        return {
+          jobId: id,
+          status: 'succeeded',
+          output: {
+            ...diarization(),
+            voiceprints: [
+              { speaker: 'SPEAKER_00', confidence: { [pya.knownLabel ?? 'none']: 92 } },
+              { speaker: 'SPEAKER_01', confidence: { [pya.knownLabel ?? 'none']: 18 } },
+            ],
+          },
+        };
+      }
+      return { jobId: id, status: 'succeeded', output: { voiceprint: `print-${id}` } };
+    }),
     getJob: vi.fn(async (id: string) => {
       if (id === 'diarize-job') return { jobId: id, status: 'succeeded', output: diarization() };
       return { jobId: id, status: 'succeeded', output: { voiceprint: `print-${id}` } };
@@ -47,7 +67,7 @@ import {
   SpeakerModel,
   type WorkspaceDoc,
 } from '../src/models/index.js';
-import { P2MediaModel } from '../src/models/phase2.js';
+import { P2MediaModel, P2PyannoteResponseModel } from '../src/models/phase2.js';
 import { enqueue } from '../src/pipeline/queue.js';
 import { Runner } from '../src/pipeline/runner.js';
 import { stages } from '../src/pipeline/stages/index.js';
@@ -90,6 +110,9 @@ beforeEach(async () => {
   workspace = await seedWorkspace();
   pya.uploads.length = 0;
   pya.events.length = 0;
+  pya.identifySubmits.length = 0;
+  pya.transcribeCalls.length = 0;
+  pya.knownLabel = null;
 });
 
 async function runPipeline() {
@@ -112,7 +135,10 @@ async function runPipeline() {
     testDeps({
       storage: await fakeStorage(),
       engine: () =>
-        fakeEngine((input) => okResult(turnsCovering(0, input.endSec - input.startSec))),
+        fakeEngine((input) => {
+          pya.transcribeCalls.push(Date.now());
+          return okResult(turnsCovering(0, input.endSec - input.startSec));
+        }),
       summariser: fakeSummariser(),
       speakerSource: 'pyannote',
       // as in the worker: ingest leaves the converted audio here for the later steps
@@ -183,5 +209,69 @@ describe('the audio copy used by identification', () => {
     expect(cached).not.toBeNull();
     const path = await analysisFlac(String(id));
     expect(path).toBe(cached);
+  });
+});
+
+describe('voice identification started early', () => {
+  async function knownPerson() {
+    const person = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Heet',
+      voiceprints: [
+        {
+          id: 'v1',
+          source: 'meeting',
+          audioUrl: '',
+          voiceprint: 'print-known',
+          model: 'precision-2',
+          clip: { start: 0, end: 10 },
+          quality: 90,
+        },
+      ],
+    });
+    pya.knownLabel = `${String(person._id)}-0`;
+    return person;
+  }
+
+  it('is submitted while the meeting is still transcribing, and only once', async () => {
+    await knownPerson();
+    const id = await runPipeline();
+    expect(pya.identifySubmits).toHaveLength(1);
+    // submitted right after the speaker analysis, before the chunk was sent for transcription
+    expect(pya.identifySubmits[0]!).toBeLessThanOrEqual(pya.transcribeCalls[0]!);
+    const stored = await P2PyannoteResponseModel.find({ meetingId: id, kind: 'identify' }).lean();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.status).toBe('succeeded'); // collected by the identify stage
+  });
+
+  it('gives the same names as before: the matching voice is the known person, the other stays unnamed', async () => {
+    const person = await knownPerson();
+    const id = await runPipeline();
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    const cards = data?.speakerCards ?? [];
+    const first = cards.find((c) => c.diar === 'SPEAKER_00');
+    const second = cards.find((c) => c.diar === 'SPEAKER_01');
+    expect(first?.status).toBe('solid');
+    expect(String(first?.personId)).toBe(String(person._id));
+    expect(first?.match?.name).toBe('Heet');
+    expect(second?.match).toBeNull();
+    expect((await MeetingModel.findById(id).lean())?.status).toBe('completed');
+  });
+
+  it('does nothing when there are no known voiceprints to compare against', async () => {
+    await runPipeline();
+    expect(pya.identifySubmits).toHaveLength(0);
+  });
+
+  it('never fails the meeting when starting early does not work', async () => {
+    await knownPerson();
+    const { submitIdentify } = await import('../src/services/pyannote/client.js');
+    vi.mocked(submitIdentify).mockRejectedValueOnce(new Error('pyannote unreachable'));
+    const id = await runPipeline();
+    // the identify stage submitted it itself later
+    expect(pya.identifySubmits.length).toBe(1);
+    expect((await MeetingModel.findById(id).lean())?.status).toBe('completed');
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(data?.speakerCards?.find((c) => c.diar === 'SPEAKER_00')?.match?.name).toBe('Heet');
   });
 });
