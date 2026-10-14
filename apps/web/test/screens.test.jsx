@@ -234,10 +234,10 @@ describe('group recording host panel', () => {
         <GroupRecording />
       </MemoryRouter>,
     );
+    // the entry point already says it is a demo, before it is opened
+    expect(screen.getByText('Demo only')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Start a group recording/ }));
-    expect(
-      screen.getByText(/Prototype: tested with synthetic tracks, not yet with real phones/),
-    ).toBeTruthy();
+    expect(screen.getByText(/Demo only: not ready for real meetings yet/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Create session/ }));
     await screen.findByText('ABC234');
     await screen.findByAltText(/QR code to join ABC234/);
@@ -319,7 +319,7 @@ describe("phone's join page", () => {
     api.join.part.mockResolvedValue({ ok: true });
 
     renderJoin();
-    expect(screen.getByText(/Prototype: tested with synthetic tracks/)).toBeTruthy();
+    expect(screen.getByText(/Demo only: not ready for real meetings yet/)).toBeTruthy();
     expect(screen.getByText('ABC234')).toBeTruthy(); // the code is shown upper-case
     fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Anil' } });
     fireEvent.click(screen.getByRole('button', { name: /Join and allow microphone/ }));

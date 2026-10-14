@@ -7,7 +7,7 @@ import { PhoneRecorder, encodeWav, partStore } from '@/lib/phoneRecorder';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-// PROTOTYPE guest page: no login. The phone joins with a name, records the microphone when the host
+// DEMO-ONLY guest page (not live yet): no login. The phone joins with a name, records the microphone when the host
 // presses Start, uploads 60 s parts as it goes, and stops when the host stops.
 
 const credKey = (code) => `meetingid_join_${code}`;
@@ -19,11 +19,13 @@ const loadCreds = (code) => {
   }
 };
 
-function PrototypeBanner() {
+function DemoBanner() {
   return (
     <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 text-xs p-2.5 flex gap-2 items-start mb-4">
       <FlaskConical className="w-4 h-4 shrink-0 mt-0.5" />
-      <span>Prototype: tested with synthetic tracks, not yet with real phones.</span>
+      <span>
+        Demo only: not ready for real meetings yet. Do not use it for a meeting that matters.
+      </span>
     </div>
   );
 }
@@ -262,7 +264,7 @@ export default function Join() {
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-md mx-auto px-4 py-8">
-        <PrototypeBanner />
+        <DemoBanner />
         <h1 className="text-2xl font-bold tracking-tight mb-1">Join the recording</h1>
         <p className="text-sm text-muted-foreground mb-5">
           Code <b className="tracking-widest">{code}</b>

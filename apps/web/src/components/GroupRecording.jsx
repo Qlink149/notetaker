@@ -6,7 +6,7 @@ import { api } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
-// PROTOTYPE host panel: start a group recording, show who has joined, press Start / Stop, then
+// DEMO-ONLY host panel (not live yet): start a group recording, show who has joined, press Start / Stop, then
 // combine the phones' audio into one meeting.
 
 const STORE = 'meetingid_phone_base';
@@ -111,7 +111,7 @@ export default function GroupRecording() {
           </span>
         </span>
         <span className="text-[10px] uppercase tracking-wide bg-amber-100 text-amber-900 rounded-full px-2 py-0.5">
-          Prototype
+          Demo only
         </span>
       </button>
     );
@@ -140,7 +140,10 @@ export default function GroupRecording() {
       </div>
       <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 text-xs p-2.5 flex gap-2 items-start">
         <FlaskConical className="w-4 h-4 shrink-0 mt-0.5" />
-        <span>Prototype: tested with synthetic tracks, not yet with real phones.</span>
+        <span>
+          Demo only: not ready for real meetings yet. Use it to try the idea, not to record a
+          meeting that matters.
+        </span>
       </div>
 
       {!session ? (
