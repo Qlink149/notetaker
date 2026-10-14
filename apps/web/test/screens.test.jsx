@@ -474,6 +474,54 @@ describe('meeting page with speakers', () => {
   });
 });
 
+describe('meeting page with a partly readable recording', () => {
+  const base = {
+    id: 'm8',
+    title: 'iPhone recording',
+    date: '2026-10-14T10:00:00Z',
+    durationSec: 546,
+    status: 'completed',
+    stage: 'done',
+    progress: { chunksTotal: 1, chunksDone: 1 },
+    audio: { playbackUrl: 'https://x/a.mp4' },
+    coverage: { ratio: 0.96 },
+    summary: 'Overview text',
+    summaryStatus: 'completed',
+    actionItems: [],
+    updatedAt: '2026-10-14T10:00:00Z',
+  };
+  const open = () =>
+    render(
+      <MemoryRouter initialEntries={['/meetings/m8']}>
+        <Routes>
+          <Route path="/meetings/:id" element={<MeetingDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+  it('warns that part of the recording may be missing, with both lengths', async () => {
+    api.meetings.get.mockResolvedValue({
+      ...base,
+      audioWarning:
+        'The file is 18:48 long but only 9:07 of audio could be read, so part of the recording may be missing.',
+    });
+    api.meetings.data.mockResolvedValue({ lines: [] });
+    api.meetings.speakers.mockResolvedValue({ source: 'pyannote', cards: [] });
+    open();
+    const warning = await screen.findByRole('alert');
+    expect(warning.textContent).toContain('18:48 long but only 9:07');
+  });
+
+  it('shows no warning for a normal recording', async () => {
+    api.meetings.get.mockResolvedValue({ ...base, audioWarning: null });
+    api.meetings.data.mockResolvedValue({ lines: [] });
+    api.meetings.speakers.mockResolvedValue({ source: 'pyannote', cards: [] });
+    open();
+    await screen.findByText('iPhone recording');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
+
 describe('meeting page while processing', () => {
   const processing = (over = {}) => ({
     id: 'm7',

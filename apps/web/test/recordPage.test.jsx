@@ -21,6 +21,10 @@ vi.mock('@/lib/cloudinaryUpload', () => ({
   validateAudioFile: vi.fn(() => null),
 }));
 vi.mock('@/lib/recordingStore', () => ({ clearRecording: (...a) => h.cleared(...a) }));
+// the recorder flow is kept working for when live recording is switched back on
+vi.mock('@/lib/features', () => ({
+  FEATURES: { liveRecording: true, insights: true, benchmark: true },
+}));
 vi.mock('@/components/GroupRecording', () => ({ default: () => null }));
 // the recorder itself is covered in audioRecorder.test.jsx: here it just hands over a file
 vi.mock('@/components/AudioRecorder', () => ({

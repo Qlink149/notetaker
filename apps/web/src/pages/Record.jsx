@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, Check, ChevronDown } from 'lucide-react';
 import { api } from '@/api/client';
 import AudioRecorder from '@/components/AudioRecorder';
+import AudioUpload from '@/components/AudioUpload';
 import GroupRecording from '@/components/GroupRecording';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -10,6 +11,7 @@ import { getUploadSignature, uploadToCloudinary, validateAudioFile } from '@/lib
 import { clearRecording } from '@/lib/recordingStore';
 import { useLeaveWarning } from '@/lib/useLeaveWarning';
 import { LANGUAGES } from '@/lib/format';
+import { FEATURES } from '@/lib/features';
 
 function fmtClock(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
@@ -189,7 +191,7 @@ export default function Record() {
           )}
         </div>
 
-        <GroupRecording />
+        {FEATURES.liveRecording && <GroupRecording />}
 
         <div>
           <label className="text-sm font-medium mb-2 block">Audio</label>
@@ -219,8 +221,10 @@ export default function Record() {
                 Use different audio
               </Button>
             </div>
-          ) : (
+          ) : FEATURES.liveRecording ? (
             <AudioRecorder onComplete={handleAudioReady} />
+          ) : (
+            <AudioUpload onComplete={handleAudioReady} />
           )}
         </div>
 

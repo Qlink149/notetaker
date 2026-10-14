@@ -323,6 +323,15 @@ export default function MeetingDetail() {
         </button>
       )}
 
+      {meeting.audioWarning && (
+        <div
+          role="alert"
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-6 text-sm text-amber-900"
+        >
+          {meeting.audioWarning}
+        </div>
+      )}
+
       {processing && (
         <div className="rounded-2xl border border-border bg-card p-5 mb-6">
           <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border">
