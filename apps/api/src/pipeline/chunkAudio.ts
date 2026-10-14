@@ -8,7 +8,11 @@ import type { Deps } from './context.js';
  * per meeting, not once per stage). Used for chunk cuts, pyannote and Deepgram.
  */
 export async function ensureAnalysisFlac(
-  deps: Pick<Deps, 'storage' | 'audio' | 'analysisCache'>,
+  deps: {
+    storage: Pick<Deps['storage'], 'download'>;
+    audio: Pick<Deps['audio'], 'toAnalysisFlac'>;
+    analysisCache?: Deps['analysisCache'];
+  },
   tmpDir: string,
   originalUrl: string,
 ): Promise<string> {

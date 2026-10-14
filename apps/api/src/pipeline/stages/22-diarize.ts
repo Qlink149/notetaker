@@ -14,6 +14,7 @@ import {
   type PyannoteModel,
 } from '../../services/pyannote/client.js';
 import { ensureAnalysisFlac } from '../chunkAudio.js';
+import { meetingMediaKey } from '../../services/pyannote/jobs.js';
 import { trimOutput } from '../../services/pyannote/output.js';
 import type { StageContext, StageHandler } from '../context.js';
 import { RetryableError } from '../errors.js';
@@ -93,7 +94,7 @@ async function ensureWords(ctx: StageContext, meeting: MeetingDoc): Promise<void
 /** Upload the audio and submit the job; the caller then waits for it. */
 async function submit(ctx: StageContext, meeting: MeetingDoc): Promise<void> {
   const flac = await ensureAnalysisFlac(ctx.deps, ctx.tmpDir, meeting.audio.originalUrl);
-  const media = await uploadMedia(flac, `p2-${String(meeting._id)}.flac`);
+  const media = await uploadMedia(flac, meetingMediaKey(String(meeting._id)));
   await P2MediaModel.updateOne(
     { _id: media },
     {

@@ -4,6 +4,8 @@ import { mkdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireEnv } from '../../config/env.js';
+import { createAnalysisCache } from '../../lib/analysisCache.js';
+import { ensureAnalysisFlac } from '../../pipeline/chunkAudio.js';
 import { MeetingModel } from '../../models/index.js';
 import {
   MEDIA_FRESH_MS,
@@ -35,18 +37,30 @@ export async function analysisFlac(meetingId: string): Promise<string> {
   const meeting = await MeetingModel.findById(meetingId).lean();
   if (!meeting?.audio?.originalUrl) throw new Error(`meeting ${meetingId} has no original audio`);
   await mkdir(dir, { recursive: true });
-  const original = join(dir, 'original');
-  await getStorage().download(meeting.audio.originalUrl, original);
-  await toAnalysisFlac(original, flac);
-  return flac;
+  // The same shared copy the pipeline stages use (built once at ingest), so a meeting's original is not fetched
+  // from storage and converted again here; concurrent callers (one per speaker) wait for a single build.
+  return ensureAnalysisFlac(
+    { storage: getStorage(), audio: { toAnalysisFlac }, analysisCache },
+    dir,
+    meeting.audio.originalUrl,
+  );
+}
+
+const analysisCache = createAnalysisCache();
+
+/**
+ * The name the meeting's audio is uploaded to pyannote under. Speaker analysis and voice identification both
+ * use it, so the second finds the first's upload instead of sending the whole recording again. The tag changes
+ * with the pyannote key in use, so a different account never reuses an address it cannot see.
+ */
+export function meetingMediaKey(meetingId: string): string {
+  const tag = createHash('sha1').update(requireEnv(PYANNOTE_KEY_LABEL)).digest('hex').slice(0, 4);
+  return `p2-${meetingId}-${tag}.flac`;
 }
 
 /** media:// URL of the meeting's analysis FLAC, uploading it again when the copy may have expired. */
 export async function meetingMedia(meetingId: string): Promise<string> {
-  // Uploads belong to one pyannote account: name the file after a short tag of the key in use, so a
-  // changed key re-uploads instead of reusing an address the new account cannot see.
-  const tag = createHash('sha1').update(requireEnv(PYANNOTE_KEY_LABEL)).digest('hex').slice(0, 4);
-  const key = `p2-${meetingId}-${tag}.flac`;
+  const key = meetingMediaKey(meetingId);
   const fresh = await P2MediaModel.findOne({
     _id: `media://${key}`,
     meetingId,

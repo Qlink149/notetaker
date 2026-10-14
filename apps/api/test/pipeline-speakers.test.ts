@@ -92,6 +92,7 @@ import { enqueue } from '../src/pipeline/queue.js';
 import { Runner } from '../src/pipeline/runner.js';
 import { stages } from '../src/pipeline/stages/index.js';
 import { PyannoteError } from '../src/services/pyannote/client.js';
+import { meetingMediaKey } from '../src/services/pyannote/jobs.js';
 import {
   clearDb,
   fakeEngine,
@@ -230,7 +231,8 @@ describe('speakers in the pipeline (pyannote mocked)', () => {
     // Phase 1's text-linked version is kept for comparison
     expect(data?.phase1?.speakerMap).toEqual({ S1: 'Speaker 1', S2: 'Speaker 2' });
     expect(pya.submits).toBe(1);
-    expect(pya.uploads).toEqual([`p2-${String(id)}.flac`]);
+    // one upload, named so that voice identification finds and reuses it
+    expect(pya.uploads).toEqual([meetingMediaKey(String(id))]);
     const stored = await P2PyannoteResponseModel.findOne({ meetingId: id }).lean();
     expect(stored).toMatchObject({
       status: 'succeeded',
@@ -249,7 +251,9 @@ describe('speakers in the pipeline (pyannote mocked)', () => {
     const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
     expect(m?.status).toBe('completed');
     // two people, not three: SPEAKER_02 became SPEAKER_01 in the turns, the cards and the speaker map
-    expect(new Set(data?.turns.map((t) => t.speaker))).toEqual(new Set(['SPEAKER_00', 'SPEAKER_01']));
+    expect(new Set(data?.turns.map((t) => t.speaker))).toEqual(
+      new Set(['SPEAKER_00', 'SPEAKER_01']),
+    );
     expect((data?.speakerCards ?? []).map((c: { diar: string }) => c.diar).sort()).toEqual([
       'SPEAKER_00',
       'SPEAKER_01',

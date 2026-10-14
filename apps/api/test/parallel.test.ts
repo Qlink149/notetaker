@@ -122,13 +122,15 @@ describe('runner lanes', () => {
         async run() {
           ran.push('transcribe');
           peakTranscribing = Math.max(peakTranscribing, ++transcribing);
-          await sleep(250);
+          await sleep(500);
           transcribing--;
         },
       },
       ingest: {
         async run() {
           ran.push('ingest');
+          // wait until a chunk is being transcribed (the lanes start independently under load)
+          for (let i = 0; i < 100 && transcribing === 0; i++) await sleep(20);
           if (transcribing > 0) ingestRanWhileTranscribing = true;
         },
       },

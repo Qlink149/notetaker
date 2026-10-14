@@ -316,6 +316,13 @@ export async function identifyMeeting(
   }
 
   // 3. cards, new people, voiceprints
+  // Voiceprints are created for all the voices at the same time afterwards (each is a pyannote job that mostly
+  // waits); with a shared budget they stay one at a time in order, since each draws from it.
+  const enrolments: (() => Promise<void>)[] = [];
+  const enrolNow = (personId: string, diar: string, clips: VoiceClip[]): Promise<void> | void => {
+    if (budget) return enrol(personId, diar, clips);
+    enrolments.push(() => enrol(personId, diar, clips));
+  };
   const cards: SpeakerCardDoc[] = [];
   const newPeople: string[] = [];
   const linked: IdentityReport['linked'] = [];
@@ -331,7 +338,7 @@ export async function identifyMeeting(
       status = 'solid';
       match = { personId, name: res.name ?? personId, score: res.score, margin: res.margin };
       linked.push({ label, person: res.name ?? personId, score: res.score, margin: res.margin });
-      if (!budget) await enrol(personId, diar, clips.slice(0, 1));
+      if (!budget) enrolNow(personId, diar, clips.slice(0, 1));
     } else if (res?.status !== 'taken' && sec >= MIN_SPEECH_FOR_PERSON_SEC && clips.length) {
       // (A voice whose best match is a known person already paired with another voice of this meeting is
       // left unlinked, with that person shown as the closest match, instead of becoming a new anonymous
@@ -351,7 +358,7 @@ export async function identifyMeeting(
         }));
       personId = String(person._id);
       newPeople.push(person.name);
-      await enrol(personId, diar, clips);
+      await enrolNow(personId, diar, clips);
       status = res?.status === 'low-margin' ? 'review' : 'new';
     } else {
       status = 'review';
@@ -370,6 +377,7 @@ export async function identifyMeeting(
       clips: clips.map((c) => ({ start: c.start, end: c.end, quality: c.quality })),
     });
   }
+  await mapLimit(enrolments, 4, (run) => run());
   await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
   await P2IdentityRunModel.create({
     meetingId: new Types.ObjectId(meetingId),
