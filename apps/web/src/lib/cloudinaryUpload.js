@@ -43,8 +43,27 @@ export function uploadToCloudinary(file, signature, onProgress) {
   });
 }
 
-/** Presigned PUT (private storage): the file is the whole request body; progress is real. */
-function putToStorage(file, signature, onProgress) {
+/** A dropped connection or a busy server is worth another try; a refused or expired link is not. */
+const RETRY_DELAYS_MS = [2000, 5000];
+const failure = (message, retryable) => Object.assign(new Error(message), { retryable });
+
+/**
+ * Presigned PUT (private storage) with up to two more tries after a network error or a server-side error. The
+ * request is the whole file, so a try starts from the beginning.
+ */
+async function putToStorage(file, signature, onProgress) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await putOnce(file, signature, onProgress);
+    } catch (err) {
+      if (!err?.retryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
+/** One presigned PUT: the file is the whole request body; progress is real. */
+function putOnce(file, signature, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.upload.onprogress = (e) => {
@@ -55,9 +74,16 @@ function putToStorage(file, signature, onProgress) {
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300)
         resolve({ url: signature.url, publicId: signature.publicId });
-      else reject(new Error(`Upload failed (${xhr.status})`));
+      else
+        reject(
+          failure(
+            `Upload failed (${xhr.status})`,
+            xhr.status >= 500 || xhr.status === 408 || xhr.status === 429,
+          ),
+        );
     };
-    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.onerror = () => reject(failure('Network error during upload', true));
+    xhr.onabort = () => reject(failure('Upload was interrupted', true));
     xhr.open(signature.method || 'PUT', signature.uploadUrl);
     if (file.type) xhr.setRequestHeader('Content-Type', file.type);
     xhr.send(file);

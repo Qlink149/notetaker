@@ -13,6 +13,7 @@ import {
   type SessionDoc,
 } from '../models/session.js';
 import { enqueue } from '../pipeline/queue.js';
+import { B2_SCHEME, isB2Url } from '../services/storage/b2.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
 import type { ApiDeps } from './deps.js';
 
@@ -275,20 +276,26 @@ export function sessionsGuestRouter(deps: ApiDeps): Router {
     if (!input.publicId.startsWith(`${s.folder}/${input.pid}/`))
       throw new HttpError(400, "publicId is not in this phone's folder");
     // the worker downloads this address: it must be the stored file itself, not an arbitrary address
-    let host: URL | null = null;
-    try {
-      host = new URL(input.url);
-    } catch {
-      host = null;
+    if (isB2Url(input.url)) {
+      // private storage: the address is exactly the key this phone was signed to upload
+      if (input.url !== `${B2_SCHEME}${input.publicId}`)
+        throw new HttpError(400, 'url must be the uploaded file');
+    } else {
+      let host: URL | null = null;
+      try {
+        host = new URL(input.url);
+      } catch {
+        host = null;
+      }
+      const cloud = env().CLOUDINARY_CLOUD_NAME;
+      if (
+        !host ||
+        host.protocol !== 'https:' ||
+        !input.url.includes(input.publicId) ||
+        (cloud && !host.pathname.startsWith(`/${cloud}/`))
+      )
+        throw new HttpError(400, 'url must be the uploaded file');
     }
-    const cloud = env().CLOUDINARY_CLOUD_NAME;
-    if (
-      !host ||
-      host.protocol !== 'https:' ||
-      !input.url.includes(input.publicId) ||
-      (cloud && !host.pathname.startsWith(`/${cloud}/`))
-    )
-      throw new HttpError(400, 'url must be the uploaded file');
     // the phone's clock estimate may differ from the host's Start by seconds, not hours
     if (
       input.firstSampleServerMs !== undefined &&
