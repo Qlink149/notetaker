@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Types } from 'mongoose';
-import { formatLinesForSummary, parseSummary } from '@meetingid/pipeline';
+import {
+  formatLinesForSummary,
+  missingSections,
+  parseSummary,
+  repairSections,
+} from '@meetingid/pipeline';
 import { HandoffModel } from '../../models/index.js';
 import { RetryableError } from '../../pipeline/errors.js';
 import { buildSummarySystemPrompt, type Summariser, type SummaryInput } from './claude.js';
@@ -12,9 +17,9 @@ const POLL_MS = 15_000;
 /**
  * Testing-only summariser (SUMMARY_PROVIDER=handoff). It builds exactly the prompt the Anthropic
  * summariser sends, stores it in MongoDB and waits (without using job attempts) until an external
- * agent — an isolated Claude Haiku 4.5 subagent run by the developer — submits the raw reply with
+ * agent — an isolated Claude subagent run by the developer — submits the raw reply with
  * `npm run handoff -- submit`. The reply goes through the same strict `parseSummary` validation.
- * The whole transcript is sent in one request (Haiku's context holds a 3-hour meeting).
+ * The whole transcript is sent in one request (the model's context holds a 3-hour meeting).
  */
 export class HandoffSummariser implements Summariser {
   async summarise(input: SummaryInput) {
@@ -45,19 +50,32 @@ export class HandoffSummariser implements Summariser {
     }
 
     const parsed = parseSummary(doc.response, [...speakers, 'Unassigned']);
-    if (parsed.ok) return { result: parsed.value, usage };
-    if (doc.rejections + 1 >= MAX_REJECTIONS) {
-      return { result: null, usage, error: parsed.error };
+    let problem = parsed.ok ? '' : parsed.error;
+    const lastChance = doc.rejections + 1 >= MAX_REJECTIONS;
+    if (parsed.ok) {
+      // the same section guard as the API path: a reply that leaves sections out is sent back, then repaired
+      const missing = missingSections(parsed.value.summaryMarkdown);
+      if (!missing.length) return { result: parsed.value, usage };
+      if (lastChance)
+        return {
+          result: {
+            ...parsed.value,
+            summaryMarkdown: repairSections(parsed.value.summaryMarkdown),
+          },
+          usage,
+        };
+      problem = `missing sections: ${missing.join(', ')}`;
     }
+    if (lastChance) return { result: null, usage, error: problem };
     await HandoffModel.updateOne(
       { _id: id },
       {
-        $set: { status: 'pending', response: null, lastError: parsed.error },
+        $set: { status: 'pending', response: null, lastError: problem },
         $inc: { rejections: 1 },
       },
     );
     throw new RetryableError(
-      `Handoff reply ${id} rejected (${parsed.error}); waiting for a new one`,
+      `Handoff reply ${id} rejected (${problem}); waiting for a new one`,
       'waiting',
       {
         retryAfterMs: POLL_MS,

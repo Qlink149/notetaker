@@ -83,3 +83,83 @@ export function parseSummary(text: string, allowedSpeakers?: string[]): SummaryP
     value: { summaryMarkdown: cleanMarkdown(parsed.data.summary_markdown), actionItems },
   };
 }
+
+/** The sections the summariser must always write, in this order. */
+export const REQUIRED_SECTIONS = [
+  'Overview',
+  'Key Topics',
+  'Decisions',
+  'Insights',
+  'Open Questions',
+] as const;
+
+/**
+ * The title of a Markdown heading line, lower-cased, or null when the line is not a heading. Tolerates the variations a
+ * model produces: "### Key topics:", "## 2. Decisions", "## **Insights**", "## _Insights_".
+ */
+function headingTitle(line: string): string | null {
+  const t = line.trimStart();
+  if (line.length - t.length > 3) return null;
+  let hashes = 0;
+  while (t[hashes] === '#') hashes++;
+  if (hashes < 1 || hashes > 4) return null;
+  let rest = t.slice(hashes).trim();
+  let digits = 0;
+  while (digits < rest.length && rest[digits]! >= '0' && rest[digits]! <= '9') digits++;
+  if (digits > 0 && (rest[digits] === '.' || rest[digits] === ')'))
+    rest = rest.slice(digits + 1).trim();
+  rest = rest.split('*').join('').split('_').join('').trim();
+  return rest.toLowerCase().split(' ').filter(Boolean).join(' ');
+}
+
+/** "key topics" and "key topic" both count; so do the other sections in the singular. */
+const titlesFor = (name: string): string[] => {
+  const full = name.toLowerCase();
+  return full.endsWith('s') ? [full, full.slice(0, -1)] : [full];
+};
+
+/**
+ * Whether a heading title is this section: the name itself, or the name followed by a separator and a remark
+ * ("decisions:", "decisions (none)", "decisions - none"). A longer title such as "decisions made later" is a different
+ * heading.
+ */
+function isSection(title: string, name: string): boolean {
+  return titlesFor(name).some((t) => {
+    if (title === t) return true;
+    if (!title.startsWith(t)) return false;
+    const after = title.slice(t.length).trimStart();
+    return [':', '(', '-', '–', '—'].some((sep) => after.startsWith(sep));
+  });
+}
+
+const NEWLINE = String.fromCharCode(10);
+
+/** Required sections that have no heading in the summary (heading case, numbering and emphasis are tolerated). */
+export function missingSections(markdown: string): string[] {
+  const titles: string[] = [];
+  let fenced = false;
+  for (const line of markdown.split(NEWLINE)) {
+    if (line.trimStart().startsWith('```')) {
+      fenced = !fenced; // a heading shown inside a code block is not a heading
+      continue;
+    }
+    if (fenced) continue;
+    const title = headingTitle(line);
+    if (title) titles.push(title);
+  }
+  return REQUIRED_SECTIONS.filter((name) => !titles.some((title) => isSection(title, name)));
+}
+
+/** The line written under a section that the summariser did not produce. */
+export const SECTION_NOT_PRODUCED = 'Not produced this time. Use Refresh summary to try again.';
+
+/**
+ * Last resort when the summariser still leaves sections out after being asked again: add each missing heading with an
+ * honest line saying so, instead of saving a summary that silently lacks them. Nothing is invented.
+ */
+export function repairSections(markdown: string): string {
+  const missing = missingSections(markdown);
+  if (!missing.length) return markdown;
+  const added = missing.map((name) => `## ${name}\n${SECTION_NOT_PRODUCED}`).join('\n\n');
+  return `${markdown.trimEnd()}\n\n${added}`;
+}

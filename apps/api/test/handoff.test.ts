@@ -25,7 +25,13 @@ const input = () => ({
 
 const reply = (owner: string) =>
   JSON.stringify({
-    summary_markdown: '## Overview\nPlan review.\n\n## Decisions\nNo explicit decisions were made.',
+    summary_markdown: [
+      '## Overview\nPlan review.',
+      '## Key Topics\n- The plan.',
+      '## Decisions\nNo explicit decisions were made.',
+      '## Insights\nNone.',
+      '## Open Questions\nNone.',
+    ].join('\n\n'),
     action_items: [{ speaker_name: owner, text: 'Share the plan.' }],
   });
 
@@ -55,6 +61,35 @@ describe('HandoffSummariser', () => {
     const r = await s.summarise(inp);
     expect(r.result?.actionItems).toEqual([{ speakerName: 'Speaker 1', text: 'Share the plan.' }]);
     expect(r.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+  });
+
+  it('sends back a reply that leaves sections out, then repairs it on the last chance', async () => {
+    const s = new HandoffSummariser();
+    const inp = input();
+    await s.summarise(inp).catch(() => undefined);
+    const id = (await HandoffModel.findOne({ meetingId: inp.meetingId }).lean())!._id;
+    const incomplete = JSON.stringify({
+      summary_markdown: '## Overview\nPlan review.\n\n## Key Topics\n- The plan.',
+      action_items: [],
+    });
+
+    await HandoffModel.updateOne(
+      { _id: id },
+      { $set: { status: 'answered', response: incomplete } },
+    );
+    const first = await s.summarise(inp).catch((e: unknown) => e);
+    expect((first as RetryableError).message).toMatch(
+      /missing sections: Decisions, Insights, Open Questions/,
+    );
+    expect((await HandoffModel.findById(id).lean())?.status).toBe('pending');
+
+    await HandoffModel.updateOne(
+      { _id: id },
+      { $set: { status: 'answered', response: incomplete } },
+    );
+    const last = await s.summarise(inp);
+    expect(last.result?.summaryMarkdown).toContain('## Decisions\nNot produced this time');
+    expect(last.result?.summaryMarkdown).toContain('## Open Questions\nNot produced this time');
   });
 
   it('re-opens the request on an invalid reply, then gives up like the API path', async () => {

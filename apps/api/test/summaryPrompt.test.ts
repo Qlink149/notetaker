@@ -8,10 +8,11 @@ import {
 // The summary prompt was rewritten after six real meetings were audited word by word against their
 // transcripts (docs/SPEAKER_ISSUES.md, docs/SUMMARY_AUDIT.md). These tests keep the rules that fixed the
 // recurring mistakes from being edited out by accident.
-const prompt = buildSummarySystemPrompt(
-  { glossary: null, languages: ['hi', 'gu', 'en'] },
-  ['Ghanshyam Dholakia', 'Charles', 'Heet'],
-);
+const prompt = buildSummarySystemPrompt({ glossary: null, languages: ['hi', 'gu', 'en'] }, [
+  'Ghanshyam Dholakia',
+  'Charles',
+  'Heet',
+]);
 
 describe('summary prompt', () => {
   it('lists the speakers and forbids invented labels and guessed gender', () => {
@@ -40,9 +41,14 @@ describe('summary prompt', () => {
 
   it('does not invent conflicts, insights or open questions', () => {
     expect(prompt).toMatch(/Do not call figures "not reconciled"/);
-    expect(prompt).toMatch(/Write each point here or in Key Topics, not in both/);
-    expect(prompt).toMatch(/Leave the advice, opinions and warnings that speakers gave to Insights/);
-    expect(prompt).toMatch(/Not a target, an uncertain figure or a doubt of your own turned into a question/);
+    expect(prompt).toMatch(/Say each point once, in the section where it fits best/);
+    expect(prompt).toMatch(/an Insights bullet must not repeat a Key Topics bullet/);
+    expect(prompt).toMatch(
+      /Leave the advice, opinions and warnings that speakers gave to Insights/,
+    );
+    expect(prompt).toMatch(
+      /Not a target, an uncertain figure or a doubt of your own turned into a question/,
+    );
   });
 
   it('reads the Hindi and Gujarati words that were misread in the audits', () => {
@@ -54,8 +60,44 @@ describe('summary prompt', () => {
   it('keeps the response format the parser expects', () => {
     expect(prompt).toContain('summary_markdown');
     expect(prompt).toContain('action_items');
-    for (const h of ['## Overview', '## Key Topics', '## Decisions', '## Insights', '## Open Questions'])
+    for (const h of [
+      '## Overview',
+      '## Key Topics',
+      '## Decisions',
+      '## Insights',
+      '## Open Questions',
+    ])
       expect(prompt).toContain(h);
+  });
+});
+
+describe('rules added after the in-person meeting audit (2026-10-14)', () => {
+  it('makes all five sections mandatory and gives Open Questions a fallback line', () => {
+    expect(prompt).toMatch(/All five headings are mandatory/);
+    expect(prompt).toMatch(/A summary that stops after Key Topics is wrong/);
+    expect(prompt).toMatch(/If there are none, write "None."\)/);
+  });
+
+  it('does not call a question open when a later line answers it, even a garbled one', () => {
+    expect(prompt).toMatch(/even partly or in words the transcript garbled/);
+    expect(prompt).toMatch(/read the lines that follow before listing a question/);
+  });
+
+  it('gives a dictated task-list entry to the person it names, not to the writer or the dictator', () => {
+    expect(prompt).toMatch(/Task lists: when a speaker dictates or reads out entries/);
+    expect(prompt).toMatch(/not for the person who writes it down or the one dictating/);
+    expect(prompt).toMatch(/"tera likh diya" means the entry is the work of the person addressed/);
+    expect(prompt).toMatch(/Writing something down is not itself a task/);
+    expect(prompt).toMatch(/use "Unassigned" and put the likely name in the text/);
+  });
+
+  it('does not add results, roles or outcomes that nobody said', () => {
+    expect(prompt).toMatch(/do not add a result, reason, deadline, role/);
+    expect(prompt).toMatch(/may be one person/);
+  });
+
+  it('carries the task-list rule into the notes made for a very long transcript', () => {
+    expect(SEGMENT_PROMPT).toMatch(/the owner is the person the entry names/);
   });
 });
 

@@ -60,7 +60,7 @@ const workspaceSchema = new Schema<WorkspaceDoc>(
       engine: { type: String, enum: EngineName.options, default: 'gemini' },
       languages: { type: [String], enum: Language.options, default: ['hi', 'gu', 'en'] },
       scriptPreference: { type: String, enum: ScriptPreference.options, default: 'roman' },
-      summaryModel: { type: String, default: 'claude-haiku-4-5-20251001' },
+      summaryModel: { type: String, default: 'claude-sonnet-5-5' },
     },
   },
   { timestamps: true },
@@ -122,6 +122,8 @@ export interface MeetingDoc {
   summaryStatus: SummaryStatusT;
   /** Speaker names changed after the summary was written: it still uses the old names until it is refreshed. */
   summaryOutdated?: boolean;
+  /** Set at ingest when the converted audio is shorter than the file says: part of the recording may be missing. */
+  audioWarning?: string | null;
   summary: string | null;
   actionItems: ActionItem[];
   error: MeetingError | null;
@@ -159,6 +161,7 @@ const meetingSchema = new Schema<MeetingDoc>(
     unknownCount: { type: Number, default: 0 },
     summaryStatus: { type: String, enum: SummaryStatus.options, default: 'pending' },
     summaryOutdated: { type: Boolean, default: false },
+    audioWarning: { type: String, default: null },
     summary: { type: String, default: null },
     actionItems: { type: [new Schema({ speakerName: String, text: String }, opts)], default: [] },
     error: {

@@ -64,7 +64,10 @@ from `status: 'incomplete' | 'budget_exceeded'`.
 
 ### 10. Model ids are configuration
 `GEMINI_MODEL` (default `gemini-3.8-flash`) and the workspace `summaryModel` (default
-`claude-haiku-4-5-20251001`) can change without a deploy of code.
+`claude-sonnet-5-5`; it was `claude-haiku-4-5-20251001` until 2026-10-14) can change without a deploy of code.
+Why Sonnet: on the same 19-minute transcript with the same instructions, an independent audit found 6 high-severity
+errors and 9 of 19 action items wrong with Haiku, against 1 and 2 of 22 with Sonnet (docs/SUMMARY_AUDIT.md). It costs
+about twice Haiku per token ($2/$10 vs $1/$5 per million), a few cents more per meeting.
 
 ### 11. Timestamp repair
 Engines sometimes write `2.35` meaning 2 min 35 s. `normalizeChunkTurns` detects this pattern

@@ -38,21 +38,33 @@ export const summariseStage: StageHandler = {
     const { workspace, glossary } = await loadWorkspaceContext(meeting.workspaceId);
     const chars = lines.reduce((n, l) => n + l.textRoman.length + 20, 0);
     await assertBudget('claude', estimateClaudeUsd(workspace.settings.summaryModel, chars));
-    const { result, usage, error } = await deps.summariser.summarise({
-      lines,
-      glossary,
-      languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
-      includeNative: workspace.settings.scriptPreference === 'native',
-      model: workspace.settings.summaryModel,
-      meetingId: String(meeting._id),
-    });
-    const usd = usdFor('claude', workspace.settings.summaryModel, usage);
-    await recordSpend('claude', usd);
-    await addCost(meeting._id, {
-      usd,
-      claudeInputTokens: usage.inputTokens,
-      claudeOutputTokens: usage.outputTokens,
-    });
+    const record = async (spent: { inputTokens: number; outputTokens: number }) => {
+      const usd = usdFor('claude', workspace.settings.summaryModel, spent);
+      await recordSpend('claude', usd);
+      await addCost(meeting._id, {
+        usd,
+        claudeInputTokens: spent.inputTokens,
+        claudeOutputTokens: spent.outputTokens,
+      });
+    };
+    let outcome: Awaited<ReturnType<typeof deps.summariser.summarise>>;
+    try {
+      outcome = await deps.summariser.summarise({
+        lines,
+        glossary,
+        languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
+        includeNative: workspace.settings.scriptPreference === 'native',
+        model: workspace.settings.summaryModel,
+        meetingId: String(meeting._id),
+      });
+    } catch (err) {
+      // calls that were paid for before the failure still count against the spend and the meeting's cost
+      const spent = (err as { usage?: { inputTokens: number; outputTokens: number } }).usage;
+      if (spent && (spent.inputTokens || spent.outputTokens)) await record(spent);
+      throw err;
+    }
+    const { result, usage, error } = outcome;
+    await record(usage);
 
     await MeetingModel.updateOne(
       { _id: meeting._id },

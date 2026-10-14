@@ -4,6 +4,7 @@ import {
   BudgetExceededError,
   assertBudget,
   recordSpend,
+  estimateClaudeUsd,
   spentUsd,
   usdFor,
 } from '../src/pipeline/budget.js';
@@ -28,8 +29,17 @@ describe('spending cap', () => {
       usdFor('claude', 'claude-haiku-4-5-20251001', { inputTokens: 1_000_000, outputTokens: 0 }),
     ).toBeCloseTo(1);
     expect(
+      usdFor('claude', 'claude-sonnet-5-5', { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+    ).toBeCloseTo(12);
+    expect(
       usdFor('deepgram', 'nova-3/hi', { inputTokens: 0, outputTokens: 0, audioSec: 600 }),
     ).toBeCloseTo(0.056);
+  });
+
+  it('the summary estimate covers every attempt and the thinking room of models that think', () => {
+    // 100,000 characters: about 28,000 tokens in per attempt, three attempts
+    expect(estimateClaudeUsd('claude-haiku-4-5', 100_000)).toBeCloseTo(3 * (0.028 + 0.04), 3);
+    expect(estimateClaudeUsd('claude-sonnet-5-5', 100_000)).toBeCloseTo(3 * (0.056 + 0.16), 3);
   });
 
   it('counts Claude, not Deepgram or free-tier Gemini', async () => {

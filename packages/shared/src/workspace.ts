@@ -21,7 +21,7 @@ export const Workspace = z.object({
 });
 export type Workspace = z.infer<typeof Workspace>;
 
-export const DEFAULT_SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
+export const DEFAULT_SUMMARY_MODEL = 'claude-sonnet-5-5';
 
 export const defaultWorkspaceSettings = (): WorkspaceSettings => ({
   engine: 'gemini',
