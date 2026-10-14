@@ -14,6 +14,7 @@ import { FatalError, RetryableError } from '../errors.js';
 import { addCost, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
 import { saveEngineResponse } from '../responses.js';
+import { createLimiter } from '../../lib/limiter.js';
 import { loadJoinInput } from '../../services/identity/joinInput.js';
 import { rebuildTranscript } from '../transcript.js';
 import { rawOf } from '../../services/engines/types.js';
@@ -24,6 +25,8 @@ export const MAX_GAP_CALLS = 6;
 export const GAP_PAD_SEC = 5;
 /** Only gaps with at least this much uncovered speech are worth a call. */
 export const MIN_GAP_SEC = 5;
+/** Gap calls in flight at once. */
+export const GAP_PARALLEL = 3;
 
 const FLAC = 'audio/flac';
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
@@ -51,88 +54,107 @@ export const gapfillStage: StageHandler = {
       const engine = deps.engine(meeting.engine);
       const provider = engine.name === 'deepgram' ? 'deepgram' : 'gemini';
       const duration = meeting.durationSec ?? Number.POSITIVE_INFINITY;
-      for (const [i, gap] of gaps.entries()) {
-        const cutStart = Math.max(0, gap.start - GAP_PAD_SEC);
-        const cutEnd = Math.min(duration, gap.end + GAP_PAD_SEC);
-        const record: GapFillDoc = {
-          start: gap.start,
-          end: gap.end,
-          cutStart,
-          cutEnd,
-          status: 'failed',
-          model: null,
-          error: null,
-          turns: [],
-          responseId: null,
-        };
-        const where = {
-          meetingId: meeting._id,
-          kind: 'gapfill' as const,
-          startSec: cutStart,
-          endSec: cutEnd,
-        };
-        try {
-          await assertBudget(
-            provider,
-            estimateGeminiChunkUsd(env().GEMINI_MODEL, cutEnd - cutStart),
-          );
-          const path = await materializeChunk(
-            deps,
-            tmpDir,
-            meeting.audio.originalUrl,
-            cutStart,
-            cutEnd,
-            `gap-${i}`,
-          );
-          const result = await engine.transcribeChunk({
-            audio: { kind: 'path', path, mimeType: FLAC },
-            localPath: async () => path,
-            startSec: cutStart,
-            endSec: cutEnd,
-            languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
-            glossary,
-          });
-          record.responseId = await saveEngineResponse(
-            result.raw,
-            where,
-            result.finish === 'truncated' ? 'truncated' : null,
-          );
-          const usd = usdFor(provider, result.model, result.usage);
-          await addCost(meeting._id, {
-            usd,
-            geminiInputTokens: result.usage.inputTokens,
-            geminiOutputTokens: result.usage.outputTokens,
-            deepgramSec: result.usage.audioSec,
-          });
-          await recordSpend(provider, usd);
-          if (result.uploaded) {
-            await deps.geminiFiles
-              .delete(result.uploaded.name, result.uploaded.keyId)
-              .catch(() => undefined);
-          }
-          record.model = result.model;
-          if (result.finish === 'truncated') record.error = 'truncated';
-          else {
-            record.status = 'done';
-            record.turns = normalizeChunkTurns(result.turns, cutEnd - cutStart, cutStart);
-          }
-        } catch (err) {
-          // Out of quota: stop here and wait; the gaps saved so far are kept.
-          if (err instanceof RetryableError && (err.reason === 'quota' || err.reason === 'waiting'))
-            throw err;
-          if (err instanceof BudgetExceededError) throw err;
-          record.error = err instanceof Error ? err.message.slice(0, 300) : String(err);
-          record.responseId = await saveEngineResponse(rawOf(err), where, record.error);
-        }
-        await MeetingDataModel.updateOne(
-          { meetingId: meeting._id },
-          { $push: { gapFills: record } },
-        );
-        log.info(
-          { gap, status: record.status, turns: record.turns.length, error: record.error },
-          'gap filled',
-        );
-      }
+      // Gaps are independent, so several are re-transcribed at once. Gemini requests also pass through the
+      // shared cap in GeminiEngine, so this can never burst past the rate limit. Each result is saved as soon
+      // as it returns; a quota or budget stop lets the calls already in flight finish and keeps their results.
+      const limit = createLimiter(GAP_PARALLEL);
+      const stop: { error: Error | null } = { error: null };
+      await Promise.all(
+        gaps.map((gap, i) =>
+          limit.run(async () => {
+            if (stop.error) return; // another gap hit the quota: do not start more calls
+            const cutStart = Math.max(0, gap.start - GAP_PAD_SEC);
+            const cutEnd = Math.min(duration, gap.end + GAP_PAD_SEC);
+            const record: GapFillDoc = {
+              start: gap.start,
+              end: gap.end,
+              cutStart,
+              cutEnd,
+              status: 'failed',
+              model: null,
+              error: null,
+              turns: [],
+              responseId: null,
+            };
+            const where = {
+              meetingId: meeting._id,
+              kind: 'gapfill' as const,
+              startSec: cutStart,
+              endSec: cutEnd,
+            };
+            try {
+              await assertBudget(
+                provider,
+                estimateGeminiChunkUsd(env().GEMINI_MODEL, cutEnd - cutStart),
+              );
+              const path = await materializeChunk(
+                deps,
+                tmpDir,
+                meeting.audio.originalUrl,
+                cutStart,
+                cutEnd,
+                `gap-${i}`,
+              );
+              const result = await engine.transcribeChunk({
+                audio: { kind: 'path', path, mimeType: FLAC },
+                localPath: async () => path,
+                startSec: cutStart,
+                endSec: cutEnd,
+                languages: meeting.languages.length
+                  ? meeting.languages
+                  : workspace.settings.languages,
+                glossary,
+              });
+              record.responseId = await saveEngineResponse(
+                result.raw,
+                where,
+                result.finish === 'truncated' ? 'truncated' : null,
+              );
+              const usd = usdFor(provider, result.model, result.usage);
+              await addCost(meeting._id, {
+                usd,
+                geminiInputTokens: result.usage.inputTokens,
+                geminiOutputTokens: result.usage.outputTokens,
+                deepgramSec: result.usage.audioSec,
+              });
+              await recordSpend(provider, usd);
+              if (result.uploaded) {
+                await deps.geminiFiles
+                  .delete(result.uploaded.name, result.uploaded.keyId)
+                  .catch(() => undefined);
+              }
+              record.model = result.model;
+              if (result.finish === 'truncated') record.error = 'truncated';
+              else {
+                record.status = 'done';
+                record.turns = normalizeChunkTurns(result.turns, cutEnd - cutStart, cutStart);
+              }
+            } catch (err) {
+              // Out of quota: stop here and wait; the gaps saved so far are kept.
+              if (
+                (err instanceof RetryableError &&
+                  (err.reason === 'quota' || err.reason === 'waiting')) ||
+                err instanceof BudgetExceededError
+              ) {
+                // remember it and stop starting calls; the ones already in flight finish and are saved
+                stop.error ??= err;
+                return;
+              }
+              record.error = err instanceof Error ? err.message.slice(0, 300) : String(err);
+              record.responseId = await saveEngineResponse(rawOf(err), where, record.error);
+            }
+            await MeetingDataModel.updateOne(
+              { meetingId: meeting._id },
+              { $push: { gapFills: record } },
+            );
+            log.info(
+              { gap, status: record.status, turns: record.turns.length, error: record.error },
+              'gap filled',
+            );
+          }),
+        ),
+      );
+      if (stop.error) throw stop.error;
     }
 
     const fresh = await MeetingDataModel.findOne({ meetingId: meeting._id }).lean();

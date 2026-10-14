@@ -13,6 +13,7 @@ async function main(): Promise<void> {
   const runner = new Runner(defaultDeps(), stages, {
     ...(cfg.WORKER_ID ? { workerId: cfg.WORKER_ID } : {}),
     concurrency: cfg.WORKER_CONCURRENCY,
+    transcribeConcurrency: cfg.WORKER_TRANSCRIBE_CONCURRENCY,
   });
 
   const startedAt = Date.now();
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
     ? startHealthServer(cfg.PORT, () => ({
         uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         concurrency: cfg.WORKER_CONCURRENCY,
+        transcribeConcurrency: cfg.WORKER_TRANSCRIBE_CONCURRENCY,
         service: process.env.SERVICE_NAME ?? 'worker',
       }))
     : null;

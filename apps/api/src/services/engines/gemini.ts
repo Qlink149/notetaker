@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { TurnLang } from '@meetingid/shared';
 import { parseTimestamp, type RawTurn } from '@meetingid/pipeline';
 import { MissingConfigError, env, geminiKeyEntries } from '../../config/env.js';
+import { createLimiter, type Limiter } from '../../lib/limiter.js';
 import { logger } from '../../lib/logger.js';
 import { FatalError, RetryableError, classify } from '../../pipeline/errors.js';
 import {
@@ -143,6 +144,22 @@ const isOverload = (err: unknown): boolean => {
   );
 };
 
+let limiter: Limiter | null = null;
+/**
+ * One cap for every Gemini request this process sends, whichever stage asks (the transcription lane and the
+ * parallel gap-fill calls share it), so a burst can never trip Google's per-minute limits. Requests over the cap
+ * wait here for a free slot instead of failing.
+ */
+export function geminiLimiter(): Limiter {
+  limiter ??= createLimiter(env().GEMINI_MAX_CONCURRENT);
+  return limiter;
+}
+
+/** For tests: forget the limiter so the next use reads GEMINI_MAX_CONCURRENT again. */
+export function resetGeminiLimiter(): void {
+  limiter = null;
+}
+
 /** Primary engine: Gemini Flash with audio input and structured JSON output. */
 export class GeminiEngine implements TranscriptionEngine {
   readonly name = 'gemini' as const;
@@ -158,7 +175,11 @@ export class GeminiEngine implements TranscriptionEngine {
    * that already holds the uploaded file), then — only if the primary is overloaded or out of quota on
    * every key — one request on the fallback model.
    */
-  async transcribeChunk(input: ChunkInput): Promise<ChunkResult> {
+  transcribeChunk(input: ChunkInput): Promise<ChunkResult> {
+    return geminiLimiter().run(() => this.transcribeChunkNow(input));
+  }
+
+  private async transcribeChunkNow(input: ChunkInput): Promise<ChunkResult> {
     const models = [this.model, ...(this.fallback ? [this.fallback] : [])];
     let uploaded: ChunkResult['uploaded'];
     let lastErr: unknown = null;

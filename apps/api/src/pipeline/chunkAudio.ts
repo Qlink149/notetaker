@@ -16,11 +16,41 @@ export async function ensureAnalysisFlac(
   if (existsSync(flac)) return flac;
   const cached = await deps.analysisCache?.get(originalUrl);
   if (cached) return cached;
-  const original = join(tmpDir, 'original');
-  await deps.storage.download(originalUrl, original);
-  await deps.audio.toAnalysisFlac(original, flac);
-  return (await deps.analysisCache?.put(originalUrl, flac).catch(() => null)) ?? flac;
+  // Several tasks can ask at once (parallel gap fills in one job, parallel chunks in several jobs). Within one job
+  // they all wait for the single fetch. Across jobs, when the cache is cold, one job fetches and converts the
+  // original and the others use the cached copy, instead of each downloading it again.
+  const sameJob = buildingInJob.get(flac);
+  if (sameJob) return sameJob;
+  const otherJob = building.get(originalUrl);
+  if (otherJob) {
+    const shared = await otherJob.catch(() => null);
+    if (shared) return shared;
+  }
+  const build = (async () => {
+    const original = join(tmpDir, 'original');
+    await deps.storage.download(originalUrl, original);
+    await deps.audio.toAnalysisFlac(original, flac);
+    return (await deps.analysisCache?.put(originalUrl, flac).catch(() => null)) ?? flac;
+  })();
+  buildingInJob.set(flac, build);
+  // only a copy in the cache outlives this job's temp folder, so only that is worth sharing across jobs
+  const sharable = build.then((p) => {
+    if (p === flac) throw new Error('not in the cache');
+    return p;
+  });
+  building.set(originalUrl, sharable);
+  const forget = (): void => {
+    buildingInJob.delete(flac);
+    if (building.get(originalUrl) === sharable) building.delete(originalUrl);
+  };
+  sharable.then(forget, forget);
+  return build;
 }
+
+/** Originals being fetched and converted right now, by address (shared across jobs once cached). */
+const building = new Map<string, Promise<string>>();
+/** The same, by the job's own analysis file (shared only inside that job). */
+const buildingInJob = new Map<string, Promise<string>>();
 
 /**
  * Chunk audio is not stored (Cloudinary's free plan caps raw files at 10 MB and audio at 100 MB;

@@ -46,16 +46,34 @@ export async function enqueue(input: EnqueueInput): Promise<JobDoc> {
  * Atomically claim the next runnable job: queued and due, or running past its stage lease
  * (its worker died). The claim stamps `lockedBy`/`lockedAt` and counts an attempt.
  */
-export async function claimNext(workerId: string, now = new Date()): Promise<JobDoc | null> {
-  const expired: QueryFilter<JobDoc>[] = (
-    Object.entries(STAGE_LEASE_MS) as [JobStage, number][]
-  ).map(([stage, lease]) => ({
-    status: 'running' as const,
-    stage,
-    lockedAt: { $lt: new Date(now.getTime() - lease) },
-  }));
+export interface ClaimLane {
+  /** Only jobs of these stages. */
+  only?: JobStage[];
+  /** Never jobs of these stages. */
+  except?: JobStage[];
+}
+
+export async function claimNext(
+  workerId: string,
+  now = new Date(),
+  lane: ClaimLane = {},
+): Promise<JobDoc | null> {
+  const allowed = (stage: JobStage): boolean =>
+    (!lane.only || lane.only.includes(stage)) && !lane.except?.includes(stage);
+  const expired: QueryFilter<JobDoc>[] = (Object.entries(STAGE_LEASE_MS) as [JobStage, number][])
+    .filter(([stage]) => allowed(stage))
+    .map(([stage, lease]) => ({
+      status: 'running' as const,
+      stage,
+      lockedAt: { $lt: new Date(now.getTime() - lease) },
+    }));
+  const stageFilter: QueryFilter<JobDoc> = lane.only
+    ? { stage: { $in: lane.only } }
+    : lane.except
+      ? { stage: { $nin: lane.except } }
+      : {};
   const filter: QueryFilter<JobDoc> = {
-    $or: [{ status: 'queued', runAfter: { $lte: now } }, ...expired],
+    $or: [{ status: 'queued', runAfter: { $lte: now }, ...stageFilter }, ...expired],
   };
   return JobModel.findOneAndUpdate(
     filter,

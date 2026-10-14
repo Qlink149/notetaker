@@ -106,6 +106,15 @@ const EnvSchema = z.object({
   SPEAKER_AUTOMERGE: z.preprocess((v) => !(v === 'false' || v === '0'), z.boolean()).default(true),
   WORKER_HTTP: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  /**
+   * Chunks transcribed at the same moment, on their own lane next to the WORKER_CONCURRENCY lane that runs every
+   * other stage. A transcription job only waits for Gemini and holds a link to audio already uploaded, so several
+   * fit on a small worker; the heavy stages (ingest, speaker analysis, gap fill) stay on the other lane.
+   * 0 puts transcription back on the shared lane, one job at a time per WORKER_CONCURRENCY slot.
+   */
+  WORKER_TRANSCRIBE_CONCURRENCY: z.coerce.number().int().min(0).max(8).default(4),
+  /** Most Gemini requests in flight at once from one worker, whichever stage sends them (rate-limit guard). */
+  GEMINI_MAX_CONCURRENT: z.coerce.number().int().min(1).max(16).default(6),
   FFMPEG_PATH: optional,
   FFPROBE_PATH: optional,
 });
@@ -155,7 +164,10 @@ export function engineStatus(): Record<EngineId, { enabled: boolean; reason?: st
   const key = (v: string | undefined, name: string) =>
     v ? { enabled: true } : { enabled: false, reason: `${name} is not set` };
   return {
-    gemini: key(geminiKeyEntries()[0]?.value, 'GEMINI_PAID_API_KEY (or GEMINI_API_KEY, GEMINI_API_KEY1..9)'),
+    gemini: key(
+      geminiKeyEntries()[0]?.value,
+      'GEMINI_PAID_API_KEY (or GEMINI_API_KEY, GEMINI_API_KEY1..9)',
+    ),
     deepgram: key(e.DEEPGRAM_API_KEY, 'DEEPGRAM_API_KEY'),
     'gemini-transcribe': key(
       geminiKeyEntries()[0]?.value,

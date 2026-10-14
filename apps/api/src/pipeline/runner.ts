@@ -7,14 +7,25 @@ import { HeartbeatModel, type JobDoc } from '../models/index.js';
 import type { Deps, StageRegistry } from './context.js';
 import { FatalError, RetryableError, backoffMs, classify } from './errors.js';
 import { failMeeting } from './meetings.js';
-import { claimNext, markDone, markFailed, release, renewLease, scheduleRetry } from './queue.js';
+import {
+  claimNext,
+  markDone,
+  markFailed,
+  release,
+  renewLease,
+  scheduleRetry,
+  type ClaimLane,
+} from './queue.js';
 
 const HEARTBEAT_MS = 30_000;
 const IDLE_POLL_MS = 2_000;
 
 export interface RunnerOptions {
   workerId?: string;
+  /** Jobs at once on the main lane (every stage, or every stage but transcription when `transcribeConcurrency` is set). */
   concurrency?: number;
+  /** Extra lane that only transcribes chunks, this many at once. 0 or unset: no separate lane. */
+  transcribeConcurrency?: number;
 }
 
 /**
@@ -25,6 +36,7 @@ export interface RunnerOptions {
 export class Runner {
   readonly workerId: string;
   private readonly concurrency: number;
+  private readonly transcribeConcurrency: number;
   private stopping = false;
   private readonly active = new Map<string, JobDoc>();
   private heartbeat: NodeJS.Timeout | null = null;
@@ -36,11 +48,12 @@ export class Runner {
   ) {
     this.workerId = opts.workerId ?? `${hostname()}-${process.pid}`;
     this.concurrency = opts.concurrency ?? 2;
+    this.transcribeConcurrency = opts.transcribeConcurrency ?? 0;
   }
 
   /** Claim and run one job. Returns false when nothing was runnable. */
-  async runOnce(): Promise<boolean> {
-    const job = await claimNext(this.workerId, this.deps.now());
+  async runOnce(lane: ClaimLane = {}): Promise<boolean> {
+    const job = await claimNext(this.workerId, this.deps.now(), lane);
     if (!job) return false;
     await this.execute(job);
     return true;
@@ -56,8 +69,25 @@ export class Runner {
   async start(): Promise<void> {
     await this.beat();
     this.heartbeat = setInterval(() => void this.beat(), HEARTBEAT_MS);
-    logger.info({ workerId: this.workerId, concurrency: this.concurrency }, 'worker started');
-    await Promise.all(Array.from({ length: this.concurrency }, () => this.loop()));
+    logger.info(
+      {
+        workerId: this.workerId,
+        concurrency: this.concurrency,
+        transcribeConcurrency: this.transcribeConcurrency,
+      },
+      'worker started',
+    );
+    // Transcription only waits on Gemini, so it gets its own lane and several chunks run at once; every other
+    // stage (ingest, speaker analysis, gap fill, ...) stays on the main lane where they are CPU and memory heavy.
+    const split = this.transcribeConcurrency > 0;
+    await Promise.all([
+      ...Array.from({ length: this.concurrency }, () =>
+        this.loop(split ? { except: ['transcribe'] } : {}),
+      ),
+      ...Array.from({ length: split ? this.transcribeConcurrency : 0 }, () =>
+        this.loop({ only: ['transcribe'] }),
+      ),
+    ]);
   }
 
   /** Stop claiming, give in-flight jobs `graceMs` to finish, hand the rest back to the queue. */
@@ -70,10 +100,10 @@ export class Runner {
     logger.info({ released: this.active.size }, 'worker stopped');
   }
 
-  private async loop(): Promise<void> {
+  private async loop(lane: ClaimLane): Promise<void> {
     while (!this.stopping) {
       try {
-        if (!(await this.runOnce())) await sleep(IDLE_POLL_MS);
+        if (!(await this.runOnce(lane))) await sleep(IDLE_POLL_MS);
       } catch (err) {
         logger.error({ err }, 'worker loop error');
         await sleep(IDLE_POLL_MS * 5);
