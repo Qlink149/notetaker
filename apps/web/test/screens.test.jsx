@@ -450,6 +450,10 @@ describe('meeting page with speakers', () => {
       </MemoryRouter>,
     );
     await screen.findByText('Meeting 21/9');
+    // the speaker section starts closed, with no count
+    const toggle = await screen.findByRole('button', { name: /^Speakers$/ });
+    expect(screen.queryByText(/Also heard in/)).toBeNull();
+    fireEvent.click(toggle);
     await screen.findByText('Speakers (1)');
     expect(screen.getByText(/Also heard in/)).toBeTruthy();
     expect(screen.getByText('aaj hum discuss karenge')).toBeTruthy();
@@ -467,5 +471,52 @@ describe('meeting page with speakers', () => {
       expect(screen.getAllByText('Ghanshyam Dholakia').length).toBeGreaterThan(0),
     );
     await screen.findByText(/summary above was written with the earlier speaker labels/);
+  });
+});
+
+describe('meeting page while processing', () => {
+  const processing = (over = {}) => ({
+    id: 'm7',
+    title: 'Long meeting',
+    date: '2026-10-14T10:00:00Z',
+    durationSec: null,
+    status: 'processing',
+    stage: 'ingest',
+    progress: { chunksTotal: 0, chunksDone: 0 },
+    audio: { playbackUrl: null },
+    coverage: null,
+    summary: null,
+    summaryStatus: 'pending',
+    actionItems: [],
+    updatedAt: '2026-10-14T10:00:00Z',
+    ...over,
+  });
+  const open = () =>
+    render(
+      <MemoryRouter initialEntries={['/meetings/m7']}>
+        <Routes>
+          <Route path="/meetings/:id" element={<MeetingDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+  it('says how long to wait per 10 minutes before the length is known', async () => {
+    api.meetings.get.mockResolvedValue(processing());
+    open();
+    const note = await screen.findByTestId('wait-estimate');
+    expect(note.textContent).toContain(
+      'Every 10 minutes of recording takes up to about 1½ minutes.',
+    );
+    expect(note.textContent).not.toContain('ready in up to');
+  });
+
+  it('gives the wait for this recording once its length is known', async () => {
+    api.meetings.get.mockResolvedValue(processing({ durationSec: 3810 }));
+    open();
+    const note = await screen.findByTestId('wait-estimate');
+    expect(note.textContent).toContain('This 64-minute recording: ready in up to about 10 min.');
+    expect(note.textContent).toContain(
+      'Every 10 minutes of recording takes up to about 1½ minutes.',
+    );
   });
 });

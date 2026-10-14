@@ -275,8 +275,16 @@ export function TextSpeakersNotice({ onRerun, busy }) {
   );
 }
 
-export default function SpeakerReview({ meetingId, source, cards, autoMerged = [], onPlay, onChanged }) {
-  const [open, setOpen] = useState(true);
+export default function SpeakerReview({
+  meetingId,
+  source,
+  cards,
+  autoMerged = [],
+  onPlay,
+  onChanged,
+}) {
+  // Closed until asked for: the speaker list is a working area, not the first thing to read.
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -308,7 +316,7 @@ export default function SpeakerReview({ meetingId, source, cards, autoMerged = [
           aria-expanded={open}
         >
           <ScanFace className="w-4 h-4 text-muted-foreground" />
-          Speakers ({cards.length})
+          Speakers{open ? ` (${cards.length})` : ''}
           {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
         </button>
         {open && source === 'pyannote' && (

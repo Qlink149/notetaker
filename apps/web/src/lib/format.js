@@ -25,3 +25,16 @@ export function fmtDuration(s) {
 export function lineText(line, script) {
   return script === "native" ? line.textNative || line.textRoman : line.textRoman || line.textNative;
 }
+
+/** Processing takes up to about this many minutes for every 10 minutes of recording. */
+const MIN_PER_10_MIN = 1.5;
+
+/** "up to about N min" for a recording of this many seconds, or null while its length is not known yet. */
+export function waitEstimate(durationSec) {
+  if (!(durationSec > 0)) return null;
+  const minutes = durationSec / 60;
+  return {
+    recordingMin: Math.max(1, Math.round(minutes)),
+    waitMin: Math.max(1, Math.ceil((minutes / 10) * MIN_PER_10_MIN)),
+  };
+}

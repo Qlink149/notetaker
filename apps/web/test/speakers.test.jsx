@@ -43,8 +43,9 @@ const card = (over = {}) => ({
   ...over,
 });
 
-const renderReview = (cards, extra = {}) =>
-  render(
+// The section starts closed; most tests are about what is inside, so they open it first.
+const renderReview = (cards, { closed = false, ...extra } = {}) => {
+  const view = render(
     <MemoryRouter>
       <SpeakerReview
         meetingId="m1"
@@ -56,6 +57,43 @@ const renderReview = (cards, extra = {}) =>
       />
     </MemoryRouter>,
   );
+  if (!closed) fireEvent.click(screen.getByRole('button', { name: /^Speakers/ }));
+  return view;
+};
+
+describe('speaker section', () => {
+  it('is closed by default and shows no speaker count', () => {
+    renderReview(
+      [card(), card({ diar: 'SPEAKER_02', label: 'Speaker B', displayName: 'Speaker B' })],
+      {
+        closed: true,
+      },
+    );
+    const toggle = screen.getByRole('button', { name: /^Speakers/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.textContent).toBe('Speakers');
+    expect(screen.queryByText(/\(2\)/)).toBeNull();
+    expect(screen.queryByText(/Same voice as/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Re-identify speakers/ })).toBeNull();
+  });
+
+  it('shows the count and the cards once opened, and closes again', () => {
+    renderReview(
+      [card(), card({ diar: 'SPEAKER_02', label: 'Speaker B', displayName: 'Speaker B' })],
+      {
+        closed: true,
+      },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Speakers/ }));
+    expect(
+      screen.getByRole('button', { name: /^Speakers \(2\)/ }).getAttribute('aria-expanded'),
+    ).toBe('true');
+    expect(screen.getByRole('button', { name: /Re-identify speakers/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Speakers/ }));
+    expect(screen.getByRole('button', { name: /^Speakers$/ })).toBeTruthy();
+    expect(screen.queryByText(/\(2\)/)).toBeNull();
+  });
+});
 
 describe('speaker cards', () => {
   it('shows who the voice matches, where else it is heard, the closest phone and playable samples', () => {

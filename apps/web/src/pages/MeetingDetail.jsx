@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/api/client';
 import { useAuth } from '@/lib/AuthContext';
-import { fmtDuration, fmtTime } from '@/lib/format';
+import { fmtDuration, fmtTime, waitEstimate } from '@/lib/format';
 import TranscriptView from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
@@ -331,6 +331,12 @@ export default function MeetingDetail() {
               <p className="font-semibold">Processing your meeting…</p>
               <p className="text-xs text-muted-foreground">
                 Runs on the server. You can close this page and come back.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1" data-testid="wait-estimate">
+                {waitEstimate(meeting.durationSec)
+                  ? `This ${waitEstimate(meeting.durationSec).recordingMin}-minute recording: ready in up to about ${waitEstimate(meeting.durationSec).waitMin} min. `
+                  : ''}
+                Every 10 minutes of recording takes up to about 1½ minutes.
               </p>
             </div>
             <span className="text-sm font-medium text-muted-foreground tabular-nums">{pct}%</span>
