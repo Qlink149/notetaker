@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { playableUrl } from '../lib/audioLink.js';
 import { ws } from '../lib/auth.js';
-import { cutFlac } from '../services/audio/ffmpeg.js';
+import { cutFlac, toAnalysisFlac } from '../services/audio/ffmpeg.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import { MeetingDataModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
 import type { ApiDeps } from './deps.js';
@@ -96,8 +96,11 @@ export function speakersRouter(deps: ApiDeps): Router {
         } else {
           // private storage cannot cut a clip: keep the first 30 s ourselves, then hand pyannote a
           // short-lived link and the app a signed playback link
+          // convert first (it repairs iPhone Safari recordings the cutter would thin out), then cut the clip
+          const flac = join(dir, 'analysis.flac');
+          await toAnalysisFlac(path, flac);
           const clip = join(dir, 'clip.flac');
-          await cutFlac(path, clip, 0, MAX_CLIP_SEC);
+          await cutFlac(flac, clip, 0, MAX_CLIP_SEC);
           const up = await deps.storage.uploadAudio(clip, id);
           voiceprintUrl = await deps.storage.presignGet!(up.publicId, 3600);
           playbackUrl = `b2://${up.publicId}`; // shown through a signed link (playableUrl)

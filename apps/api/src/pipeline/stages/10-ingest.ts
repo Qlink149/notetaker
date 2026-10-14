@@ -5,6 +5,7 @@ import type { StageContext, StageHandler } from '../context.js';
 import { FatalError } from '../errors.js';
 import { loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { createLimiter } from '../../lib/limiter.js';
+import { lostAudio } from '../../services/audio/ffmpeg.js';
 import { enqueue } from '../queue.js';
 import { startDiarization } from './22-diarize.js';
 
@@ -13,6 +14,10 @@ export const OVERLAP_SEC = 30;
 const FLAC = 'audio/flac';
 /** Chunks cut and uploaded at the same time. */
 const CUT_PARALLEL = 3;
+
+/** m:ss for the warning shown to people. */
+const mmss = (sec: number): string =>
+  `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
 
 /**
  * Probe → 16 kHz mono FLAC (what every engine gets; fixes A1) → silencedetect (threshold raised on noisy recordings) →
@@ -47,6 +52,16 @@ export const ingestStage: StageHandler = {
     if (!(durationSec >= 1))
       throw new FatalError('No speech detected: the recording is empty or shorter than a second');
     const convertMs = lap();
+    // The conversion repairs the known cause (iPhone Safari files); if the audio is still clearly shorter than the
+    // file declares, say so on the meeting instead of presenting a partial transcript as complete.
+    const audioWarning = lostAudio(info.durationSec, durationSec)
+      ? `The file is ${mmss(info.durationSec)} long but only ${mmss(durationSec)} of audio could be read, so part of the recording may be missing.`
+      : null;
+    if (audioWarning)
+      log.warn(
+        { declaredSec: info.durationSec, readSec: durationSec },
+        'audio shorter than declared',
+      );
     log.info(
       { durationSec, channels: info.channels, sampleRate: info.sampleRate, codec: info.codec },
       'probed',
@@ -114,6 +129,7 @@ export const ingestStage: StageHandler = {
           'audio.analysisUrl': null,
           'audio.analysisPublicId': null,
           'audio.playbackUrl': deps.storage.playbackUrl(meeting.audio.originalPublicId),
+          audioWarning,
           status: 'processing',
           stage: 'transcribe',
           progress: { chunksTotal: chunks.length, chunksDone: chunks.length - todo.length },

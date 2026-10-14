@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
+import { rename, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import type { Segment } from '@meetingid/shared';
 import { quantile } from '@meetingid/pipeline';
 import { env } from '../../config/env.js';
+import { logger } from '../../lib/logger.js';
 import { FatalError } from '../../pipeline/errors.js';
 
 const require = createRequire(import.meta.url);
@@ -84,8 +86,7 @@ export async function probe(path: string): Promise<ProbeResult> {
   };
 }
 
-/** 16 kHz mono FLAC: what every engine receives. */
-export async function toAnalysisFlac(input: string, output: string): Promise<void> {
+async function convertToFlac(input: string, output: string): Promise<void> {
   await run(ffmpegPath(), [
     '-y',
     '-hide_banner',
@@ -100,6 +101,79 @@ export async function toAnalysisFlac(input: string, output: string): Promise<voi
     'flac',
     output,
   ]);
+}
+
+/**
+ * Whether a conversion lost audio: the result is under 90% of the length the file itself declares and more than 10 s
+ * short. (A container with no usable length, such as a browser webm, has nothing to compare against.)
+ */
+export function lostAudio(containerSec: number, convertedSec: number): boolean {
+  return containerSec > 0 && convertedSec < containerSec * 0.9 && containerSec - convertedSec > 10;
+}
+
+/**
+ * 16 kHz mono FLAC: what every engine receives.
+ *
+ * The converter we ship (ffmpeg 4.1) mishandles the fragmented MP4 that iPhone Safari records: each fragment holds
+ * several sample runs and the old demuxer restarts the clock at every run after the first, so about half of the
+ * audio is dropped and an 18-minute recording came out as 9 minutes of thinned-out sound. When the result is clearly
+ * shorter than the file says it is, the audio is copied (not re-encoded) into a fresh container first, which gives it
+ * clean timestamps, and converted again; the longer result is kept.
+ */
+export async function toAnalysisFlac(input: string, output: string): Promise<void> {
+  await convertToFlac(input, output);
+  const [source, first] = await Promise.all([
+    probe(input).catch(() => null),
+    probe(output).catch(() => null),
+  ]);
+  if (!source || !first || !lostAudio(source.durationSec, first.durationSec)) return;
+
+  const tmp = `${output}.remux.mka`;
+  const second = `${output}.second.flac`;
+  try {
+    await run(ffmpegPath(), [
+      '-y',
+      '-hide_banner',
+      '-i',
+      input,
+      '-map',
+      '0:a:0',
+      '-vn',
+      '-c:a',
+      'copy',
+      tmp,
+    ]);
+    await convertToFlac(tmp, second);
+    const again = await probe(second);
+    if (again.durationSec > first.durationSec) {
+      await rename(second, output);
+      logger.warn(
+        {
+          declaredSec: source.durationSec,
+          firstSec: first.durationSec,
+          repairedSec: again.durationSec,
+        },
+        'audio conversion lost part of the recording; repaired by copying the audio into a clean container first',
+      );
+    } else {
+      logger.warn(
+        { declaredSec: source.durationSec, convertedSec: first.durationSec },
+        'converted audio is shorter than the file declares and the repair did not help',
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      {
+        err: (err as Error).message.slice(0, 200),
+        declaredSec: source.durationSec,
+        convertedSec: first.durationSec,
+      },
+      'converted audio is shorter than the file declares and the repair failed; keeping the first result',
+    );
+  } finally {
+    await rm(tmp, { force: true });
+    await rm(second, { force: true });
+  }
 }
 
 /**
