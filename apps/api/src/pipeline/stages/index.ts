@@ -6,6 +6,7 @@ import { diarizeStage } from './22-diarize.js';
 import { assembleStage } from './30-assemble.js';
 import { gapfillStage } from './35-gapfill.js';
 import { identifyStage } from './37-identify.js';
+import { learnvoiceStage } from './38-learnvoice.js';
 import { summariseStage } from './40-summarise.js';
 import { finaliseStage } from './90-finalise.js';
 import { benchmarkStage } from './95-benchmark.js';
@@ -21,4 +22,5 @@ export const stages: StageRegistry = {
   summarise: summariseStage,
   finalise: finaliseStage,
   benchmark: benchmarkStage,
+  learnvoice: learnvoiceStage,
 };

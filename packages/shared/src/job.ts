@@ -12,6 +12,7 @@ export const JobStage = z.enum([
   'summarise',
   'finalise',
   'benchmark',
+  'learnvoice',
 ]);
 export type JobStage = z.infer<typeof JobStage>;
 
@@ -47,4 +48,5 @@ export const STAGE_LEASE_MS: Record<JobStage, number> = {
   summarise: 5 * 60_000,
   finalise: 2 * 60_000,
   benchmark: 20 * 60_000,
+  learnvoice: 10 * 60_000,
 };

@@ -4,8 +4,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import type { Turn } from '@meetingid/shared';
 import { createApp } from '../src/app.js';
+import type { NameResolution } from '@meetingid/pipeline';
 import { applyNames } from '../src/services/identity/identity.js';
 import {
+  cardCandidate,
+  DEFAULT_THRESHOLDS,
+  POSSIBLE_MIN_SCORE,
+} from '../src/services/identity/enroll.js';
+import {
+  JobModel,
   MeetingDataModel,
   MeetingModel,
   SpeakerModel,
@@ -248,6 +255,172 @@ describe('naming a voice', () => {
       .send({ name: 'Rajesh Patal', createNew: true })
       .expect(200);
     expect(await lineNames(id)).toEqual(['Rajesh Patal']);
+  });
+});
+
+describe('correcting a wrong voice match (16 Oct: Paresh matched as Yogansh at 62)', () => {
+  /** Yogansh, known from an earlier meeting, wrongly matched in a new one that taught him its clip. */
+  async function wrongMatch() {
+    const yogansh = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Yogansh',
+      anonymous: false,
+    });
+    const old = await seedMeeting(
+      'Team call',
+      [turn('S0', 0, 5, 'hello')],
+      [card('S0', 'Speaker A', String(yogansh._id), { status: 'solid', confirmed: true })],
+    );
+    const dv = await seedMeeting(
+      'Google DV',
+      [turn('S0', 0, 5, 'plan'), turn('S1', 5, 10, 'budget')],
+      [
+        card('S0', 'Speaker A', null),
+        card('S1', 'Speaker D', String(yogansh._id), {
+          status: 'solid',
+          match: { personId: String(yogansh._id), name: 'Yogansh', score: 62, margin: 22 },
+          clips: [{ start: 3153, end: 3161, quality: 80 }],
+        }),
+      ],
+    );
+    await SpeakerModel.updateOne(
+      { _id: yogansh._id },
+      {
+        $set: {
+          voiceprints: [
+            {
+              id: 'own',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-yogansh',
+              meetingId: new Types.ObjectId(old),
+              clip: { start: 0, end: 10 },
+            },
+            {
+              id: 'learned',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-paresh',
+              meetingId: new Types.ObjectId(dv),
+              clip: { start: 3153.03, end: 3161.45 },
+            },
+          ],
+        },
+      },
+    );
+    return { yogansh: String(yogansh._id), old, dv };
+  }
+
+  it('typing the right name fixes this meeting only and keeps the matched person everywhere else', async () => {
+    const { yogansh, old, dv } = await wrongMatch();
+    await auth(request(app).post(`/api/v1/meetings/${dv}/speakers/S1/name`))
+      .send({ name: 'Paresh Ecom' })
+      .expect(200);
+
+    expect(await lineNames(dv)).toEqual(['Speaker A', 'Paresh Ecom']);
+    expect(await lineNames(old)).toEqual(['Yogansh']);
+    const y = await SpeakerModel.findById(yogansh).lean();
+    expect(y!.name).toBe('Yogansh');
+    // the clip the wrong match taught Yogansh is taken back
+    expect(y!.voiceprints.map((v) => v.id)).toEqual(['own']);
+    const paresh = await SpeakerModel.findOne({ name: 'Paresh Ecom' }).lean();
+    expect(String(paresh!._id)).not.toBe(yogansh);
+    const view = (await auth(request(app).get(`/api/v1/meetings/${dv}/speakers`)).expect(200))
+      .body as {
+      cards: { diar: string; match: unknown; confirmed: boolean }[];
+    };
+    expect(view.cards.find((c) => c.diar === 'S1')).toMatchObject({ match: null, confirmed: true });
+    // the confirmed voice is learned by the worker
+    expect(
+      await JobModel.countDocuments({ meetingId: dv, stage: 'learnvoice', status: 'queued' }),
+    ).toBe(1);
+  });
+
+  it('linking the voice to another existing person does not merge the two people', async () => {
+    const { yogansh, old, dv } = await wrongMatch();
+    const paresh = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Paresh Ecom',
+      anonymous: false,
+    });
+    await auth(request(app).post(`/api/v1/meetings/${dv}/speakers/S1/name`))
+      .send({ name: 'Paresh', usePersonId: String(paresh._id) })
+      .expect(200);
+
+    expect(await lineNames(dv)).toEqual(['Speaker A', 'Paresh Ecom']);
+    expect(await lineNames(old)).toEqual(['Yogansh']);
+    expect(await SpeakerModel.exists({ _id: yogansh })).toBeTruthy();
+    expect((await SpeakerModel.findById(yogansh).lean())!.voiceprints).toHaveLength(1);
+    expect((await SpeakerModel.findById(paresh._id).lean())!.voiceprints).toHaveLength(0);
+  });
+
+  it('renames the person everywhere only when asked to', async () => {
+    const { old, dv } = await wrongMatch();
+    await auth(request(app).post(`/api/v1/meetings/${dv}/speakers/S1/name`))
+      .send({ name: 'Yogansh Bhatt', renameEverywhere: true })
+      .expect(200);
+    expect(await lineNames(dv)).toEqual(['Speaker A', 'Yogansh Bhatt']);
+    expect(await lineNames(old)).toEqual(['Yogansh Bhatt']);
+  });
+
+  it('confirming a match keeps the person and queues learning the voice', async () => {
+    const { yogansh, dv } = await wrongMatch();
+    await auth(request(app).post(`/api/v1/meetings/${dv}/speakers/S1/name`))
+      .send({ name: 'Yogansh', usePersonId: yogansh })
+      .expect(200);
+    const data = await MeetingDataModel.findOne({ meetingId: dv }).lean();
+    const c = (data!.speakerCards as SpeakerCardDoc[]).find((x) => x.diar === 'S1')!;
+    expect(c).toMatchObject({ personId: yogansh, confirmed: true, status: 'solid' });
+    expect(c.match).toMatchObject({ personId: yogansh, score: 62 });
+    expect(await JobModel.countDocuments({ meetingId: dv, stage: 'learnvoice' })).toBe(1);
+  });
+
+  it('typing the same name again confirms instead of creating a second person', async () => {
+    const { yogansh, dv } = await wrongMatch();
+    await auth(request(app).post(`/api/v1/meetings/${dv}/speakers/S1/name`))
+      .send({ name: ' yogansh ' })
+      .expect(200);
+    expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
+    const data = await MeetingDataModel.findOne({ meetingId: dv }).lean();
+    expect((data!.speakerCards as SpeakerCardDoc[]).find((x) => x.diar === 'S1')).toMatchObject({
+      personId: yogansh,
+      confirmed: true,
+    });
+  });
+});
+
+describe('closest known voice on a card', () => {
+  const res = (over: Partial<NameResolution>): NameResolution => ({
+    personId: null,
+    name: 'Unknown 1',
+    score: 0,
+    margin: 0,
+    candidate: 'Paresh Ecom',
+    candidateId: 'p1',
+    candidateScore: 0,
+    status: 'below-threshold',
+    ...over,
+  });
+
+  it('offers a near miss (60 to 74) for confirmation, and only shows weaker ones', () => {
+    expect(cardCandidate(res({ score: 62, candidateScore: 62 }))).toEqual({
+      name: 'Paresh Ecom',
+      personId: 'p1',
+      score: 62,
+      status: 'possible',
+    });
+    expect(cardCandidate(res({ score: 54, candidateScore: 54 }))?.status).toBe('below-threshold');
+    expect(cardCandidate(res({ score: 27, candidateScore: 71, status: 'taken' }))).toMatchObject({
+      score: 71,
+      status: 'taken',
+    });
+    expect(cardCandidate(res({ candidate: null }))).toBeNull();
+    expect(cardCandidate(undefined)).toBeNull();
+  });
+
+  it('names a voice automatically only at 75 or more', () => {
+    expect(DEFAULT_THRESHOLDS.minScore).toBe(75);
+    expect(POSSIBLE_MIN_SCORE).toBe(60);
   });
 });
 

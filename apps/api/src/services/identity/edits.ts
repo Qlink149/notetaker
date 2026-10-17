@@ -13,6 +13,7 @@ import {
   renamePerson,
   type ApplyResult,
 } from './identity.js';
+import { enqueue } from '../../pipeline/queue.js';
 
 // Review-screen edits: merge, split, reassign, name. Every edit rewrites the turns' speakers and the
 // cards, then calls applyNames so lines re-merge and every meeting that shows the person updates.
@@ -185,10 +186,37 @@ export async function reassignLine(
   return save(meetingId, turns, cards);
 }
 
+const sameName = (a: string, b: string): boolean =>
+  a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Remove the voiceprints a person got from this card's clips (a match that turned out to be someone else). */
+async function forgetVoice(
+  personId: string,
+  meetingId: string,
+  card: SpeakerCardDoc,
+): Promise<void> {
+  const starts = new Set((card.clips ?? []).map((c) => Math.round(c.start)));
+  if (!starts.size) return;
+  const person = await SpeakerModel.findById(personId).lean<SpeakerDoc>();
+  if (!person) return;
+  const keep = person.voiceprints.filter(
+    (v) => !(String(v.meetingId) === meetingId && v.clip && starts.has(Math.round(v.clip.start))),
+  );
+  if (keep.length !== person.voiceprints.length)
+    await SpeakerModel.updateOne({ _id: personId }, { $set: { voiceprints: keep } });
+}
+
+/** Learn the meeting's confirmed voices in the worker (cutting clips needs the meeting audio). */
+async function learnLater(meetingId: string): Promise<void> {
+  await enqueue({ meetingId, stage: 'learnvoice' });
+}
+
 /**
- * Name a voice. If `usePersonId` is given the voice is linked to that existing person (their
- * voiceprints combine); otherwise the card's own person is renamed, or created if it has none.
- * Returns the meetings whose lines changed.
+ * Name a voice. With `usePersonId` the voice is linked to that existing person. Typing a different name on a
+ * voice matched to a named person corrects this meeting only: the voice gets its own person and the matched
+ * person keeps their name everywhere else (renaming them everywhere needs `renameEverywhere`). A voice nobody
+ * has named yet (anonymous) is named everywhere it was heard. The confirmed voice is learned into the person's
+ * profile afterwards. Returns the meetings whose lines changed.
  */
 export async function nameSpeaker(
   meetingId: string,
@@ -196,6 +224,7 @@ export async function nameSpeaker(
   diar: string,
   name: string,
   usePersonId?: string,
+  { renameEverywhere = false }: { renameEverywhere?: boolean } = {},
 ): Promise<{ personId: string; changed: string[]; meetings: string[] }> {
   const loaded = await load(meetingId);
   let cards = loaded.cards;
@@ -204,23 +233,55 @@ export async function nameSpeaker(
   let personId = card.personId;
   // a card may point at a person who was deleted since (Speakers page): treat it as having none
   if (personId && !(await SpeakerModel.exists({ _id: personId, workspaceId }))) personId = null;
+  const current = personId ? await SpeakerModel.findById(personId).lean<SpeakerDoc>() : null;
+
   if (usePersonId) {
     if (!Types.ObjectId.isValid(usePersonId)) throw new EditError('Unknown person.');
     const target = await SpeakerModel.findOne({ _id: usePersonId, workspaceId }).lean();
     if (!target) throw new EditError('Unknown person.');
-    if (personId && personId !== usePersonId) await mergePeople(usePersonId, personId);
+    if (personId && personId !== usePersonId) {
+      // An unnamed voice is the same voice getting its name, so it joins the person. A named person means the
+      // match was wrong: only this voice moves, and the clips it taught that person are taken back.
+      if (current?.anonymous) await mergePeople(usePersonId, personId);
+      else await forgetVoice(personId, meetingId, card);
+    }
     // merging rewrote cards in the database: read them again before saving this one
     cards = (await load(meetingId)).cards;
     card = cards.find((c) => c.diar === diar)!;
-    personId = usePersonId;
-    card.personId = personId;
+    if (card.match && card.match.personId !== usePersonId) card.match = null;
+    card.personId = usePersonId;
     card.status = 'solid';
+    card.confirmed = true;
     await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
-    const meetings = await meetingsOfPerson(personId);
+    const meetings = await meetingsOfPerson(usePersonId);
     const changed: string[] = [];
     for (const m of meetings) if ((await applyNames(m))?.namesChanged) changed.push(m);
-    return { personId, changed, meetings };
+    await learnLater(meetingId);
+    return { personId: usePersonId, changed, meetings };
   }
+
+  if (current && !current.anonymous && !renameEverywhere && !sameName(current.name, name)) {
+    await forgetVoice(personId!, meetingId, card);
+    const created = await SpeakerModel.create({
+      workspaceId: new Types.ObjectId(workspaceId),
+      name,
+      anonymous: false,
+      origin: { meetingId: new Types.ObjectId(meetingId), diar },
+    });
+    card.personId = String(created._id);
+    card.match = null;
+    card.status = 'solid';
+    card.confirmed = true;
+    await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
+    const r = await applyNames(meetingId);
+    await learnLater(meetingId);
+    return {
+      personId: card.personId,
+      changed: r?.namesChanged ? [meetingId] : [],
+      meetings: [meetingId],
+    };
+  }
+
   if (!personId) {
     const created = await SpeakerModel.create({
       workspaceId: new Types.ObjectId(workspaceId),
@@ -232,7 +293,9 @@ export async function nameSpeaker(
     card.personId = personId;
   }
   card.status = 'solid';
+  card.confirmed = true;
   await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
   const r = await renamePerson(personId, name);
+  await learnLater(meetingId);
   return { personId, changed: r.changed, meetings: r.meetings };
 }

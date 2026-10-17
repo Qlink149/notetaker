@@ -46,8 +46,13 @@ import {
 import { pyannoteSegments, shortTitle, speakerSeconds } from './identity.js';
 
 export const IDENTITY_MODEL: PyannoteModel = 'precision-2';
-/** Overnight defaults (DECISIONS #29); to be calibrated on audited data. */
-export const DEFAULT_THRESHOLDS = { minScore: 60, minMargin: 10 };
+/**
+ * A voice is named automatically only at this score. On 16 Oct two different people matched at 62 and 63 while
+ * every correct match scored 84 or more, so 60 (the overnight default, DECISIONS #29) named absent people.
+ */
+export const DEFAULT_THRESHOLDS = { minScore: 75, minMargin: 10 };
+/** Below the automatic bar but this close: shown as "possibly X", for a person to confirm. Never named on its own. */
+export const POSSIBLE_MIN_SCORE = 60;
 /** A speaker needs this much speech before a new person is created for them. */
 const MIN_SPEECH_FOR_PERSON_SEC = 15;
 
@@ -70,6 +75,23 @@ export async function mapLimit<T, R>(
     }),
   );
   return out;
+}
+
+/**
+ * The closest known person for a voice that was not named: shown on its card, and offered for a one-click
+ * confirmation ("possible") when it scored at least POSSIBLE_MIN_SCORE but under the automatic bar.
+ */
+export function cardCandidate(res: NameResolution | undefined): SpeakerCardDoc['candidate'] {
+  if (!res?.candidate || (res.candidateScore <= 0 && res.score <= 0)) return null;
+  return {
+    name: res.candidate,
+    personId: res.candidateId,
+    score: res.candidateScore,
+    status:
+      res.status === 'below-threshold' && res.candidateScore >= POSSIBLE_MIN_SCORE
+        ? 'possible'
+        : res.status,
+  };
 }
 
 /** Create voiceprints for `clips` of one speaker and store them on the person. Returns how many were added. */
@@ -383,7 +405,8 @@ export async function identifyMeeting(
       status = 'solid';
       match = { personId, name: res.name ?? personId, score: res.score, margin: res.margin };
       linked.push({ label, person: res.name ?? personId, score: res.score, margin: res.margin });
-      if (!budget) enrolNow(personId, diar, clips.slice(0, 1));
+      // No voiceprint is added for an automatic match: a wrong match would teach the person's profile someone
+      // else's voice. Clips are learned once a person confirms or names the voice (learnConfirmedVoices).
     } else if (res?.status !== 'taken' && sec >= MIN_SPEECH_FOR_PERSON_SEC && clips.length) {
       // (A voice whose best match is a known person already paired with another voice of this meeting is
       // left unlinked, with that person shown as the closest match, instead of becoming a new anonymous
@@ -414,10 +437,7 @@ export async function identifyMeeting(
       personId,
       speakerSec: Math.round(sec * 10) / 10,
       match,
-      candidate:
-        !match && res?.candidate && (res.score > 0 || res.margin !== 0)
-          ? { name: res.candidate, score: res.score, status: res.status }
-          : null,
+      candidate: match ? null : cardCandidate(res),
       status,
       clips: clips.map((c) => ({ start: c.start, end: c.end, quality: c.quality })),
     });
@@ -445,4 +465,29 @@ export async function identifyMeeting(
     linked,
     warnings,
   };
+}
+
+/**
+ * Add voiceprints for every voice of a meeting that a person named or confirmed (cards marked `confirmed`). Only
+ * confirmed voices are learned, so a wrong automatic match never changes anyone's profile. Idempotent: clips the
+ * person already has from this meeting are skipped.
+ */
+export async function learnConfirmedVoices(
+  meetingId: string,
+  log: Log = () => undefined,
+): Promise<number> {
+  const data = await MeetingDataModel.findOne({ meetingId }, { speakerCards: 1 }).lean();
+  let added = 0;
+  for (const c of (data?.speakerCards ?? []) as SpeakerCardDoc[]) {
+    if (!c.confirmed || !c.personId || !c.clips?.length) continue;
+    if (!(await SpeakerModel.exists({ _id: c.personId }))) continue;
+    added += await addVoiceprints(
+      meetingId,
+      c.personId,
+      c.diar,
+      c.clips.map((x) => ({ speaker: c.diar, start: x.start, end: x.end, quality: x.quality })),
+      log,
+    );
+  }
+  return added;
 }

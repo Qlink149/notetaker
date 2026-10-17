@@ -108,7 +108,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
       await JobModel.exists({
         meetingId: m._id,
         status: { $in: ['queued', 'running'] },
-        stage: { $ne: 'benchmark' },
+        stage: { $nin: ['benchmark', 'learnvoice'] },
       })
     ) {
       throw new HttpError(409, 'meeting_is_processing');

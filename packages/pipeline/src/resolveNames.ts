@@ -141,6 +141,9 @@ export interface NameResolution {
   margin: number;
   /** Best candidate even when rejected, for display ("closest: …"). */
   candidate: string | null;
+  /** That candidate's person id and score, so a person can confirm a near miss. */
+  candidateId: string | null;
+  candidateScore: number;
   status: ResolveStatus;
 }
 
@@ -250,6 +253,8 @@ export function resolveNames(
       score,
       margin,
       candidate: best ? (names[best[0]] ?? best[0]) : null,
+      candidateId: best ? best[0] : null,
+      candidateScore: best ? best[1] : 0,
       status,
     };
   });

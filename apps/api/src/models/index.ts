@@ -273,10 +273,12 @@ export interface SpeakerCardDoc {
   speakerSec: number;
   /** Cross-meeting voiceprint match that linked this voice to an earlier person. */
   match: { personId: string; name: string; score: number; margin: number } | null;
-  /** Closest known person when the match was rejected. */
-  candidate: { name: string; score: number; status: string } | null;
+  /** Closest known person when the match was rejected; status "possible" means close enough to offer for confirmation. */
+  candidate: { name: string; personId?: string | null; score: number; status: string } | null;
   /** solid = confident voiceprint match or confirmed by a person; review = needs a look; new = first time heard; manual = set by hand. */
   status: 'solid' | 'review' | 'new' | 'manual';
+  /** A person named or confirmed this voice (only then are its clips learned into the person's profile). */
+  confirmed?: boolean;
   /** Playable samples in the meeting audio. */
   clips: { start: number; end: number; quality: number | null }[];
 }

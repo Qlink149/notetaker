@@ -19,11 +19,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
 const STATUS = {
-  solid: { label: 'Confident', cls: 'bg-emerald-100 text-emerald-700' },
+  solid: { label: 'Matched by voice', cls: 'bg-emerald-100 text-emerald-700' },
   review: { label: 'Needs review', cls: 'bg-amber-100 text-amber-800' },
   new: { label: 'New voice', cls: 'bg-sky-100 text-sky-700' },
-  manual: { label: 'Edited by hand', cls: 'bg-violet-100 text-violet-700' },
+  manual: { label: 'Merged or split by hand', cls: 'bg-violet-100 text-violet-700' },
 };
+const NAMED = { label: 'Named by hand', cls: 'bg-violet-100 text-violet-700' };
+
+/** The badge says who decided the name: a person, or the voice match. */
+export function statusOf(card) {
+  if (card.confirmed) return NAMED;
+  if (card.status === 'solid' && !card.match) return NAMED; // named before confirmations were recorded
+  return STATUS[card.status] ?? STATUS.new;
+}
 
 const PALETTE = [
   'bg-blue-100 text-blue-700',
@@ -51,7 +59,14 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
   const [similar, setSimilar] = useState(null);
   const [mergeInto, setMergeInto] = useState('');
   const [note, setNote] = useState('');
-  const status = STATUS[card.status] ?? STATUS.new;
+  const status = statusOf(card);
+  const possible =
+    !card.match &&
+    !card.confirmed &&
+    card.candidate?.status === 'possible' &&
+    card.candidate.personId
+      ? card.candidate
+      : null;
 
   const save = async (extra = {}) => {
     const value = (extra.name ?? name).trim();
@@ -109,7 +124,7 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
       </div>
 
       {card.match && (
-        <p className="text-xs text-foreground flex items-start gap-1.5">
+        <div className="text-xs text-foreground flex items-start gap-1.5 flex-wrap">
           <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600" />
           <span>
             Same voice as <b>{card.match.name}</b> · match score {card.match.score}
@@ -118,9 +133,34 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
               (next best is {Math.round(card.match.score - card.match.margin)})
             </span>
           </span>
-        </p>
+          {!card.confirmed && (
+            <button
+              className="ml-auto underline text-muted-foreground hover:text-foreground disabled:opacity-50"
+              disabled={busy}
+              onClick={() => save({ name: card.match.name, usePersonId: card.personId })}
+            >
+              Confirm
+            </button>
+          )}
+        </div>
       )}
-      {!card.match && card.candidate && (
+      {possible && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs space-y-2">
+          <p className="text-amber-900">
+            Possibly <b>{possible.name}</b> (score {possible.score}). Not named automatically
+            because the voice match is not strong enough.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => save({ name: possible.name, usePersonId: possible.personId })}
+          >
+            Yes, it's {possible.name}
+          </Button>
+        </div>
+      )}
+      {!card.match && !card.confirmed && !possible && card.candidate && (
         <p className="text-xs text-muted-foreground flex items-start gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-600" />
           <span>
@@ -182,7 +222,11 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && save()}
-          placeholder={card.anonymous ? "Type this person's name" : `Rename ${card.displayName}`}
+          placeholder={
+            card.anonymous
+              ? "Type this person's name"
+              : `Not ${card.displayName}? Type the right name`
+          }
           className="h-9 text-sm"
           aria-label={`Name for ${card.displayName}`}
         />
@@ -358,8 +402,10 @@ export default function SpeakerReview({
             />
           ))}
           <p className="text-[11px] text-muted-foreground">
-            Naming a voice names it everywhere it was recognised. Click a speaker's name on a
-            transcript line to move that line or split the speaker from there.
+            Naming an unnamed voice names it everywhere it was heard. Typing a different name on a
+            matched voice corrects this meeting only. Voices you name or confirm are learned for
+            future meetings. Click a speaker's name on a transcript line to move that line or split
+            the speaker from there.
           </p>
         </div>
       )}

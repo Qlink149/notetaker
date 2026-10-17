@@ -37,13 +37,15 @@ const NameBody = z.object({
   usePersonId: z.string().optional(),
   /** Skip the similar-name check and keep the typed name as a new person. */
   createNew: z.boolean().optional(),
+  /** Rename the matched person in every meeting instead of correcting this meeting's match. */
+  renameEverywhere: z.boolean().optional(),
 });
 const MergeBody = z.object({ from: z.string(), into: z.string() });
 const SplitBody = z.object({ lineIndex: z.number().int().min(0) });
 const ReassignBody = z.object({ lineIndex: z.number().int().min(0), toDiar: z.string() });
 
-// Speaker review (Phase 2): cards with clips and confidence, rename (which propagates to every
-// meeting where the voice was recognised), merge, split, reassign one line, re-identify.
+// Speaker review (Phase 2): cards with clips and confidence, name (a correction stays in this meeting; naming an
+// unnamed voice names it wherever it was heard), merge, split, reassign one line, re-identify.
 export function meetingSpeakersRouter(_deps: ApiDeps): Router {
   const r = Router();
 
@@ -140,6 +142,7 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
           turns: turnCount.get(c.diar) ?? 0,
           phone: phone.get(c.diar) ?? null,
           status: c.status,
+          confirmed: c.confirmed === true,
           // the matched person's current name, not the placeholder they had when matched
           match: c.match
             ? {
@@ -167,7 +170,7 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
 
   r.post('/meetings/:id/speakers/:diar/name', async (req, res) => {
     const m = await own(req);
-    const { name, usePersonId, createNew } = body(NameBody, req);
+    const { name, usePersonId, createNew, renameEverywhere } = body(NameBody, req);
     const diar = String(req.params.diar);
     const data = await MeetingDataModel.findOne({ meetingId: m._id }, { speakerCards: 1 }).lean();
     const card = ((data?.speakerCards ?? []) as SpeakerCardDoc[]).find((c) => c.diar === diar);
@@ -193,7 +196,9 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
       }
     }
     const result = await editing(() =>
-      nameSpeaker(String(m._id), String(ws(req)._id), diar, name, usePersonId),
+      nameSpeaker(String(m._id), String(ws(req)._id), diar, name, usePersonId, {
+        renameEverywhere,
+      }),
     );
     res.json({
       personId: result.personId,
@@ -248,7 +253,13 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
     const changes: { speaker: string; person: string; score: number }[] = [];
     for (const card of cards) {
       const res2 = report.resolutions[card.diar];
-      if (!res2?.personId || card.status === 'manual' || card.personId === res2.personId) continue;
+      if (
+        !res2?.personId ||
+        card.status === 'manual' ||
+        card.confirmed ||
+        card.personId === res2.personId
+      )
+        continue;
       const person = people.get(res2.personId);
       if (!person) continue;
       card.personId = res2.personId;

@@ -104,7 +104,7 @@ describe('speaker cards', () => {
     expect(screen.getByText(/match score 78/)).toBeTruthy();
     expect(screen.getByText(/Also heard in/)).toBeTruthy();
     expect(screen.getByText(/Mostly closest to/)).toBeTruthy();
-    expect(screen.getByText('Confident')).toBeTruthy();
+    expect(screen.getByText('Matched by voice')).toBeTruthy();
     const play = screen.getAllByRole('button', { name: /Play sample/ });
     expect(play).toHaveLength(2);
     fireEvent.click(play[1]);
@@ -189,6 +189,57 @@ describe('speaker cards', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Merge/ })[0]);
     await waitFor(() =>
       expect(api.meetings.mergeSpeakers).toHaveBeenCalledWith('m1', 'SPEAKER_01', 'SPEAKER_02'),
+    );
+  });
+
+  it('offers a near miss for one-click confirmation instead of naming it', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
+    renderReview([
+      card({
+        match: null,
+        status: 'new',
+        candidate: { name: 'Paresh Ecom', personId: 'p-paresh', score: 62, status: 'possible' },
+      }),
+    ]);
+    expect(screen.getByText(/Possibly/).textContent).toContain('Paresh Ecom');
+    expect(screen.queryByText(/not confident enough to link/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Yes, it's Paresh Ecom/ }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        name: 'Paresh Ecom',
+        usePersonId: 'p-paresh',
+      }),
+    );
+  });
+
+  it('lets a person confirm an automatic match', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
+    renderReview([card({ personId: 'p9' })]);
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        name: 'Speaker D (Meeting 21/9)',
+        usePersonId: 'p9',
+      }),
+    );
+  });
+
+  it('says a person chose the name, and drops the old "not confident" note', () => {
+    renderReview([
+      card({
+        displayName: 'Paresh Ecom',
+        anonymous: false,
+        match: null,
+        confirmed: true,
+        candidate: { name: 'Paresh Ecom', score: 54, status: 'below-threshold' },
+      }),
+    ]);
+    expect(screen.getByText('Named by hand')).toBeTruthy();
+    expect(screen.queryByText('Matched by voice')).toBeNull();
+    expect(screen.queryByText(/not confident enough to link/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
+    expect(screen.getByLabelText(/Name for Paresh Ecom/).getAttribute('placeholder')).toBe(
+      'Not Paresh Ecom? Type the right name',
     );
   });
 
