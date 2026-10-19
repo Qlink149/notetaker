@@ -77,7 +77,7 @@ jobs:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_API_KEY2: ${{ secrets.RENDER_API_KEY2 }}
     steps:
-      - name: Deploy the API and the worker
+      - name: Deploy the API
         run: |
           deploy() {
             local name="$1" service="$2" key="$3"
@@ -92,5 +92,6 @@ jobs:
           }
           failed=0
           deploy "API (meetingid-phase2)" srv-db4963vlot8c7388nku0 "$RENDER_API_KEY" || failed=1
-          deploy "worker (meetingid-worker)" srv-db6dbr5ckfvc73d26e0g "$RENDER_API_KEY2" || failed=1
+          # The worker moved to a DigitalOcean droplet on 20 Oct (Dockerfile.worker); the Render worker is
+          # suspended and is no longer deployed from here.
           exit $failed
