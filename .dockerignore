@@ -1,0 +1,18 @@
+# Keep the build context small and free of secrets.
+.env
+.env.*
+!.env.example
+**/node_modules
+**/dist
+.git
+scratch
+legacy
+docs
+tools
+scripts
+apps/web/src
+apps/web/test
+apps/web/public
+**/*.log
+**/test
+**/*.test.ts

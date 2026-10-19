@@ -1,0 +1,31 @@
+# MeetingID worker (transcription pipeline) for a plain Docker host, e.g. the DigitalOcean droplet in Bangalore.
+# The API and website do not use this image. Build from the repository root:
+#   docker build -f Dockerfile.worker -t meetingid-worker .
+# Settings and keys come from an env file at run time (never baked into the image):
+#   docker run -d --env-file /etc/meetingid/worker.env -p 10000:10000 meetingid-worker
+
+FROM node:20-bookworm-slim AS build
+WORKDIR /app
+# Manifests first, so the dependency layer is reused while only source code changes.
+COPY package.json package-lock.json .npmrc tsconfig.base.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/pipeline/package.json packages/pipeline/
+COPY apps/api/package.json apps/api/
+COPY apps/web/package.json apps/web/
+RUN npm ci --include=dev --include-workspace-root -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+COPY packages/shared packages/shared
+COPY packages/pipeline packages/pipeline
+COPY apps/api apps/api
+RUN npm run build -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api \
+ && npm prune --omit=dev --include-workspace-root -w @meetingid/shared -w @meetingid/pipeline -w @meetingid/api
+
+FROM node:20-bookworm-slim
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build --chown=node:node /app /app
+# scratch/ holds per-meeting working files (pyannote clips); it must be writable by the worker.
+RUN mkdir -p /app/scratch && chown node:node /app/scratch
+USER node
+EXPOSE 10000
+# 1 GB droplet with 2 GB swap: a heap cap above Render's 320 MB, below the container's memory limit.
+CMD ["node", "--max-old-space-size=700", "apps/api/dist/worker.js"]
