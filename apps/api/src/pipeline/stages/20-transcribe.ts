@@ -11,6 +11,7 @@ import { addCost, loadChunkStatuses, loadMeeting, loadWorkspaceContext } from '.
 import { enqueue } from '../queue.js';
 import { saveEngineResponse } from '../responses.js';
 import { rawOf } from '../../services/engines/types.js';
+import { isContentBlocked } from '../../services/engines/gemini.js';
 import { OVERLAP_SEC } from './10-ingest.js';
 
 const FLAC = 'audio/flac';
@@ -20,6 +21,8 @@ const GEMINI_FILE_TTL_MS = 46 * 3600_000;
 const BAD_OUTPUTS_BEFORE_SPLIT = 2;
 /** Chunks shorter than this are not split again; they fail instead. */
 const MIN_SPLIT_SEC = 240;
+/** A chunk refused by Gemini's filter is split down to about 1.5-minute pieces before it is given up on. */
+const MIN_BLOCKED_SPLIT_SEC = 120;
 
 async function loadChunk(meetingId: Types.ObjectId, index: number) {
   const data = await MeetingDataModel.findOne(
@@ -118,6 +121,16 @@ export const transcribeStage: StageHandler = {
     } catch (err) {
       // A reply that arrived but could not be used (invalid JSON, bad status) is still kept.
       await saveEngineResponse(rawOf(err), where, (err as Error).message.slice(0, 500));
+      // Gemini's filter refusing the audio is usually a false alarm on one stretch: shorter pieces go through,
+      // so the chunk is split (halves, then quarters) instead of losing all of it.
+      if (isContentBlocked(err) && chunk.endSec - chunk.startSec >= MIN_BLOCKED_SPLIT_SEC) {
+        log.warn(
+          { err: (err as Error).message.slice(0, 120) },
+          'blocked by Gemini filter; splitting',
+        );
+        await splitAndRequeue(meeting._id, chunk);
+        return;
+      }
       throw err;
     }
     if (result.uploaded) {

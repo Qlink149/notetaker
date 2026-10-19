@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { Types, type QueryFilter } from 'mongoose';
 import { STAGE_LEASE_MS, type JobStage } from '@meetingid/shared';
 import { JobModel, type JobDoc } from '../models/index.js';
@@ -39,7 +40,32 @@ export async function enqueue(input: EnqueueInput): Promise<JobDoc> {
     runAfter: input.runAfter ?? new Date(),
     maxAttempts: input.maxAttempts ?? MAX_ATTEMPTS,
   });
+  wakeIdleLoops();
   return job.toObject() as JobDoc;
+}
+
+// Idle worker loops wait here between empty checks of the queue. Each check is a database round trip, and
+// nine loops checking every 2 s cost about 9 GB of outbound traffic a month on a worker doing nothing, so idle
+// loops slow down; work queued by this same process (chunks after ingest, the next stage) wakes them at once.
+const queued = new EventEmitter();
+queued.setMaxListeners(0);
+
+/** Wait `ms`, or less if this process queues a job (or a loop must stop) meanwhile. */
+export function waitForJob(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      queued.off('job', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    queued.once('job', done);
+  });
+}
+
+/** Wake every idle loop now (a job was queued here, or the worker is stopping). */
+export function wakeIdleLoops(): void {
+  queued.emit('job');
 }
 
 /**

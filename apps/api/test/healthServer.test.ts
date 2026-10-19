@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { startHealthServer } from '../src/lib/healthServer.js';
+import { startHealthServer, startHealthThread } from '../src/lib/healthServer.js';
 
 // A worker running as a Render web service must answer HTTP so the platform (and an uptime monitor) can
 // see it, and must not expose anything else.
@@ -32,5 +34,42 @@ describe('worker health endpoint', () => {
   it('refuses everything else', async () => {
     expect((await fetch(`${url}/api/v1/meetings`)).status).toBe(404);
     expect((await fetch(`${url}/health`, { method: 'POST' })).status).toBe(404);
+  });
+});
+
+describe('worker health endpoint on its own thread', () => {
+  it('still answers within Render’s 5 s while the main thread is busy for longer', async () => {
+    const port = await new Promise<number>((resolve) => {
+      const probe = createServer().listen(0, () => {
+        const p = (probe.address() as AddressInfo).port;
+        probe.close(() => resolve(p));
+      });
+    });
+    const health = startHealthThread(port, { concurrency: 1 });
+    const url = `http://127.0.0.1:${port}/health`;
+    for (let i = 0; i < 50; i++) {
+      if (
+        await fetch(url).then(
+          (r) => r.ok,
+          () => false,
+        )
+      )
+        break;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    // another process checks the endpoint while this thread is blocked, like Render's health check
+    const check = spawn(process.execPath, [
+      '-e',
+      `setTimeout(async()=>{const t=Date.now();const r=await fetch(${JSON.stringify(url)},{signal:AbortSignal.timeout(2000)});console.log(r.status, Date.now()-t)},300)`,
+    ]);
+    let out = '';
+    check.stdout.on('data', (d) => (out += String(d)));
+    const until = Date.now() + 3000;
+    while (Date.now() < until); // the main thread is busy for 3 s (a long assembly step)
+    await new Promise((r) => check.on('exit', r));
+    await health.close();
+    const [status, ms] = out.trim().split(' ').map(Number);
+    expect(status).toBe(200);
+    expect(ms).toBeLessThan(2000);
   });
 });

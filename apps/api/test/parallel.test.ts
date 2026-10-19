@@ -159,6 +159,43 @@ describe('runner lanes', () => {
     expect(await JobModel.countDocuments({ status: 'done' })).toBe(7);
   });
 
+  it('idle loops slow down, but a job queued by this process starts at once', async () => {
+    let checks = 0;
+    let ran = 0;
+    const registry = {
+      ...stages,
+      ingest: {
+        async run() {
+          ran++;
+        },
+      },
+    } as unknown as StageRegistry;
+    const runner = new Runner(
+      testDeps({ storage: await fakeStorage(), engine: () => ({}) as never }),
+      registry,
+      { workerId: 'idle', concurrency: 1, transcribeConcurrency: 3 },
+    );
+    const runOnce = runner.runOnce.bind(runner);
+    runner.runOnce = async (lane) => {
+      checks++;
+      return runOnce(lane);
+    };
+    const done = runner.start();
+    await sleep(4500);
+    // 4 loops checking at 0 s, 2 s and 6 s (the wait doubles): at most 8 checks, not 12 at a fixed 2 s
+    expect(checks).toBeLessThanOrEqual(8);
+    const queuedAt = Date.now();
+    await enqueue({ meetingId: new Types.ObjectId(), stage: 'ingest' });
+    for (let i = 0; i < 100 && ran === 0; i++) await sleep(20);
+    expect(ran).toBe(1);
+    expect(Date.now() - queuedAt).toBeLessThan(1500);
+    const stopAt = Date.now();
+    await runner.stop(1000);
+    await done;
+    // stopping wakes the sleeping loops instead of waiting out their pause
+    expect(Date.now() - stopAt).toBeLessThan(1500);
+  });
+
   it('with no transcription lane keeps the old one-lane behaviour', async () => {
     let running = 0;
     let peak = 0;

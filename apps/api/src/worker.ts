@@ -1,6 +1,6 @@
 import { env } from './config/env.js';
 import { connectMongo, disconnectMongo } from './db/mongo.js';
-import { startHealthServer } from './lib/healthServer.js';
+import { startHealthThread } from './lib/healthServer.js';
 import { logger } from './lib/logger.js';
 import { defaultDeps } from './pipeline/context.js';
 import { Runner } from './pipeline/runner.js';
@@ -16,14 +16,13 @@ async function main(): Promise<void> {
     transcribeConcurrency: cfg.WORKER_TRANSCRIBE_CONCURRENCY,
   });
 
-  const startedAt = Date.now();
+  // On its own thread, so a long CPU-heavy step cannot make Render's health check time out.
   const health = cfg.WORKER_HTTP
-    ? startHealthServer(cfg.PORT, () => ({
-        uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+    ? startHealthThread(cfg.PORT, {
         concurrency: cfg.WORKER_CONCURRENCY,
         transcribeConcurrency: cfg.WORKER_TRANSCRIBE_CONCURRENCY,
         service: process.env.SERVICE_NAME ?? 'worker',
-      }))
+      })
     : null;
   if (health) logger.info({ port: cfg.PORT }, 'worker health endpoint listening');
 
@@ -33,7 +32,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'shutting down worker');
     await runner.stop();
-    health?.close();
+    await health?.close();
     await disconnectMongo();
     process.exit(0);
   };

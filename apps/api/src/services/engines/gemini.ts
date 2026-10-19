@@ -144,6 +144,16 @@ const isOverload = (err: unknown): boolean => {
   );
 };
 
+/**
+ * Gemini's input filter refused the request ("400 Input blocked … Gemini's filters"). It reacts to one stretch of
+ * audio together with the instructions and is often a false alarm: the same audio in shorter pieces goes through
+ * (Jolto Followup 0:00–10:00 was refused twice, both 5-minute halves were transcribed).
+ */
+export function isContentBlocked(err: unknown): boolean {
+  const msg = String((err as { message?: unknown })?.message ?? err);
+  return /Input blocked|blocked by Gemini'?s filters|PROHIBITED_CONTENT|blockReason/i.test(msg);
+}
+
 let limiter: Limiter | null = null;
 /**
  * One cap for every Gemini request this process sends, whichever stage asks (the transcription lane and the

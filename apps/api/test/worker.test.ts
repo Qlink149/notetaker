@@ -182,6 +182,61 @@ describe('worker state machine', () => {
     expect(replies.map((r) => r.error)).toEqual(['truncated', null]); // both replies kept
   });
 
+  it('splits a part that Gemini’s filter refuses and transcribes the halves (Jolto Followup, 19 Oct)', async () => {
+    const blocked = (): Error =>
+      Object.assign(new Error("400 Input blocked: This request was blocked by Gemini's filters."), {
+        status: 400,
+      });
+    // the whole 2-minute part is refused, each shorter piece goes through
+    const engine = fakeEngine((input) =>
+      input.endSec - input.startSec > 100
+        ? blocked()
+        : okResult(turnsCovering(0, input.endSec - input.startSec)),
+    );
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+      }),
+      stages,
+    );
+    const id = await createMeeting();
+    await runner.drain();
+
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
+    const chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
+    expect(chunks.map((c) => c.status)).toEqual(['superseded', 'done', 'done']);
+    expect(chunks[1]!.startSec).toBe(0);
+    expect(chunks[2]!.endSec).toBeCloseTo(120, 0);
+    expect(engine.calls).toHaveLength(3);
+  });
+
+  it('gives up on a refused part once its pieces are too short to split again', async () => {
+    const engine = fakeEngine(() =>
+      Object.assign(new Error("400 Input blocked: This request was blocked by Gemini's filters."), {
+        status: 400,
+      }),
+    );
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+      }),
+      stages,
+    );
+    const id = await createMeeting();
+    await runner.drain();
+
+    const chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
+    // 120 s splits once into two ~75 s halves; those are under the 120 s floor and fail
+    expect(chunks.map((c) => c.status)).toEqual(['superseded', 'failed', 'failed']);
+    expect(engine.calls).toHaveLength(3);
+  });
+
   it('resumes after a worker dies mid-transcribe without paying twice', async () => {
     let clock = Date.now() + 5_000; // ahead of the real-time runAfter stamped by enqueue
     const engine = fakeEngine((input) => okResult(turnsCovering(0, input.endSec - input.startSec)));

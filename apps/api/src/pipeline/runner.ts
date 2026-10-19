@@ -14,11 +14,18 @@ import {
   release,
   renewLease,
   scheduleRetry,
+  waitForJob,
+  wakeIdleLoops,
   type ClaimLane,
 } from './queue.js';
 
 const HEARTBEAT_MS = 30_000;
 const IDLE_POLL_MS = 2_000;
+/**
+ * Longest wait between empty checks of the queue. A new upload waits at most this long before the worker
+ * picks it up; work this worker queues itself (chunks, the next stage) starts at once (waitForJob).
+ */
+const IDLE_POLL_MAX_MS = 30_000;
 
 export interface RunnerOptions {
   workerId?: string;
@@ -93,6 +100,7 @@ export class Runner {
   /** Stop claiming, give in-flight jobs `graceMs` to finish, hand the rest back to the queue. */
   async stop(graceMs = 25_000): Promise<void> {
     this.stopping = true;
+    wakeIdleLoops();
     const deadline = Date.now() + graceMs;
     while (this.active.size && Date.now() < deadline) await sleep(250);
     for (const job of this.active.values()) await release(job._id, this.workerId);
@@ -101,9 +109,15 @@ export class Runner {
   }
 
   private async loop(lane: ClaimLane): Promise<void> {
+    // Empty checks double the wait, up to IDLE_POLL_MAX_MS; finding a job resets it.
+    let idle = IDLE_POLL_MS;
     while (!this.stopping) {
       try {
-        if (!(await this.runOnce(lane))) await sleep(IDLE_POLL_MS);
+        if (await this.runOnce(lane)) idle = IDLE_POLL_MS;
+        else {
+          await waitForJob(idle);
+          idle = Math.min(idle * 2, IDLE_POLL_MAX_MS);
+        }
       } catch (err) {
         logger.error({ err }, 'worker loop error');
         await sleep(IDLE_POLL_MS * 5);
@@ -145,7 +159,7 @@ export class Runner {
       // a recording that crashes the server (out of memory) from being retried for ever.
       if (job.attempts > job.maxAttempts)
         throw new FatalError(
-          'Processing this recording stopped the server several times (it probably ran out of memory). Try again, or use a shorter recording.',
+          'The server restarted several times while processing this step (it ran out of memory or stopped answering). Try again, or use a shorter recording.',
         );
       await handler.run(ctx);
       await markDone(job._id, this.workerId);
