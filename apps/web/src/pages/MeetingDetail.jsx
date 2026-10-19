@@ -91,7 +91,9 @@ export default function MeetingDetail() {
   const [scriptMode, setScriptMode] = useState(workspace?.settings?.scriptPreference ?? 'roman');
   const [currentTime, setCurrentTime] = useState(0);
   const [speakers, setSpeakers] = useState(null);
-  const [summaryStale, setSummaryStale] = useState(false);
+  // set when a speaker edit swapped the new names into the existing summary (no new summary was written)
+  const [summaryNote, setSummaryNote] = useState('');
+  const meetingRef = useRef(null);
   const [follow, setFollow] = useState(() => {
     try {
       return localStorage.getItem('liveTranscript') === '1';
@@ -147,11 +149,22 @@ export default function MeetingDetail() {
       api.meetings.data(id),
       api.meetings.speakers(id),
     ]);
+    const before = meetingRef.current;
     setMeeting(m);
     setData(d);
     setSpeakers(sp);
-    if (m.summary) setSummaryStale(true);
+    // The server follows a rename inside the summary itself, or marks it out of date when a new one is needed.
+    const followed =
+      before?.summary &&
+      !m.summaryOutdated &&
+      (before.summary !== m.summary ||
+        JSON.stringify(before.actionItems) !== JSON.stringify(m.actionItems));
+    setSummaryNote(followed ? 'Summary and action items updated with the new name.' : '');
   }, [id]);
+
+  useEffect(() => {
+    meetingRef.current = meeting;
+  }, [meeting]);
 
   const run = async (fn) => {
     setBusy(true);
@@ -481,7 +494,23 @@ export default function MeetingDetail() {
           <div className="flex items-center gap-2 mb-2">
             <Sparkles className="w-4 h-4 text-muted-foreground" />
             <h2 className="font-semibold">Summary</h2>
+            {!processing && !meeting.summaryOutdated && (
+              <button
+                type="button"
+                className="ml-auto text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                disabled={busy}
+                title="Writes a new summary from the transcript (uses AI credits)"
+                onClick={summariseAnyway}
+              >
+                New summary
+              </button>
+            )}
           </div>
+          {summaryNote && (
+            <p className="text-xs text-emerald-700 mb-2" role="status" data-testid="summary-note">
+              {summaryNote}
+            </p>
+          )}
           <div className="text-sm leading-relaxed text-muted-foreground meeting-summary">
             <ReactMarkdown
               components={{
@@ -525,18 +554,22 @@ export default function MeetingDetail() {
         </div>
       )}
 
-      {(summaryStale || meeting.summaryOutdated) && meeting.summary && !processing && (
-        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap">
+      {meeting.summaryOutdated && meeting.summary && !processing && (
+        <div
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap"
+          data-testid="summary-outdated"
+        >
           <span className="flex-1 min-w-48">
-            Names changed. The summary above was written with the earlier speaker labels until it is
-            refreshed.
+            This speaker change needs a new summary (speakers were joined or split, a line moved to
+            someone else, or a name is also someone mentioned in the meeting). Until then the
+            summary above may use the earlier names; the action items already show the new ones.
           </span>
           <Button
             size="sm"
             variant="outline"
             disabled={busy}
             onClick={() => {
-              setSummaryStale(false);
+              setSummaryNote('');
               summariseAnyway();
             }}
           >

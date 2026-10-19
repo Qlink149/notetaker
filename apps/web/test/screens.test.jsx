@@ -411,7 +411,19 @@ describe('meeting page with speakers', () => {
         textNative: 'आज हम',
       },
     ];
-    api.meetings.get.mockResolvedValue(meeting);
+    // after naming, the server returns the summary with the new name swapped in (no new summary written)
+    api.meetings.get
+      .mockResolvedValueOnce({
+        ...meeting,
+        summary: '## Overview\nSpeaker D agreed the offer.',
+        actionItems: [{ speakerName: 'Speaker D', text: 'Send the offer.' }],
+      })
+      .mockResolvedValue({
+        ...meeting,
+        summary: '## Overview\nGhanshyam Dholakia agreed the offer.',
+        actionItems: [{ speakerName: 'Ghanshyam Dholakia', text: 'Send the offer.' }],
+        summaryOutdated: false,
+      });
     api.meetings.data
       .mockResolvedValueOnce({ lines: lines('Speaker D') })
       .mockResolvedValue({ lines: lines('Ghanshyam Dholakia') });
@@ -466,11 +478,14 @@ describe('meeting page with speakers', () => {
         name: 'Ghanshyam Dholakia',
       }),
     );
-    // the page reloads the transcript and the cards, and is honest about the summary
+    // the page reloads the transcript, the cards and the summary, which now carries the new name
     await waitFor(() =>
       expect(screen.getAllByText('Ghanshyam Dholakia').length).toBeGreaterThan(0),
     );
-    await screen.findByText(/summary above was written with the earlier speaker labels/);
+    const note = await screen.findByTestId('summary-note');
+    expect(note.textContent).toMatch(/updated with the new name/);
+    expect(screen.getByText(/Ghanshyam Dholakia agreed the offer/)).toBeTruthy();
+    expect(screen.queryByTestId('summary-outdated')).toBeNull();
   });
 });
 
@@ -519,6 +534,25 @@ describe('meeting page with a partly readable recording', () => {
     open();
     await screen.findByText('iPhone recording');
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('asks for a new summary only when the server says a rename was not enough', async () => {
+    api.meetings.data.mockResolvedValue({ lines: [] });
+    api.meetings.speakers.mockResolvedValue({ source: 'pyannote', cards: [] });
+    api.meetings.get.mockResolvedValue({ ...base, summaryOutdated: false });
+    const first = open();
+    await screen.findByText('iPhone recording');
+    expect(screen.queryByTestId('summary-outdated')).toBeNull();
+    // a new summary stays available, as an option
+    expect(screen.getByRole('button', { name: 'New summary' })).toBeTruthy();
+    first.unmount();
+
+    api.meetings.get.mockResolvedValue({ ...base, summaryOutdated: true });
+    open();
+    const banner = await screen.findByTestId('summary-outdated');
+    expect(banner.textContent).toMatch(/needs a new summary/);
+    expect(banner.textContent).toMatch(/action items already show the new ones/);
+    expect(screen.getByRole('button', { name: /Refresh summary/ })).toBeTruthy();
   });
 });
 

@@ -15,7 +15,10 @@ export const summariseStage: StageHandler = {
     const force = Boolean((job.payload as { force?: boolean } | null)?.force);
     const ratio = meeting.coverage?.ratio ?? 0;
 
-    const data = await MeetingDataModel.findOne({ meetingId: meeting._id }, { lines: 1 }).lean();
+    const data = await MeetingDataModel.findOne(
+      { meetingId: meeting._id },
+      { lines: 1, speakerMap: 1 },
+    ).lean();
     const lines = (data?.lines ?? []) as Line[];
 
     if (!lines.length || (ratio < MIN_COVERAGE && !force)) {
@@ -73,6 +76,8 @@ export const summariseStage: StageHandler = {
           ? {
               summaryStatus: 'completed',
               summaryOutdated: false,
+              // the names it was written with: a later rename is swapped into the text instead of a new summary
+              summaryNames: (data?.speakerMap ?? null) as Record<string, string> | null,
               summary: result.summaryMarkdown,
               actionItems: result.actionItems,
               stage: 'finalise',

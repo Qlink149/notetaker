@@ -159,7 +159,7 @@ describe('naming a voice', () => {
     expect(aomView.cards.find((c) => c.diar === 'S5')!.match!.name).toBe('Ghanshyam Dholakia');
   });
 
-  it('marks the summary of every meeting whose speaker names changed as out of date', async () => {
+  it('puts a new name into the existing summaries instead of asking for new ones', async () => {
     const person = await SpeakerModel.create({
       workspaceId: workspace._id,
       name: 'Speaker B (Meeting 21/9)',
@@ -181,25 +181,156 @@ describe('naming a voice', () => {
       [turn('S0', 0, 5, 'five'), turn('S1', 5, 10, 'six')],
       [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null)],
     );
-    await MeetingModel.updateMany(
-      { _id: { $in: [a, b, other] } },
+    // summaries written before the names they use were recorded (they follow the speaker map of their time)
+    await MeetingModel.updateOne(
+      { _id: a },
+      {
+        $set: {
+          summary: '## Overview\nSpeaker B asked Speaker A about the budget.',
+          actionItems: [{ speakerName: 'Speaker B', text: 'Send Speaker A the plan.' }],
+          summaryStatus: 'completed',
+        },
+      },
+    );
+    await MeetingModel.updateOne(
+      { _id: b },
+      { $set: { summary: 'Speaker C proposed three cities.', summaryStatus: 'completed' } },
+    );
+    await MeetingModel.updateOne(
+      { _id: other },
       { $set: { summary: 'Speaker B said something.', summaryStatus: 'completed' } },
     );
-    const flag = async (id: string) =>
-      (await auth(request(app).get(`/api/v1/meetings/${id}`)).expect(200)).body.meeting
-        .summaryOutdated as boolean;
-    expect([await flag(a), await flag(b), await flag(other)]).toEqual([false, false, false]);
+    const costBefore = (await MeetingModel.findById(a).lean())!.cost?.claudeInputTokens ?? 0;
 
     await auth(request(app).post(`/api/v1/meetings/${a}/speakers/S1/name`))
       .send({ name: 'Ghanshyam Dholakia' })
       .expect(200);
 
-    // both meetings that show the voice are flagged, the unrelated one is not
-    expect([await flag(a), await flag(b), await flag(other)]).toEqual([true, true, false]);
+    const ma = (await MeetingModel.findById(a).lean())!;
+    const mb = (await MeetingModel.findById(b).lean())!;
+    const mo = (await MeetingModel.findById(other).lean())!;
+    expect(ma.summary).toBe('## Overview\nGhanshyam Dholakia asked Speaker A about the budget.');
+    expect(ma.actionItems.map((x) => ({ speakerName: x.speakerName, text: x.text }))).toEqual([
+      { speakerName: 'Ghanshyam Dholakia', text: 'Send Speaker A the plan.' },
+    ]);
+    // the other meeting where the voice was recognised follows too
+    expect(mb.summary).toBe('Ghanshyam Dholakia proposed three cities.');
+    // nothing is out of date, no new summary was written, and an unrelated meeting is untouched
+    expect([ma.summaryOutdated, mb.summaryOutdated, mo.summaryOutdated]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    expect(mo.summary).toBe('Speaker B said something.');
+    expect(ma.cost?.claudeInputTokens ?? 0).toBe(costBefore);
+    // and the names it now uses are recorded for the next rename
+    expect(ma.summaryNames).toMatchObject({ S1: 'Ghanshyam Dholakia', S0: 'Speaker A' });
+  });
 
-    // writing the summary again clears the flag
-    await MeetingModel.updateOne({ _id: a }, { $set: { summaryOutdated: false } });
-    expect(await flag(a)).toBe(false);
+  it('asks for a new summary only when a rename is not enough', async () => {
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'Heet bhai'), turn('S1', 5, 10, 'two'), turn('S2', 10, 15, 'three')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null), card('S2', 'Speaker C', null)],
+    );
+    const summary = 'Speaker A and Speaker B agreed; Speaker C disagreed.';
+    const reset = async () =>
+      MeetingModel.updateOne(
+        { _id: id },
+        {
+          $set: {
+            summary,
+            actionItems: [{ speakerName: 'Speaker C', text: 'Check.' }],
+            summaryStatus: 'completed',
+            summaryOutdated: false,
+            summaryNames: { unknown: 'Unknown', S0: 'Speaker A', S1: 'Speaker B', S2: 'Speaker C' },
+          },
+        },
+      );
+    const state = async () => (await MeetingModel.findById(id).lean())!;
+
+    // joining two speakers: what Speaker B said may now be Speaker A's, so a rename is not enough
+    await reset();
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/merge`))
+      .send({ from: 'S1', into: 'S0' })
+      .expect(200);
+    let m = await state();
+    expect(m.summaryOutdated).toBe(true);
+    expect(m.summary).toBe(summary);
+
+    // naming a voice after a person who is also talked about in the meeting
+    const id2 = await seedMeeting(
+      'M2',
+      [turn('S0', 0, 5, 'Heet bhai, budget?'), turn('S1', 5, 10, 'haan')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null)],
+    );
+    const heet = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Heet',
+      anonymous: false,
+    });
+    await MeetingModel.updateOne(
+      { _id: id2 },
+      {
+        $set: {
+          summary: 'Speaker A asked about the budget.',
+          actionItems: [{ speakerName: 'Speaker B', text: 'Reply.' }],
+          summaryStatus: 'completed',
+          summaryNames: { unknown: 'Unknown', S0: 'Speaker A', S1: 'Speaker B' },
+        },
+      },
+    );
+    // first the voice is linked to Heet (a generic label becomes a name: safe)
+    await auth(request(app).post(`/api/v1/meetings/${id2}/speakers/S0/name`))
+      .send({ name: 'Heet', usePersonId: String(heet._id) })
+      .expect(200);
+    m = (await MeetingModel.findById(id2).lean())!;
+    expect(m.summary).toBe('Heet asked about the budget.');
+    expect(m.summaryOutdated).toBe(false);
+    // then it turns out to be someone else: "Heet" is also said in the meeting, so the text is not swapped
+    await auth(request(app).post(`/api/v1/meetings/${id2}/speakers/S0/name`))
+      .send({ name: 'Parth Mavani', createNew: true })
+      .expect(200);
+    m = (await MeetingModel.findById(id2).lean())!;
+    expect(m.summaryOutdated).toBe(true);
+    expect(m.summary).toBe('Heet asked about the budget.');
+
+    // moving one line to another speaker
+    await reset();
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    const lineIndex = (data!.lines as { speakerName: string }[]).findIndex(
+      (l) => l.speakerName === 'Speaker C',
+    );
+    await auth(request(app).post(`/api/v1/meetings/${id}/lines/reassign`))
+      .send({ lineIndex, toDiar: 'S0' })
+      .expect(200);
+    m = await state();
+    expect(m.summaryOutdated).toBe(true);
+    expect(m.summary).toBe(summary);
+  });
+
+  it('a summary that was already out of date stays out of date after a rename', async () => {
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'one'), turn('S1', 5, 10, 'two')],
+      [card('S0', 'Speaker A', null), card('S1', 'Speaker B', null)],
+    );
+    await MeetingModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          summary: 'Speaker A spoke.',
+          summaryStatus: 'completed',
+          summaryOutdated: true, // its names are not known any more
+        },
+      },
+    );
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Kanak Patel' })
+      .expect(200);
+    const m = (await MeetingModel.findById(id).lean())!;
+    expect(m.summaryOutdated).toBe(true);
+    expect(m.summary).toBe('Speaker A spoke.');
   });
 
   it('asks before creating a near-duplicate name, and can link to the existing person', async () => {

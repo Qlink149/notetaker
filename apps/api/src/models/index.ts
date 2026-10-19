@@ -122,6 +122,8 @@ export interface MeetingDoc {
   summaryStatus: SummaryStatusT;
   /** Speaker names changed after the summary was written: it still uses the old names until it is refreshed. */
   summaryOutdated?: boolean;
+  /** Speaker id → name the summary was written with (renames are then swapped into it in place). */
+  summaryNames?: Record<string, string> | null;
   /** Set at ingest when the converted audio is shorter than the file says: part of the recording may be missing. */
   audioWarning?: string | null;
   /** Processing is paused for a reason outside our control (e.g. the transcription credit ran out). */
@@ -163,6 +165,7 @@ const meetingSchema = new Schema<MeetingDoc>(
     unknownCount: { type: Number, default: 0 },
     summaryStatus: { type: String, enum: SummaryStatus.options, default: 'pending' },
     summaryOutdated: { type: Boolean, default: false },
+    summaryNames: { type: Schema.Types.Mixed, default: null },
     audioWarning: { type: String, default: null },
     notice: { type: String, default: null },
     summary: { type: String, default: null },

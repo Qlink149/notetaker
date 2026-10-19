@@ -78,6 +78,9 @@ describe('worker state machine', () => {
     expect(m?.durationSec).toBeCloseTo(120, 0);
     expect(m?.progress).toEqual({ chunksTotal: 1, chunksDone: 1 });
     expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
+    // the names the summary was written with, so a later rename can be swapped into it
+    const data0 = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(m?.summaryNames).toEqual(data0?.speakerMap);
     expect(m?.summaryStatus).toBe('completed');
     expect(m?.actionItems).toEqual([{ speakerName: 'Speaker 1', text: 'Send the plan.' }]);
     expect(m?.cost.geminiInputTokens).toBe(1000);

@@ -4,6 +4,7 @@ import {
   labelSpeakersByTime,
   applySpeakerMerges,
   mergeConfusableSpeakers,
+  renameInSummary,
   turnsToLines,
   type DiarSegment,
   type SpeakerMerge,
@@ -166,11 +167,16 @@ export async function installJoin(meetingId: string): Promise<InstallResult> {
   };
 }
 
+/** What happened to the meeting's summary after a speaker change. */
+export type SummaryFollow = 'none' | 'unchanged' | 'updated' | 'needs_refresh';
+
 export interface ApplyResult {
   lines: number;
   coverage: number;
-  /** True when any line's speaker name differs from before (summaries then need regenerating). */
+  /** True when any line's speaker name differs from before. */
   namesChanged: boolean;
+  /** "updated": names swapped in the summary in place; "needs_refresh": marked out of date for a new one. */
+  summary: SummaryFollow;
 }
 
 /**
@@ -200,14 +206,82 @@ export async function applyNames(meetingId: string): Promise<ApplyResult | null>
     },
   );
   const namesChanged = before !== JSON.stringify(lines.map((l) => l.speakerName));
-  // A summary written with the old names is out of date: record it on the meeting, so it shows even for
-  // meetings that were changed by naming a voice in another meeting.
-  if (namesChanged)
-    await MeetingModel.updateOne(
-      { _id: meetingId, summary: { $nin: [null, ''] } },
-      { $set: { summaryOutdated: true } },
-    );
-  return { lines: lines.length, coverage: coverage.ratio, namesChanged };
+  // The summary follows the new names: swapped in place when that is safe, otherwise marked out of date. This
+  // runs for every meeting a change reaches, including those changed by naming a voice in another meeting.
+  const summary = namesChanged
+    ? await followNames(
+        meetingId,
+        (data.speakerMap ?? {}) as Record<string, string>,
+        speakerMap,
+        data.lines as Line[],
+        lines,
+      )
+    : 'none';
+  return { lines: lines.length, coverage: coverage.ratio, namesChanged, summary };
+}
+
+/**
+ * Bring a written summary up to date with renamed speakers without a new summary (client request, 20 Oct): the
+ * names are swapped in the summary text and action items. When the change is more than a rename (speakers
+ * joined, split, a line moved to someone else) or a swap could be wrong, the summary is marked out of date
+ * instead and a person decides whether to write a new one.
+ */
+async function followNames(
+  meetingId: string,
+  previousMap: Record<string, string>,
+  speakerMap: Record<string, string>,
+  linesBefore: Line[],
+  linesAfter: Line[],
+): Promise<SummaryFollow> {
+  const m = await MeetingModel.findById(meetingId, {
+    summary: 1,
+    actionItems: 1,
+    summaryNames: 1,
+    summaryOutdated: 1,
+  }).lean();
+  if (!m?.summary) return 'none';
+  const outdated = async (set: Record<string, unknown> = {}): Promise<'needs_refresh'> => {
+    await MeetingModel.updateOne({ _id: meetingId }, { $set: { ...set, summaryOutdated: true } });
+    return 'needs_refresh';
+  };
+  // The names the summary was written with; a summary from before this was recorded used the previous names,
+  // unless it was already out of date (then its names are unknown).
+  const from =
+    (m.summaryNames as Record<string, string> | null | undefined) ??
+    (m.summaryOutdated ? null : previousMap);
+  if (!from) return outdated();
+  // Only a rename may be followed in place: every line must keep its place and speaker, under the new name.
+  const renamed = new Map<string, string>();
+  for (const [id, was] of Object.entries(previousMap)) {
+    const now = speakerMap[id];
+    if (now === undefined) continue;
+    if (renamed.has(was) && renamed.get(was) !== now) return outdated({ summaryNames: from });
+    renamed.set(was, now);
+  }
+  const key = (l: Line, name: string): string => `${l.start}|${l.end}|${name}`;
+  const expected = linesBefore.map((l) => key(l, renamed.get(l.speakerName) ?? l.speakerName));
+  const actual = linesAfter.map((l) => key(l, l.speakerName));
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) return outdated({ summaryNames: from });
+
+  const r = renameInSummary({
+    summary: m.summary,
+    actionItems: (m.actionItems ?? []).map((a) => ({ speakerName: a.speakerName, text: a.text })),
+    from,
+    to: speakerMap,
+    spokenText: linesAfter.map((l) => l.textRoman).join('\n'),
+  });
+  if (r.status === 'needs_refresh')
+    return outdated({ summaryNames: from, actionItems: r.actionItems });
+  await MeetingModel.updateOne(
+    { _id: meetingId },
+    {
+      $set: {
+        ...(r.status === 'updated' ? { summary: r.summary, actionItems: r.actionItems } : {}),
+        summaryNames: speakerMap,
+      },
+    },
+  );
+  return r.status;
 }
 
 /** Meetings where this person has a speaker card. */
