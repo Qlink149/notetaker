@@ -284,9 +284,44 @@ describe('worker state machine', () => {
     await runner.drain();
 
     const chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
-    // 120 s splits once into two ~75 s halves; those are under the 120 s floor and fail
+    // 120 s splits once into two ~75 s halves; under the 120 s floor each also tries the fallback model, then fails
     expect(chunks.map((c) => c.status)).toEqual(['superseded', 'failed', 'failed']);
-    expect(engine.calls).toHaveLength(3);
+    expect(engine.calls).toHaveLength(5);
+    expect(engine.calls.filter((c) => c.model === 'gemini-3.5-flash')).toHaveLength(2);
+  });
+
+  it('transcribes a short piece the main model still refuses with the fallback model ("200 planning", 19 Oct)', async () => {
+    // the main model refuses this audio at any length, the fallback model's filter lets it through
+    const engine = fakeEngine((input) =>
+      input.model === 'gemini-3.5-flash'
+        ? {
+            ...okResult(turnsCovering(0, input.endSec - input.startSec)),
+            model: 'gemini-3.5-flash',
+          }
+        : Object.assign(
+            new Error("400 Input blocked: This request was blocked by Gemini's filters."),
+            {
+              status: 400,
+            },
+          ),
+    );
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+      }),
+      stages,
+    );
+    const id = await createMeeting();
+    await runner.drain();
+
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
+    const chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
+    expect(chunks.map((c) => c.status)).toEqual(['superseded', 'done', 'done']);
+    expect(chunks.slice(1).map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-3.5-flash']);
   });
 
   it('resumes after a worker dies mid-transcribe without paying twice', async () => {

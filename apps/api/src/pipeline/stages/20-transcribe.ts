@@ -24,6 +24,12 @@ const MIN_SPLIT_SEC = 240;
 /** A chunk refused by Gemini's filter is split down to about 1.5-minute pieces before it is given up on. */
 const MIN_BLOCKED_SPLIT_SEC = 120;
 
+/** The model to try on a piece the primary model's filter still refuses, or null when there is none. */
+function blockedFallbackModel(): string | null {
+  const f = env().GEMINI_FALLBACK_MODEL;
+  return f && f !== 'none' && f !== env().GEMINI_MODEL ? f : null;
+}
+
 async function loadChunk(meetingId: Types.ObjectId, index: number) {
   const data = await MeetingDataModel.findOne(
     { meetingId },
@@ -108,22 +114,24 @@ export const transcribeStage: StageHandler = {
       startSec: chunk.startSec,
       endSec: chunk.endSec,
     };
+    const input = {
+      audio,
+      localPath: ensureLocal,
+      startSec: chunk.startSec,
+      endSec: chunk.endSec,
+      languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
+      glossary,
+    };
     let result;
     try {
-      result = await engine.transcribeChunk({
-        audio,
-        localPath: ensureLocal,
-        startSec: chunk.startSec,
-        endSec: chunk.endSec,
-        languages: meeting.languages.length ? meeting.languages : workspace.settings.languages,
-        glossary,
-      });
+      result = await engine.transcribeChunk(input);
     } catch (err) {
       // A reply that arrived but could not be used (invalid JSON, bad status) is still kept.
       await saveEngineResponse(rawOf(err), where, (err as Error).message.slice(0, 500));
+      if (!isContentBlocked(err)) throw err;
       // Gemini's filter refusing the audio is usually a false alarm on one stretch: shorter pieces go through,
       // so the chunk is split (halves, then quarters) instead of losing all of it.
-      if (isContentBlocked(err) && chunk.endSec - chunk.startSec >= MIN_BLOCKED_SPLIT_SEC) {
+      if (chunk.endSec - chunk.startSec >= MIN_BLOCKED_SPLIT_SEC) {
         log.warn(
           { err: (err as Error).message.slice(0, 120) },
           'blocked by Gemini filter; splitting',
@@ -131,7 +139,17 @@ export const transcribeStage: StageHandler = {
         await splitAndRequeue(meeting._id, chunk);
         return;
       }
-      throw err;
+      // Too short to split again: the fallback model's filter judges differently (19 Oct, "200 planning":
+      // three 1.7-minute pieces refused by gemini-3.8-flash were all transcribed by gemini-3.5-flash).
+      const fallback = blockedFallbackModel();
+      if (!fallback) throw err;
+      log.warn({ model: fallback }, 'still blocked when short; trying the fallback model');
+      try {
+        result = await engine.transcribeChunk({ ...input, model: fallback });
+      } catch (err2) {
+        await saveEngineResponse(rawOf(err2), where, (err2 as Error).message.slice(0, 500));
+        throw err2;
+      }
     }
     if (result.uploaded) {
       await MeetingDataModel.updateOne(

@@ -18,6 +18,8 @@ export interface ChunkInput {
   signal?: AbortSignal;
   /** Produces the chunk as a local file when the engine has to (re-)upload it. */
   localPath?: () => Promise<string>;
+  /** Use only this model (e.g. the fallback model for audio the primary model's filter refuses). */
+  model?: string;
 }
 
 export interface EngineUsage {

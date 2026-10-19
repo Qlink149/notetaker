@@ -94,6 +94,19 @@ export function cardCandidate(res: NameResolution | undefined): SpeakerCardDoc['
   };
 }
 
+/** This meeting's speaker cards that a person decided (named, linked, confirmed, merged, split), by voice. */
+export async function decidedCards(meetingId: string): Promise<Map<string, SpeakerCardDoc>> {
+  const data = await MeetingDataModel.findOne({ meetingId }, { speakerCards: 1 }).lean();
+  const out = new Map<string, SpeakerCardDoc>();
+  for (const c of (data?.speakerCards ?? []) as SpeakerCardDoc[]) {
+    if (!(c.confirmed || c.status === 'manual')) continue;
+    // a person deleted since (Speakers page) is no decision to keep
+    if (c.personId && !(await SpeakerModel.exists({ _id: c.personId }))) continue;
+    out.set(c.diar, c);
+  }
+  return out;
+}
+
 /** Create voiceprints for `clips` of one speaker and store them on the person. Returns how many were added. */
 export async function addVoiceprints(
   meetingId: string,
@@ -393,9 +406,22 @@ export async function identifyMeeting(
   const cards: SpeakerCardDoc[] = [];
   const newPeople: string[] = [];
   const linked: IdentityReport['linked'] = [];
+  // A voice a person named, linked, confirmed, merged or split keeps that decision when the meeting is
+  // processed again (a retry re-runs this): on 19 Oct a retry of "200 planning" re-guessed every voice and
+  // dropped the client's links. Only voices nobody touched are identified afresh.
+  const decided = await decidedCards(meetingId);
   for (const [diar, sec] of seconds) {
     const res = resolutions[diar];
     const clips = clipsFor(diar, pya.segments, pya.all, meetingSec);
+    const prev = decided.get(diar);
+    if (prev) {
+      cards.push({
+        ...prev,
+        speakerSec: Math.round(sec * 10) / 10,
+        clips: clips.map((c) => ({ start: c.start, end: c.end, quality: c.quality })),
+      });
+      continue;
+    }
     const label = labels[diar] ?? diar;
     let personId: string | null = null;
     let status: SpeakerCardDoc['status'] = 'new';

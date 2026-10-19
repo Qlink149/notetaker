@@ -190,7 +190,9 @@ export class GeminiEngine implements TranscriptionEngine {
   }
 
   private async transcribeChunkNow(input: ChunkInput): Promise<ChunkResult> {
-    const models = [this.model, ...(this.fallback ? [this.fallback] : [])];
+    const models = input.model
+      ? [input.model]
+      : [this.model, ...(this.fallback ? [this.fallback] : [])];
     let uploaded: ChunkResult['uploaded'];
     let lastErr: unknown = null;
     let soonestReset: Date | null = null;

@@ -59,8 +59,23 @@ async function save(
   meetingId: string,
   turns: Turn[],
   cards: SpeakerCardDoc[],
+  merged?: { from: string; into: string },
 ): Promise<ApplyResult | null> {
-  await MeetingDataModel.updateOne({ meetingId }, { $set: { turns, speakerCards: cards } });
+  await MeetingDataModel.updateOne(
+    { meetingId },
+    {
+      $set: { turns, speakerCards: cards },
+      // Kept with the automatic merges: every later read of the pyannote speakers (a retry rebuilding the
+      // transcript, re-identification) applies it, so the merge is not undone.
+      ...(merged
+        ? {
+            $push: {
+              speakerMerges: { ...merged, ambiguity: [0, 0], overlapShare: 0, manual: true },
+            },
+          }
+        : {}),
+    },
+  );
   return applyNames(meetingId);
 }
 
@@ -115,12 +130,12 @@ export async function mergeSpeakers(
       people.get(into.personId)?.anonymous !== false;
     const [keep, drop] = keepFrom ? [from.personId, into.personId] : [into.personId, from.personId];
     into.personId = keep;
-    await save(meetingId, turns, rest);
+    await save(meetingId, turns, rest, { from: fromDiar, into: intoDiar });
     await mergePeople(keep, drop);
     return applyNames(meetingId);
   }
   if (!into.personId) into.personId = from.personId;
-  return save(meetingId, turns, rest);
+  return save(meetingId, turns, rest, { from: fromDiar, into: intoDiar });
 }
 
 /** From the chosen line onward, move that speaker's turns to a new speaker (a person wrongly merged). */

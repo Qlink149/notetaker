@@ -258,6 +258,8 @@ export interface MeetingDataDoc {
     into: string;
     ambiguity: [number, number];
     overlapShare: number;
+    /** Merged by a person on the review screen (not shown as automatic); a rebuild applies it again. */
+    manual?: boolean;
   }[];
   /** Where the speaker labels came from; "text-fallback" is Phase 1's text linker (no pyannote). */
   speakerSource: 'pyannote' | 'text-fallback';

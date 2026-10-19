@@ -123,11 +123,13 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
     for (const t of data.turns) turnCount.set(t.speaker, (turnCount.get(t.speaker) ?? 0) + 1);
     res.set('Cache-Control', 'no-store').json({
       source: data.speakerSource,
-      autoMerged: ((data.speakerMerges ?? []) as { from: string; into: string }[]).map((x) => ({
-        from: x.from,
-        into: x.into,
-        intoLabel: cards.find((c) => c.diar === x.into)?.label ?? x.into,
-      })),
+      autoMerged: ((data.speakerMerges ?? []) as { from: string; into: string; manual?: boolean }[])
+        .filter((x) => !x.manual)
+        .map((x) => ({
+          from: x.from,
+          into: x.into,
+          intoLabel: cards.find((c) => c.diar === x.into)?.label ?? x.into,
+        })),
       cards: cards.map((c) => {
         const person = c.personId ? people.get(c.personId) : undefined;
         return {

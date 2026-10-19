@@ -5,9 +5,10 @@ import type { Express } from 'express';
 import type { Turn } from '@meetingid/shared';
 import { createApp } from '../src/app.js';
 import type { NameResolution } from '@meetingid/pipeline';
-import { applyNames } from '../src/services/identity/identity.js';
+import { applyNames, pyannoteSegments } from '../src/services/identity/identity.js';
 import {
   cardCandidate,
+  decidedCards,
   DEFAULT_THRESHOLDS,
   POSSIBLE_MIN_SCORE,
 } from '../src/services/identity/enroll.js';
@@ -528,6 +529,68 @@ describe('merge, split and reassign', () => {
     expect(await lineNames(id)).toEqual(['Speaker A', 'Speaker C', 'Speaker A']);
     const view = await speakers(id);
     expect(view.cards.map((c) => c.diar)).toEqual(['S0', 'S2']);
+  });
+
+  it('keeps a merge with the meeting so processing it again does not undo it (200 planning, 19 Oct)', async () => {
+    const id = await seedMeeting('M', turns, cards());
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/merge`))
+      .send({ from: 'S1', into: 'S0' })
+      .expect(200);
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(data!.speakerMerges).toEqual([
+      expect.objectContaining({ from: 'S1', into: 'S0', manual: true }),
+    ]);
+    // a rebuild reads the pyannote speakers with the stored merges applied: S1 is gone
+    await P2PyannoteResponseModel.create({
+      meetingId: id,
+      kind: 'diarize',
+      model: 'precision-2',
+      tag: 'pipeline',
+      status: 'succeeded',
+      jobId: 'j1',
+      keyLabel: 'PYANNOTEAI_API_KEY',
+      submittedAt: new Date(),
+      output: {
+        diarization: [
+          { speaker: 'S0', start: 0, end: 4 },
+          { speaker: 'S1', start: 4, end: 8 },
+          { speaker: 'S2', start: 12, end: 16 },
+        ],
+      },
+    });
+    const pya = await pyannoteSegments(id);
+    expect([...new Set(pya!.segments.map((s) => s.speaker))].sort()).toEqual(['S0', 'S2']);
+    // and the page does not call it an automatic merge
+    const view = (await auth(request(app).get(`/api/v1/meetings/${id}/speakers`)).expect(200))
+      .body as { autoMerged: unknown[] };
+    expect(view.autoMerged).toEqual([]);
+  });
+
+  it('a voice a person decided keeps that decision when identified again', async () => {
+    const named = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Brijesh Dholakia',
+      anonymous: false,
+    });
+    const gone = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Old',
+      anonymous: false,
+    });
+    const id = await seedMeeting('M', turns, [
+      card('S0', 'Speaker A', String(named._id), { status: 'solid', confirmed: true }),
+      card('S1', 'Speaker B', null, { status: 'manual' }),
+      card('S2', 'Speaker C', String(gone._id), { status: 'solid', confirmed: true }),
+    ]);
+    await SpeakerModel.deleteOne({ _id: gone._id });
+    await MeetingDataModel.updateOne(
+      { meetingId: id },
+      { $push: { speakerCards: card('S3', 'Speaker D', null, { status: 'solid' }) } },
+    );
+    const kept = await decidedCards(id);
+    // confirmed and hand-edited voices are kept; an untouched one and one whose person was deleted are not
+    expect([...kept.keys()].sort()).toEqual(['S0', 'S1']);
+    expect(kept.get('S0')).toMatchObject({ personId: String(named._id), confirmed: true });
   });
 
   it('merge refuses the same speaker twice', async () => {
