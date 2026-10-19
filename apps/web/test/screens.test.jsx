@@ -558,6 +558,20 @@ describe('meeting page while processing', () => {
     expect(note.textContent).not.toContain('ready in up to');
   });
 
+  it('says why it is paused when the transcription credit ran out', async () => {
+    api.meetings.get.mockResolvedValue(
+      processing({
+        stage: 'transcribe',
+        notice:
+          'The transcription service (Gemini) has run out of credit. This meeting is paused and continues automatically once the credit is topped up; there is no need to retry or upload again.',
+      }),
+    );
+    open();
+    const note = await screen.findByTestId('meeting-notice');
+    expect(note.textContent).toContain('run out of credit');
+    expect(note.textContent).toContain('no need to retry');
+  });
+
   it('gives the wait for this recording once its length is known', async () => {
     api.meetings.get.mockResolvedValue(processing({ durationSec: 3810 }));
     open();

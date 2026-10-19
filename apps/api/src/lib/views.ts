@@ -46,6 +46,7 @@ export function meetingView(m: MeetingDoc): Meeting {
     summaryStatus: m.summaryStatus,
     summaryOutdated: m.summaryOutdated === true,
     audioWarning: m.audioWarning ?? null,
+    notice: m.notice ?? null,
     summary: m.summary ?? null,
     actionItems: (m.actionItems ?? []).map((a) => ({ speakerName: a.speakerName, text: a.text })),
     error: m.error ?? null,

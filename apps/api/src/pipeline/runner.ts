@@ -3,9 +3,16 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Stage } from '@meetingid/shared';
 import { jobLogger, logger } from '../lib/logger.js';
-import { HeartbeatModel, type JobDoc } from '../models/index.js';
+import { HeartbeatModel, MeetingModel, type JobDoc } from '../models/index.js';
 import type { Deps, StageRegistry } from './context.js';
-import { FatalError, RetryableError, backoffMs, classify } from './errors.js';
+import {
+  CREDIT_NOTICE,
+  FatalError,
+  RetryableError,
+  backoffMs,
+  classify,
+  isOutOfCredit,
+} from './errors.js';
 import { failMeeting } from './meetings.js';
 import {
   claimNext,
@@ -163,6 +170,7 @@ export class Runner {
         );
       await handler.run(ctx);
       await markDone(job._id, this.workerId);
+      await clearNotice(job.meetingId);
       log.info({ ms: Date.now() - started }, 'job done');
     } catch (raw) {
       const err = classify(raw);
@@ -182,6 +190,7 @@ export class Runner {
           log.error({ err: hookErr }, 'give-up handler failed');
         }
       } else {
+        if (isOutOfCredit(err)) await setNotice(job.meetingId, CREDIT_NOTICE);
         const wait = (err instanceof RetryableError && err.retryAfterMs) || backoffMs(job.attempts);
         const runAfter = new Date(this.deps.now().getTime() + wait);
         await scheduleRetry(job._id, this.workerId, runAfter, err.message, quota);
@@ -195,3 +204,14 @@ export class Runner {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** A short note on the meeting page while processing is paused for a reason outside our control. */
+async function setNotice(meetingId: JobDoc['meetingId'], notice: string): Promise<void> {
+  await MeetingModel.updateOne({ _id: meetingId }, { $set: { notice } }).catch(() => undefined);
+}
+async function clearNotice(meetingId: JobDoc['meetingId']): Promise<void> {
+  await MeetingModel.updateOne(
+    { _id: meetingId, notice: { $nin: [null, ''] } },
+    { $set: { notice: null } },
+  ).catch(() => undefined);
+}

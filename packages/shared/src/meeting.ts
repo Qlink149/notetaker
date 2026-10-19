@@ -147,6 +147,8 @@ export const Meeting = z.object({
   /** Speaker names changed after the summary was written; it is refreshed on request. */
   summaryOutdated: z.boolean().optional(),
   audioWarning: z.string().nullable().optional(),
+  /** Processing is paused for a reason outside our control; it continues by itself. */
+  notice: z.string().nullable().optional(),
   summary: z.string().nullable(),
   actionItems: z.array(ActionItem),
   error: MeetingError.nullable(),

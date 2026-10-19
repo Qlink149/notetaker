@@ -21,7 +21,25 @@ export async function saveEngineResponse(
   },
   error: string | null = null,
 ): Promise<Types.ObjectId | null> {
-  if (!raw) return null;
+  if (!raw) {
+    // No reply (refused by a filter, no credit, network): still note that the call was made and why it failed,
+    // so blocked stretches and unpaid calls can be counted later.
+    if (!error) return null;
+    const failed: Partial<EngineResponseDoc> = {
+      engine: 'gemini',
+      text: null,
+      response: null,
+      receivedAt: new Date(),
+      meetingId: where.meetingId,
+      kind: where.kind,
+      chunkIndex: where.chunkIndex ?? null,
+      startSec: where.startSec,
+      endSec: where.endSec,
+      error,
+    };
+    const doc = await EngineResponseModel.create(failed).catch(() => null);
+    return doc ? (doc._id as Types.ObjectId) : null;
+  }
   const doc = await EngineResponseModel.create({
     ...raw,
     meetingId: where.meetingId,

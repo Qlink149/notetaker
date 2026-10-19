@@ -323,6 +323,16 @@ export default function MeetingDetail() {
         </button>
       )}
 
+      {meeting.notice && meeting.status === 'processing' && (
+        <div
+          role="status"
+          data-testid="meeting-notice"
+          className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-6 text-sm text-amber-900"
+        >
+          {meeting.notice}
+        </div>
+      )}
+
       {meeting.audioWarning && (
         <div
           role="alert"

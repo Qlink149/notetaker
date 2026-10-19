@@ -182,6 +182,58 @@ describe('worker state machine', () => {
     expect(replies.map((r) => r.error)).toEqual(['truncated', null]); // both replies kept
   });
 
+  it('pauses when Gemini credit runs out and finishes by itself after a top-up (Bain, 19 Oct)', async () => {
+    let clock = Date.now() + 5_000; // ahead of the real-time runAfter stamped by enqueue
+    let credit = false;
+    const engine = fakeEngine((input) =>
+      credit
+        ? okResult(turnsCovering(0, input.endSec - input.startSec))
+        : Object.assign(
+            new Error(
+              '{"error":{"code":402,"message":"Your prepayment credits are depleted. Please go to AI Studio"}}',
+            ),
+            { status: 402 },
+          ),
+    );
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+        now: () => new Date(clock),
+      }),
+      stages,
+    );
+    const id = await createMeeting();
+    await runner.drain();
+
+    // paused, not failed: the part is still pending, no attempt used, and the page says why
+    let m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('processing');
+    expect(m?.notice).toMatch(/run out of credit.*continues automatically/);
+    let chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
+    expect(chunks.map((c) => c.status)).toEqual(['pending']);
+    const job = await JobModel.findOne({ meetingId: id, stage: 'transcribe' }).lean();
+    expect(job).toMatchObject({ status: 'queued', attempts: 0 });
+    // the refused call is on record
+    expect(await EngineResponseModel.countDocuments({ meetingId: id, error: /402/ })).toBe(1);
+
+    // still no credit an hour later: still waiting, never failed
+    clock += 60 * 60_000;
+    await runner.drain();
+    expect((await MeetingModel.findById(id).lean())?.status).toBe('processing');
+
+    // topped up: it carries on and the note goes away
+    credit = true;
+    clock += 20 * 60_000;
+    await runner.drain();
+    m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    expect(m?.notice).toBeNull();
+    chunks = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.chunks;
+    expect(chunks.map((c) => c.status)).toEqual(['done']);
+  });
+
   it('splits a part that Gemini’s filter refuses and transcribes the halves (Jolto Followup, 19 Oct)', async () => {
     const blocked = (): Error =>
       Object.assign(new Error("400 Input blocked: This request was blocked by Gemini's filters."), {

@@ -38,9 +38,26 @@ export function backoffMs(attempts: number): number {
   return 2 ** attempts * BASE_BACKOFF_MS;
 }
 
+/** How long a job waits before trying again when a provider's prepaid credit is used up. */
+export const CREDIT_WAIT_MS = 15 * 60_000;
+
+/** The provider account has no credit left (Gemini prepaid: "402 … prepayment credits are depleted"). */
+export function isOutOfCredit(err: unknown): boolean {
+  const e = err as { status?: unknown; message?: unknown };
+  const msg = String(e?.message ?? err);
+  return (
+    e?.status === 402 ||
+    /provider 402:|credits? (are|is) depleted|prepayment credit|insufficient (credit|balance)/i.test(
+      msg,
+    )
+  );
+}
+
 /** Map an HTTP status from a provider into the right error class. */
 export function errorForStatus(provider: string, status: number, body: string): Error {
   const msg = `${provider} ${status}: ${body.slice(0, 500)}`;
+  // No credit left is not a broken request: wait (without using up attempts) and continue once it is topped up.
+  if (status === 402) return new RetryableError(msg, 'quota', { retryAfterMs: CREDIT_WAIT_MS });
   if (status === 429) return new RetryableError(msg, 'rate_limit');
   if (status === 408) return new RetryableError(msg, 'timeout');
   if (status >= 500) return new RetryableError(msg, 'server');
@@ -71,10 +88,15 @@ export function classify(err: unknown): RetryableError | FatalError {
   return new RetryableError(message, 'other', { cause: err });
 }
 
+/** Shown on a meeting that waits for the transcription service's credit to be topped up. */
+export const CREDIT_NOTICE =
+  'The transcription service (Gemini) has run out of credit. This meeting is paused and continues automatically once the credit is topped up; there is no need to retry or upload again.';
+
 /** Short message for the UI, ported from the Base44 `humanizeError` table. */
 export function humanizeError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/no speech detected/i.test(msg)) return 'No speech detected in the recording.';
+  if (isOutOfCredit(err)) return CREDIT_NOTICE;
   if (/quota|rate limit|429|RESOURCE_EXHAUSTED/i.test(msg)) {
     return 'A provider quota or rate limit was hit. Try again in a few minutes.';
   }

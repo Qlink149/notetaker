@@ -124,6 +124,8 @@ export interface MeetingDoc {
   summaryOutdated?: boolean;
   /** Set at ingest when the converted audio is shorter than the file says: part of the recording may be missing. */
   audioWarning?: string | null;
+  /** Processing is paused for a reason outside our control (e.g. the transcription credit ran out). */
+  notice?: string | null;
   summary: string | null;
   actionItems: ActionItem[];
   error: MeetingError | null;
@@ -162,6 +164,7 @@ const meetingSchema = new Schema<MeetingDoc>(
     summaryStatus: { type: String, enum: SummaryStatus.options, default: 'pending' },
     summaryOutdated: { type: Boolean, default: false },
     audioWarning: { type: String, default: null },
+    notice: { type: String, default: null },
     summary: { type: String, default: null },
     actionItems: { type: [new Schema({ speakerName: String, text: String }, opts)], default: [] },
     error: {
@@ -250,7 +253,12 @@ export interface MeetingDataDoc {
   /** Phase 2: one card per pyannote speaker (who it is, how sure, sample clips). */
   speakerCards: SpeakerCardDoc[];
   /** Voices merged automatically when the cards were created (pyannote had split one voice in two). */
-  speakerMerges?: { from: string; into: string; ambiguity: [number, number]; overlapShare: number }[];
+  speakerMerges?: {
+    from: string;
+    into: string;
+    ambiguity: [number, number];
+    overlapShare: number;
+  }[];
   /** Where the speaker labels came from; "text-fallback" is Phase 1's text linker (no pyannote). */
   speakerSource: 'pyannote' | 'text-fallback';
   /** State of the pyannote diarization running beside transcription. Missing means "off". */
