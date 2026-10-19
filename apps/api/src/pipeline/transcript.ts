@@ -4,6 +4,7 @@ import {
   computeCoverage,
   joinMeeting,
   labelSpeakersByTime,
+  pickWordClock,
   repairRomanLeaks,
   turnsToLines,
   type SpeakerResolver,
@@ -62,11 +63,16 @@ export async function rebuildTranscript(
   let speakerSource: 'pyannote' | 'text-fallback' = 'text-fallback';
   let joinInfo: { agreement: number | null; rejected: string | null } | null = null;
   if (join?.segments.length && textTurns.length) {
+    const chunks = done.map((c) => ({ index: c.index, startSec: c.startSec, endSec: c.endSec }));
+    // each part uses the Deepgram language that heard most of it (Hindi, or Gujarati when fetched)
+    const dgWords = join.dgSources?.length
+      ? pickWordClock(join.dgSources, chunks, data.speechSegments).words
+      : join.dgWords;
     const joined = joinMeeting({
       turns: textTurns,
-      chunks: done.map((c) => ({ index: c.index, startSec: c.startSec, endSec: c.endSec })),
+      chunks,
       segments: join.segments,
-      dgWords: join.dgWords,
+      dgWords,
       speechSegments: data.speechSegments,
     });
     const joinedCoverage = computeCoverage(data.speechSegments, joined.turns);

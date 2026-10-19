@@ -79,6 +79,47 @@ export function chooseMethods(
   });
 }
 
+/** A Deepgram word clock in one language (e.g. "hi", "gu"). */
+export interface WordClockSource {
+  label: string;
+  words: TimedWord[];
+}
+
+/**
+ * Merge word clocks of several languages: each part of the meeting takes the words of the language
+ * that covers most of its speech. Deepgram hears one language per request, and a meeting can be
+ * mostly Gujarati or switch between Hindi and Gujarati (19 Oct, "200 planning": the Hindi clock
+ * covered 0-27% of each part, the Gujarati one about 90%).
+ */
+export function pickWordClock(
+  sources: WordClockSource[],
+  chunks: ChunkSpan[],
+  speechSegments: Segment[],
+): { words: TimedWord[]; picks: { index: number; label: string; coverage: number }[] } {
+  const usable = sources.filter((s) => s.words.length);
+  if (usable.length <= 1 || !chunks.length) return { words: usable[0]?.words ?? [], picks: [] };
+  const coverage = usable.map((s) => chooseMethods(chunks, s.words, speechSegments));
+  const owner = chunkOwnership(chunks);
+  const words: TimedWord[] = [];
+  const picks: { index: number; label: string; coverage: number }[] = [];
+  for (const o of owner) {
+    let best = 0;
+    usable.forEach((_, k) => {
+      const c = coverage[k]!.find((d) => d.index === o.index)?.deepgramCoverage ?? 0;
+      const b = coverage[best]!.find((d) => d.index === o.index)?.deepgramCoverage ?? 0;
+      if (c > b) best = k;
+    });
+    const src = usable[best]!;
+    picks.push({
+      index: o.index,
+      label: src.label,
+      coverage: coverage[best]!.find((d) => d.index === o.index)?.deepgramCoverage ?? 0,
+    });
+    for (const w of src.words) if (w.start >= o.from && w.start < o.to) words.push(w);
+  }
+  return { words: words.sort((a, b) => a.start - b.start), picks };
+}
+
 export interface MeetingJoin {
   turns: Turn[];
   /** Per chunk: how much of the speech Deepgram's words cover (informational; see `turnMethods`). */

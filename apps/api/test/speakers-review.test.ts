@@ -425,6 +425,94 @@ describe('closest known voice on a card', () => {
   });
 });
 
+describe('deleting a meeting (19 Oct: a test upload left 4 voice profiles behind)', () => {
+  it('removes everything made from it, and only that', async () => {
+    const vp = (meetingId: string, start: number) => ({
+      id: `v${start}`,
+      source: 'meeting' as const,
+      audioUrl: '',
+      voiceprint: 'vp',
+      meetingId: new Types.ObjectId(meetingId),
+      clip: { start, end: start + 10 },
+    });
+    const other = await seedMeeting('Other', [turn('S0', 0, 5, 'x')], []);
+    const test = await seedMeeting('Test', [turn('S0', 0, 5, 'y')], []);
+    const t = new Types.ObjectId(test);
+    // first heard in the test meeting, nowhere else: removed
+    const anon = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker E (Meeting Test)',
+      anonymous: true,
+      origin: { meetingId: t, diar: 'S0' },
+      voiceprints: [vp(test, 1)],
+    });
+    const namedHere = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Brijesh',
+      anonymous: false,
+      origin: { meetingId: t, diar: 'S1' },
+      voiceprints: [vp(test, 2)],
+    });
+    // first heard here but also in another meeting: stays, loses this meeting's clip
+    const alsoElsewhere = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Kanak',
+      anonymous: false,
+      origin: { meetingId: t, diar: 'S2' },
+      voiceprints: [vp(test, 3)],
+    });
+    // known from before, learned a clip here: stays, loses that clip only
+    const heet = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Heet',
+      anonymous: false,
+      voiceprints: [vp(other, 4), vp(test, 5)],
+    });
+    await MeetingDataModel.updateOne(
+      { meetingId: other },
+      { $set: { speakerCards: [card('S0', 'Speaker A', String(alsoElsewhere._id))] } },
+    );
+    await MeetingDataModel.updateOne(
+      { meetingId: test },
+      {
+        $set: {
+          speakerCards: [
+            card('S0', 'Speaker E', String(anon._id)),
+            card('S1', 'Speaker F', String(namedHere._id)),
+          ],
+        },
+      },
+    );
+    await P2PyannoteResponseModel.create({
+      meetingId: t,
+      kind: 'diarize',
+      model: 'precision-2',
+      tag: 'pipeline',
+      status: 'succeeded',
+      jobId: 'j',
+      keyLabel: 'PYANNOTEAI_API_KEY',
+      submittedAt: new Date(),
+      output: {},
+    });
+
+    await auth(request(app).delete(`/api/v1/meetings/${test}`)).expect(204);
+
+    expect(await MeetingModel.exists({ _id: test })).toBeNull();
+    expect(await MeetingDataModel.exists({ meetingId: test })).toBeNull();
+    expect(await P2PyannoteResponseModel.countDocuments({ meetingId: t })).toBe(0);
+    const left = await SpeakerModel.find({ workspaceId: workspace._id }).lean();
+    expect(left.map((p) => p.name).sort()).toEqual(['Heet', 'Kanak']);
+    expect(left.find((p) => p.name === 'Heet')!.voiceprints.map((v) => v.id)).toEqual(['v4']);
+    expect(left.find((p) => p.name === 'Kanak')!.voiceprints).toEqual([]);
+    // the other meeting is untouched: its speaker still points at Kanak
+    const otherData = await MeetingDataModel.findOne({ meetingId: other }).lean();
+    expect((otherData!.speakerCards as SpeakerCardDoc[])[0]!.personId).toBe(
+      String(alsoElsewhere._id),
+    );
+    expect(await SpeakerModel.exists({ _id: heet._id })).toBeTruthy();
+  });
+});
+
 describe('safety of naming and splitting', () => {
   it('rejects a person that is not an id, not in this workspace, or does not exist', async () => {
     const other = await SpeakerModel.create({
