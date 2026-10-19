@@ -475,3 +475,16 @@ describe('gap fill in parallel', () => {
 });
 
 void ffmpeg;
+
+describe('a job that never finishes', () => {
+  it('is given up after its time limit so the lane is free again (19 Oct: assembly waited 20+ min on nothing)', async () => {
+    const { withWatchdog, maxRuntimeMs } = await import('../src/pipeline/runner.js');
+    await expect(withWatchdog(new Promise(() => undefined), 50, 'assemble')).rejects.toMatchObject({
+      name: 'RetryableError',
+      reason: 'timeout',
+    });
+    await expect(withWatchdog(Promise.resolve(7), 50, 'assemble')).resolves.toBe(7);
+    expect(maxRuntimeMs('assemble')).toBe(15 * 60_000); // at least 15 min
+    expect(maxRuntimeMs('multitrack')).toBe(60 * 60_000); // 3x a long lease
+  });
+});

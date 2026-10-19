@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Stage } from '@meetingid/shared';
+import { STAGE_LEASE_MS, type Stage } from '@meetingid/shared';
 import { jobLogger, logger } from '../lib/logger.js';
 import { HeartbeatModel, MeetingModel, type JobDoc } from '../models/index.js';
 import type { Deps, StageRegistry } from './context.js';
@@ -168,7 +168,7 @@ export class Runner {
         throw new FatalError(
           'The server restarted several times while processing this step (it ran out of memory or stopped answering). Try again, or use a shorter recording.',
         );
-      await handler.run(ctx);
+      await withWatchdog(handler.run(ctx), maxRuntimeMs(job.stage), job.stage);
       await markDone(job._id, this.workerId);
       await clearNotice(job.meetingId);
       log.info({ ms: Date.now() - started }, 'job done');
@@ -204,6 +204,37 @@ export class Runner {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Longest a job may run before it is treated as hung: three times its stage lease, at least 15 minutes (a 3-hour
+ * meeting assembles in ~3 min on the free CPU). The lease alone cannot catch
+ * a hang, because the live worker keeps renewing it while it waits; on 19 Oct an assembly waited 20+ minutes
+ * on nothing (CPU 0.3%) and held the only heavy lane. The job is then retried like any other failure.
+ */
+export function maxRuntimeMs(stage: JobDoc['stage']): number {
+  return Math.max(15 * 60_000, 3 * STAGE_LEASE_MS[stage]);
+}
+
+export async function withWatchdog<T>(work: Promise<T>, ms: number, stage: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const hung = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new RetryableError(
+            `${stage} did not finish in ${Math.round(ms / 60_000)} min`,
+            'timeout',
+          ),
+        ),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([work, hung]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** A short note on the meeting page while processing is paused for a reason outside our control. */
 async function setNotice(meetingId: JobDoc['meetingId'], notice: string): Promise<void> {
