@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 /** Job types run by the worker. Pipeline stages plus the benchmark. */
 export const JobStage = z.enum([
+  'concat',
   'multitrack',
   'ingest',
   'transcribe',
@@ -38,6 +39,7 @@ export type Job = z.infer<typeof Job>;
 
 /** How long a running job may hold its lock before another worker may reclaim it. */
 export const STAGE_LEASE_MS: Record<JobStage, number> = {
+  concat: 20 * 60_000,
   multitrack: 20 * 60_000,
   ingest: 5 * 60_000,
   transcribe: 8 * 60_000,

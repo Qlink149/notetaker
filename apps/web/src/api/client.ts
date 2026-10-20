@@ -68,7 +68,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     unauthorizedListeners.forEach((fn) => fn());
   if (res.status === 204) return undefined as T;
   const json = (await res.json().catch(() => ({}))) as { error?: string; similar?: SimilarName[] };
-  if (!res.ok) throw new ApiError(res.status, json.error ?? `Request failed (${res.status})`, json.similar);
+  if (!res.ok)
+    throw new ApiError(res.status, json.error ?? `Request failed (${res.status})`, json.similar);
   return json as T;
 }
 
@@ -96,7 +97,13 @@ export interface SpeakerCard {
   clips: { start: number; end: number; quality: number | null }[];
   /** Group recordings: the phone closest to this voice, as a hint (never an identity). */
   phone: { name: string; attributed: number; total: number } | null;
-  appearsIn: { meetingId: string; title: string; label: string; displayName: string; score: number | null }[];
+  appearsIn: {
+    meetingId: string;
+    title: string;
+    label: string;
+    displayName: string;
+    score: number | null;
+  }[];
 }
 
 export interface AuditClip {
@@ -183,6 +190,8 @@ export interface CreateMeetingInput {
   languages?: Language[];
   engine?: EngineName;
   expectedParticipants?: number | null;
+  /** A meeting recorded in several files, in order (the first is also publicId/url). */
+  parts?: { publicId: string; url: string; fileName?: string }[];
 }
 
 export const api = {
@@ -193,7 +202,8 @@ export const api = {
     logout: () => request<void>('POST', '/auth/logout'),
   },
   uploads: {
-    sign: () => request<UploadSignResponse>('POST', '/uploads/sign'),
+    sign: (meetingId?: string) =>
+      request<UploadSignResponse>('POST', '/uploads/sign', meetingId ? { meetingId } : undefined),
   },
   meetings: {
     list: (limit = 50) =>
@@ -232,18 +242,23 @@ export const api = {
         source: 'pyannote' | 'text-fallback';
         cards: SpeakerCard[];
         autoMerged?: { from: string; into: string; intoLabel: string }[];
-      }>(
-        'GET',
-        `/meetings/${id}/speakers`,
-      ),
+      }>('GET', `/meetings/${id}/speakers`),
     /** Resolves with {similar} instead of saving when the name looks like an existing person. */
     nameSpeaker: async (
       id: string,
       diar: string,
       input: { name: string; usePersonId?: string; createNew?: boolean },
-    ): Promise<{ similar?: SimilarName[]; updatedMeetings?: string[]; meetingsWithThisVoice?: string[] }> => {
+    ): Promise<{
+      similar?: SimilarName[];
+      updatedMeetings?: string[];
+      meetingsWithThisVoice?: string[];
+    }> => {
       try {
-        return await request('POST', `/meetings/${id}/speakers/${encodeURIComponent(diar)}/name`, input);
+        return await request(
+          'POST',
+          `/meetings/${id}/speakers/${encodeURIComponent(diar)}/name`,
+          input,
+        );
       } catch (e) {
         if (e instanceof ApiError && e.status === 409 && e.similar) return { similar: e.similar };
         throw e;
@@ -256,10 +271,10 @@ export const api = {
     reassignLine: (id: string, lineIndex: number, toDiar: string) =>
       request<{ lines: number }>('POST', `/meetings/${id}/lines/reassign`, { lineIndex, toDiar }),
     reidentify: (id: string) =>
-      request<{ changes: { speaker: string; person: string; score: number }[]; warnings: string[] }>(
-        'POST',
-        `/meetings/${id}/speakers/reidentify`,
-      ),
+      request<{
+        changes: { speaker: string; person: string; score: number }[];
+        warnings: string[];
+      }>('POST', `/meetings/${id}/speakers/reidentify`),
   },
   glossary: {
     get: () => request<{ entries: GlossaryEntry[] }>('GET', '/glossary').then((r) => r.entries),
@@ -301,10 +316,8 @@ export const api = {
         name,
         deviceLabel,
       }),
-    heartbeat: (
-      code: string,
-      body: JoinAuth & { level?: number | null; status?: string },
-    ) => request<JoinState>('POST', `/join/${code}/heartbeat`, body),
+    heartbeat: (code: string, body: JoinAuth & { level?: number | null; status?: string }) =>
+      request<JoinState>('POST', `/join/${code}/heartbeat`, body),
     sign: (code: string, auth: JoinAuth) =>
       request<{
         cloudName: string;
@@ -329,9 +342,17 @@ export const api = {
   audit: {
     list: () =>
       request<{
-        meetings: { id: string; title: string; seeded: boolean; items: number; answered: number; named: number }[];
+        meetings: {
+          id: string;
+          title: string;
+          seeded: boolean;
+          items: number;
+          answered: number;
+          named: number;
+        }[];
       }>('GET', '/audit').then((r) => r.meetings),
-    seed: (id: string) => request<{ seeded: boolean; items: number }>('POST', `/audit/${id}/seed`, {}),
+    seed: (id: string) =>
+      request<{ seeded: boolean; items: number }>('POST', `/audit/${id}/seed`, {}),
     get: (id: string) =>
       request<{
         meeting: { id: string; title: string; playbackUrl: string | null };
@@ -343,7 +364,10 @@ export const api = {
     answer: (id: string, itemId: string, answer: { speaker?: string; text?: string }) =>
       request<{ ok: boolean }>('PATCH', `/audit/${id}/items/${itemId}`, answer),
     results: () =>
-      request<{ methods: AuditTally[]; shortLines: AuditTally[]; note: string }>('GET', '/audit/results/all'),
+      request<{ methods: AuditTally[]; shortLines: AuditTally[]; note: string }>(
+        'GET',
+        '/audit/results/all',
+      ),
   },
   benchmark: {
     run: (meetingIds: string[], engines: BenchmarkEngineName[], evalSetName?: string) =>

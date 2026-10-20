@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Check, ChevronDown } from 'lucide-react';
+import { Loader2, Check, ChevronDown, ChevronUp, X, Plus } from 'lucide-react';
 import { api } from '@/api/client';
 import AudioRecorder from '@/components/AudioRecorder';
 import AudioUpload from '@/components/AudioUpload';
 import GroupRecording from '@/components/GroupRecording';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { getUploadSignature, uploadToCloudinary, validateAudioFile } from '@/lib/cloudinaryUpload';
+import {
+  AUDIO_ACCEPT,
+  getUploadSignature,
+  uploadToCloudinary,
+  validateAudioFile,
+} from '@/lib/cloudinaryUpload';
 import { clearRecording } from '@/lib/recordingStore';
 import { useLeaveWarning } from '@/lib/useLeaveWarning';
 import { LANGUAGES } from '@/lib/format';
 import { FEATURES } from '@/lib/features';
+
+/** Most files one meeting can be uploaded in (the server checks it too). */
+const MAX_PARTS = 5;
 
 function fmtClock(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
@@ -21,7 +29,10 @@ function fmtClock(sec) {
 export default function Record() {
   const [title, setTitle] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
-  const [file, setFile] = useState(null);
+  // the meeting's audio: one file, or several files of one meeting in order (Part 1, 2, 3)
+  const [files, setFiles] = useState([]);
+  const file = files[0] ?? null;
+  const [uploadPart, setUploadPart] = useState(0);
   const [languages, setLanguages] = useState(['hi', 'gu', 'en']);
   const [participants, setParticipants] = useState('');
   const [engine, setEngine] = useState('');
@@ -61,9 +72,46 @@ export default function Record() {
         ? `The recording stopped by itself at ${fmtClock(info.seconds)}: the microphone was probably taken by a call or another app. What was captured is below; record the rest as a new meeting if you need it.`
         : '',
     );
-    setFile(f);
+    setFiles([f]);
     setAudioUrl(URL.createObjectURL(f));
   };
+
+  // Files picked together are parts of one meeting: new ones go after the parts already listed, oldest first
+  // (the order they were recorded); the order can be changed before upload.
+  const handleFiles = (picked, base = []) => {
+    const bad = picked.map(validateAudioFile).find(Boolean);
+    if (bad) {
+      setError(bad);
+      return;
+    }
+    const sorted = [...picked].sort((a, b) => (a.lastModified ?? 0) - (b.lastModified ?? 0));
+    const next = [...base, ...sorted].filter(
+      (f, i, all) => all.findIndex((g) => g.name === f.name && g.size === f.size) === i,
+    );
+    if (next.length > MAX_PARTS) {
+      setError(`At most ${MAX_PARTS} files per meeting.`);
+      return;
+    }
+    setError('');
+    setNotice('');
+    if (next.length === 1) return handleAudioReady(next[0]);
+    setAudioUrl('');
+    setFiles(next);
+  };
+  const movePart = (i, by) =>
+    setFiles((prev) => {
+      const next = [...prev];
+      const j = i + by;
+      if (j < 0 || j >= next.length) return prev;
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  const removePart = (i) =>
+    setFiles((prev) => {
+      const next = prev.filter((_, k) => k !== i);
+      if (next.length === 1) setAudioUrl(URL.createObjectURL(next[0]));
+      return next;
+    });
 
   const toggleLanguage = (code) =>
     setLanguages((prev) =>
@@ -76,19 +124,28 @@ export default function Record() {
     if (!languages.length) return setError('Pick at least one language.');
     setCreating(true);
     try {
+      // every file goes into the same meeting folder; the meeting is created only once all are uploaded
       const sig = await getUploadSignature();
       setUploading(true);
-      const uploaded = await uploadToCloudinary(file, sig, (pct, loaded) => {
-        setUploadPct(pct);
-        setUploadMb(loaded / (1024 * 1024));
-      });
+      const uploaded = [];
+      for (const [i, f] of files.entries()) {
+        setUploadPart(i + 1);
+        setUploadPct(0);
+        const s = i === 0 ? sig : await getUploadSignature(sig.meetingId);
+        const u = await uploadToCloudinary(f, s, (pct, loaded) => {
+          setUploadPct(pct);
+          setUploadMb(loaded / (1024 * 1024));
+        });
+        uploaded.push({ publicId: u.publicId, url: u.url, fileName: f.name });
+      }
       setUploading(false);
       const count = parseInt(participants, 10);
       const meeting = await api.meetings.create({
         meetingId: sig.meetingId,
         title: title.trim() || `Meeting ${new Date().toLocaleDateString()}`,
-        publicId: uploaded.publicId,
-        url: uploaded.url,
+        publicId: uploaded[0].publicId,
+        url: uploaded[0].url,
+        ...(uploaded.length > 1 ? { parts: uploaded } : {}),
         languages,
         expectedParticipants: Number.isFinite(count) && count > 0 ? count : null,
         ...(engine ? { engine } : {}),
@@ -210,13 +267,108 @@ export default function Record() {
                 {file?.name} · {(file?.size / (1024 * 1024)).toFixed(1)} MB — duration is measured
                 after upload.
               </p>
+              {!FEATURES.liveRecording && files.length === 1 && !file?.recorded && (
+                <label className="block text-center" data-testid="add-part">
+                  <input
+                    type="file"
+                    accept={AUDIO_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const more = Array.from(e.target.files ?? []);
+                      e.target.value = '';
+                      if (more.length) handleFiles(more, [file]);
+                    }}
+                  />
+                  <span className="inline-flex items-center gap-1 text-sm text-muted-foreground underline cursor-pointer">
+                    <Plus className="w-4 h-4" /> Add the next part of this meeting
+                  </span>
+                </label>
+              )}
               <Button
                 variant="outline"
                 className="w-full rounded-full"
                 onClick={() => {
                   setAudioUrl('');
-                  setFile(null);
+                  setFiles([]);
                 }}
+              >
+                Use different audio
+              </Button>
+            </div>
+          ) : files.length > 1 ? (
+            <div
+              className="rounded-2xl border border-border bg-card p-4 space-y-3"
+              data-testid="parts"
+            >
+              <p className="text-sm">
+                One meeting in {files.length} files. They are joined in this order into one
+                recording, with one transcript and one summary.
+              </p>
+              <ol className="space-y-2">
+                {files.map((f, i) => (
+                  <li
+                    key={`${f.name}-${f.size}`}
+                    className="flex items-center gap-2 rounded-xl border border-border px-3 py-2"
+                  >
+                    <span className="text-xs font-semibold text-muted-foreground w-14 shrink-0">
+                      Part {i + 1}
+                    </span>
+                    <span className="text-sm flex-1 min-w-0 truncate">{f.name}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {(f.size / (1024 * 1024)).toFixed(1)} MB
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Move part ${i + 1} up`}
+                      disabled={i === 0}
+                      onClick={() => movePart(i, -1)}
+                      className="p-1 disabled:opacity-30"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move part ${i + 1} down`}
+                      disabled={i === files.length - 1}
+                      onClick={() => movePart(i, 1)}
+                      className="p-1 disabled:opacity-30"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove part ${i + 1}`}
+                      onClick={() => removePart(i)}
+                      className="p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+              {files.length < MAX_PARTS && (
+                <label className="block text-center">
+                  <input
+                    type="file"
+                    accept={AUDIO_ACCEPT}
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const more = Array.from(e.target.files ?? []);
+                      e.target.value = '';
+                      if (more.length) handleFiles(more, files);
+                    }}
+                  />
+                  <span className="inline-flex items-center gap-1 text-sm text-muted-foreground underline cursor-pointer">
+                    <Plus className="w-4 h-4" /> Add another part
+                  </span>
+                </label>
+              )}
+              <Button
+                variant="outline"
+                className="w-full rounded-full"
+                onClick={() => setFiles([])}
               >
                 Use different audio
               </Button>
@@ -224,7 +376,7 @@ export default function Record() {
           ) : FEATURES.liveRecording ? (
             <AudioRecorder onComplete={handleAudioReady} />
           ) : (
-            <AudioUpload onComplete={handleAudioReady} />
+            <AudioUpload onComplete={handleAudioReady} onFiles={handleFiles} />
           )}
         </div>
 
@@ -233,7 +385,11 @@ export default function Record() {
             <div className="flex items-center gap-3">
               <Loader2 className="w-5 h-5 animate-spin text-primary shrink-0" />
               <span className="font-medium">
-                {uploading ? 'Uploading audio…' : 'Creating your meeting…'}
+                {uploading
+                  ? files.length > 1
+                    ? `Uploading file ${uploadPart} of ${files.length}…`
+                    : 'Uploading audio…'
+                  : 'Creating your meeting…'}
               </span>
             </div>
             {uploading && (

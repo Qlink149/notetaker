@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { Types } from 'mongoose';
 import {
   CreateMeetingBody,
+  UploadSignBody,
   PatchMeetingBody,
   RetryBody,
   SummariseBody,
@@ -11,14 +12,10 @@ import { ws } from '../lib/auth.js';
 import { HttpError, assertEngineEnabled, body, idParam, notFound } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
 import { meetingDataView, meetingView } from '../lib/views.js';
-import {
-  JobModel,
-  MeetingDataModel,
-  MeetingModel,
-  type MeetingDoc,
-} from '../models/index.js';
+import { JobModel, MeetingDataModel, MeetingModel, type MeetingDoc } from '../models/index.js';
 import { enqueue } from '../pipeline/queue.js';
 import { deleteMeetingEverywhere } from '../services/meetingDelete.js';
+import { PENDING_CONCAT } from '../pipeline/stages/07-concat.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
 import type { ApiDeps } from './deps.js';
 
@@ -34,9 +31,18 @@ export function meetingsRouter(deps: ApiDeps): Router {
     return m;
   };
 
-  /** Signed browser upload bound to a fresh meeting id and its own folder. */
+  /**
+   * Signed browser upload into a meeting's own folder: a fresh meeting id, or (for files 2..n of a meeting
+   * uploaded in parts) the id the first file was signed for. Every signature makes its own file name.
+   */
   r.post('/uploads/sign', async (req, res) => {
-    const meetingId = new Types.ObjectId().toHexString();
+    const { meetingId: given } = body(UploadSignBody, req);
+    if (given) {
+      const existing = await MeetingModel.findById(given, { workspaceId: 1 }).lean();
+      if (existing && String(existing.workspaceId) !== String(ws(req)._id))
+        throw notFound('meeting_not_found');
+    }
+    const meetingId = given ?? new Types.ObjectId().toHexString();
     const folder = meetingFolder(ws(req).slug, meetingId);
     res.json({ meetingId, ...(await deps.storage.signUpload(folder)) });
   });
@@ -46,10 +52,16 @@ export function meetingsRouter(deps: ApiDeps): Router {
     const input = body(CreateMeetingBody, req);
     await assertEngineEnabled([input.engine ?? workspace.settings.engine]);
     const folder = meetingFolder(workspace.slug, input.meetingId);
-    if (!input.publicId.startsWith(`${folder}/`))
-      throw new HttpError(400, "publicId is not in this meeting's upload folder");
+    const files = input.parts ?? [{ publicId: input.publicId, url: input.url }];
+    for (const f of [{ publicId: input.publicId }, ...files])
+      if (!f.publicId.startsWith(`${folder}/`))
+        throw new HttpError(400, "publicId is not in this meeting's upload folder");
+    if (input.parts && input.parts[0]!.publicId !== input.publicId)
+      throw new HttpError(400, 'the first part must be the meeting file');
     if (await MeetingModel.exists({ _id: input.meetingId }))
       throw new HttpError(409, 'meeting_exists');
+    // several files: joined into one recording first (concat), then the normal pipeline
+    const inParts = Boolean(input.parts);
     const meeting = await MeetingModel.create({
       _id: new Types.ObjectId(input.meetingId),
       workspaceId: workspace._id,
@@ -60,9 +72,21 @@ export function meetingsRouter(deps: ApiDeps): Router {
       engine: input.engine ?? workspace.settings.engine,
       languages: input.languages ?? workspace.settings.languages,
       expectedParticipants: input.expectedParticipants ?? null,
-      audio: { originalUrl: input.url, originalPublicId: input.publicId },
+      audio: inParts
+        ? {
+            originalUrl: PENDING_CONCAT,
+            originalPublicId: `${folder}/combined`,
+            parts: input.parts!.map((f) => ({
+              publicId: f.publicId,
+              url: f.url,
+              fileName: f.fileName ?? null,
+              durationSec: null,
+              offsetSec: null,
+            })),
+          }
+        : { originalUrl: input.url, originalPublicId: input.publicId },
     });
-    await enqueue({ meetingId: meeting._id, stage: 'ingest' });
+    await enqueue({ meetingId: meeting._id, stage: inParts ? 'concat' : 'ingest' });
     res.status(201).json({ meeting: meetingView(meeting.toObject() as MeetingDoc) });
   });
 
@@ -114,7 +138,14 @@ export function meetingsRouter(deps: ApiDeps): Router {
       throw new HttpError(409, 'meeting_is_processing');
     }
     await JobModel.deleteMany({ meetingId: m._id, stage, status: 'failed' });
-    if (stage === 'transcribe') {
+    if (stage === 'ingest' && m.audio.originalUrl === PENDING_CONCAT) {
+      await JobModel.deleteMany({ meetingId: m._id, stage: 'concat', status: 'failed' });
+      await MeetingModel.updateOne(
+        { _id: m._id },
+        { $set: { status: 'processing', stage: 'ingest', error: null } },
+      );
+      await enqueue({ meetingId: m._id, stage: 'concat' });
+    } else if (stage === 'transcribe') {
       const data = await MeetingDataModel.findOne(
         { meetingId: m._id },
         { 'chunks.index': 1, 'chunks.status': 1 },

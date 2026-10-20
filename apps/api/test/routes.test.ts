@@ -130,6 +130,97 @@ describe('meetings', () => {
     await auth(request(app).post('/api/v1/meetings')).send({ title: '' }).expect(400);
   });
 
+  it('makes one meeting from several files: signs them into one folder and joins them first', async () => {
+    const first = await auth(request(app).post('/api/v1/uploads/sign')).expect(200);
+    const { meetingId, folder } = first.body as { meetingId: string; folder: string };
+    // files 2 and 3 are signed into the same meeting folder
+    const second = await auth(request(app).post('/api/v1/uploads/sign'))
+      .send({ meetingId })
+      .expect(200);
+    expect(second.body).toMatchObject({ meetingId, folder });
+    const parts = [1, 2, 3].map((n) => ({
+      publicId: `${folder}/part-${n}`,
+      url: `https://res.cloudinary.com/x/part-${n}.m4a`,
+      fileName: `Recording ${n}.m4a`,
+    }));
+    const res = await auth(request(app).post('/api/v1/meetings'))
+      .send({
+        meetingId,
+        title: 'Three batches',
+        publicId: parts[0]!.publicId,
+        url: parts[0]!.url,
+        parts,
+      })
+      .expect(201);
+    const m = res.body.meeting as {
+      id: string;
+      audio: { originalUrl: string; parts: { fileName: string; offsetSec: number | null }[] };
+    };
+    expect(m.audio.originalUrl).toBe('pending:concat');
+    expect(m.audio.parts.map((p) => p.fileName)).toEqual([
+      'Recording 1.m4a',
+      'Recording 2.m4a',
+      'Recording 3.m4a',
+    ]);
+    const jobs = await JobModel.find({ meetingId: m.id }).lean();
+    expect(jobs.map((j) => j.stage)).toEqual(['concat']);
+  });
+
+  it('refuses parts from another folder, a first part that is not the meeting file, or too many', async () => {
+    const sign = await auth(request(app).post('/api/v1/uploads/sign')).expect(200);
+    const { meetingId, folder } = sign.body as { meetingId: string; folder: string };
+    const part = (n: number, f = folder) => ({
+      publicId: `${f}/p${n}`,
+      url: `https://x.example/${n}`,
+    });
+    const send = (parts: unknown[], publicId = `${folder}/p1`) =>
+      auth(request(app).post('/api/v1/meetings')).send({
+        meetingId,
+        title: 't',
+        publicId,
+        url: 'https://x.example/1',
+        parts,
+      });
+    await send([part(1), part(2, 'workspaces/other/meetings/x')]).expect(400);
+    await send([part(1), part(2)], `${folder}/p2`).expect(400);
+    await send([1, 2, 3, 4, 5, 6].map((n) => part(n))).expect(400);
+    await send([part(1)]).expect(400); // a "meeting in parts" needs at least two
+    expect(await MeetingModel.countDocuments({})).toBe(0);
+  });
+
+  it("does not sign into another workspace's meeting folder", async () => {
+    const foreign = await MeetingModel.create({
+      workspaceId: new Types.ObjectId(),
+      title: 'x',
+      status: 'completed',
+      stage: 'done',
+      audio: { originalUrl: 'x', originalPublicId: 'x' },
+    });
+    await auth(request(app).post('/api/v1/uploads/sign'))
+      .send({ meetingId: String(foreign._id) })
+      .expect(404);
+    await auth(request(app).post('/api/v1/uploads/sign')).send({ meetingId: 'nope' }).expect(400);
+  });
+
+  it('retrying "preparing audio" of a meeting whose files were never joined starts with the join', async () => {
+    const sign = await auth(request(app).post('/api/v1/uploads/sign')).expect(200);
+    const { meetingId, folder } = sign.body as { meetingId: string; folder: string };
+    const parts = [1, 2].map((n) => ({
+      publicId: `${folder}/p${n}`,
+      url: `https://x.example/${n}`,
+    }));
+    await auth(request(app).post('/api/v1/meetings'))
+      .send({ meetingId, title: 't', publicId: parts[0]!.publicId, url: parts[0]!.url, parts })
+      .expect(201);
+    await JobModel.updateMany({ meetingId }, { $set: { status: 'failed' } });
+    await MeetingModel.updateOne({ _id: meetingId }, { $set: { status: 'failed' } });
+    await auth(request(app).post(`/api/v1/meetings/${meetingId}/retry`))
+      .send({ stage: 'ingest' })
+      .expect(202);
+    const jobs = await JobModel.find({ meetingId, status: 'queued' }).lean();
+    expect(jobs.map((j) => j.stage)).toEqual(['concat']);
+  });
+
   it('lists, reads, renames and keeps the polled record small', async () => {
     const m = await createMeeting();
     // Simulate a long processed transcript in MeetingData

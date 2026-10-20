@@ -6,11 +6,32 @@ import { BenchmarkEngineName, EngineName, Language, Line, RetryableStage } from 
 export const LoginBody = z.object({ code: z.string().min(1).max(200) });
 export type LoginBody = z.infer<typeof LoginBody>;
 
+/** Most files one meeting can be uploaded in. */
+export const MAX_AUDIO_PARTS = 5;
+export const UploadedPart = z.object({
+  publicId: z.string().min(1),
+  url: z.string().url(),
+  fileName: z.string().max(200).optional(),
+});
+export type UploadedPart = z.infer<typeof UploadedPart>;
+
+/** Sign one more upload into an existing meeting folder (files 2..n of a meeting, or a continuation). */
+export const UploadSignBody = z.object({
+  meetingId: z
+    .string()
+    .regex(/^[a-f0-9]{24}$/)
+    .optional(),
+});
+export type UploadSignBody = z.infer<typeof UploadSignBody>;
+
 export const CreateMeetingBody = z.object({
   meetingId: z.string().regex(/^[a-f0-9]{24}$/),
   title: z.string().trim().min(1).max(200),
+  /** The first (or only) file. */
   publicId: z.string().min(1),
   url: z.string().url(),
+  /** A meeting recorded in several files, in order (the first is also `publicId`/`url`). */
+  parts: z.array(UploadedPart).min(2).max(MAX_AUDIO_PARTS).optional(),
   languages: z.array(Language).min(1).optional(),
   engine: EngineName.optional(),
   expectedParticipants: z.number().int().min(1).max(50).nullable().optional(),

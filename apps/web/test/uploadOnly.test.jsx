@@ -64,6 +64,61 @@ describe('new meeting page while live recording is not offered', () => {
     expect(h.upload).toHaveBeenCalled();
     expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ meetingId: 'm1' }));
   });
+
+  it('takes one meeting in several files, in the order chosen (client request, 20 Oct)', async () => {
+    const { getUploadSignature } = await import('@/lib/cloudinaryUpload');
+    h.upload.mockImplementation(async (f) => ({
+      publicId: `p/${f.name}`,
+      url: `b2://p/${f.name}`,
+    }));
+    const { container } = openRecord();
+    await screen.findByText('Upload audio file');
+    const input = container.querySelector('input[type="file"]');
+    expect(input.multiple).toBe(true);
+    const at = (name, t) =>
+      new File(['x'.repeat(2048)], name, { type: 'audio/x-m4a', lastModified: t });
+    // picked out of order: put in recording order (oldest first)
+    fireEvent.change(input, { target: { files: [at('second.m4a', 2000), at('first.m4a', 1000)] } });
+    const list = await screen.findByTestId('parts');
+    expect(list.textContent).toMatch(/One meeting in 2 files/);
+    expect([...list.querySelectorAll('li')].map((li) => li.textContent)).toEqual([
+      expect.stringContaining('first.m4a'),
+      expect.stringContaining('second.m4a'),
+    ]);
+    // the person swaps them
+    fireEvent.click(screen.getByRole('button', { name: 'Move part 2 up' }));
+    fireEvent.click(screen.getByRole('button', { name: /Process meeting/ }));
+    await screen.findByText('meeting page');
+
+    expect(h.upload).toHaveBeenCalledTimes(2);
+    // the second file is signed into the first file's meeting folder
+    expect(getUploadSignature).toHaveBeenNthCalledWith(2, 'm1');
+    expect(h.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meetingId: 'm1',
+        publicId: 'p/second.m4a',
+        parts: [
+          { publicId: 'p/second.m4a', url: 'b2://p/second.m4a', fileName: 'second.m4a' },
+          { publicId: 'p/first.m4a', url: 'b2://p/first.m4a', fileName: 'first.m4a' },
+        ],
+      }),
+    );
+  });
+
+  it('removing a part back to one file shows the single-file preview again', async () => {
+    const { container } = openRecord();
+    await screen.findByText('Upload audio file');
+    const at = (name, t) =>
+      new File(['x'.repeat(2048)], name, { type: 'audio/x-m4a', lastModified: t });
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [at('a.m4a', 1), at('b.m4a', 2)] },
+    });
+    await screen.findByTestId('parts');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove part 2' }));
+    await waitFor(() => expect(screen.queryByTestId('parts')).toBeNull());
+    expect(screen.getByText(/a\.m4a/)).toBeTruthy();
+    expect(screen.getByTestId('add-part')).toBeTruthy();
+  });
 });
 
 describe('navigation while those parts are off', () => {

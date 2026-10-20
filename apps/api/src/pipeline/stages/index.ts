@@ -1,5 +1,6 @@
 import type { StageRegistry } from '../context.js';
 import { multitrackStage } from './05-multitrack.js';
+import { concatStage } from './07-concat.js';
 import { ingestStage } from './10-ingest.js';
 import { transcribeStage } from './20-transcribe.js';
 import { diarizeStage } from './22-diarize.js';
@@ -12,6 +13,7 @@ import { finaliseStage } from './90-finalise.js';
 import { benchmarkStage } from './95-benchmark.js';
 
 export const stages: StageRegistry = {
+  concat: concatStage,
   multitrack: multitrackStage,
   ingest: ingestStage,
   transcribe: transcribeStage,

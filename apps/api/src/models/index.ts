@@ -102,6 +102,14 @@ export interface MeetingAudioDoc {
   playbackUrl: string | null;
   analysisUrl: string | null;
   analysisPublicId: string | null;
+  /** The files of a meeting uploaded in several parts, in order (joined into `originalUrl`). */
+  parts?: {
+    publicId: string;
+    url: string;
+    fileName: string | null;
+    durationSec: number | null;
+    offsetSec: number | null;
+  }[];
 }
 export interface MeetingDoc {
   _id: Types.ObjectId;
@@ -156,6 +164,21 @@ const meetingSchema = new Schema<MeetingDoc>(
       playbackUrl: { type: String, default: null },
       analysisUrl: { type: String, default: null },
       analysisPublicId: { type: String, default: null },
+      parts: {
+        type: [
+          new Schema(
+            {
+              publicId: String,
+              url: String,
+              fileName: { type: String, default: null },
+              durationSec: { type: Number, default: null },
+              offsetSec: { type: Number, default: null },
+            },
+            { _id: false },
+          ),
+        ],
+        default: undefined,
+      },
     },
     coverage: {
       type: new Schema({ speechSec: Number, coveredSec: Number, ratio: Number }, opts),

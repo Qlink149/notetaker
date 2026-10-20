@@ -90,12 +90,25 @@ export type Coverage = z.infer<typeof Coverage>;
 export const ActionItem = z.object({ speakerName: z.string(), text: z.string() });
 export type ActionItem = z.infer<typeof ActionItem>;
 
+/** One uploaded file of a meeting recorded in several parts, in order. */
+export const AudioPart = z.object({
+  publicId: z.string(),
+  url: z.string(),
+  fileName: z.string().nullable(),
+  /** Length and start within the combined recording, known once the parts are joined. */
+  durationSec: z.number().nullable(),
+  offsetSec: z.number().nullable(),
+});
+export type AudioPart = z.infer<typeof AudioPart>;
+
 export const MeetingAudio = z.object({
   originalUrl: z.string(),
   originalPublicId: z.string(),
   playbackUrl: z.string().nullable(),
   analysisUrl: z.string().nullable(),
   analysisPublicId: z.string().nullable(),
+  /** Set when the meeting was uploaded as several files (joined into `originalUrl`). */
+  parts: z.array(AudioPart).optional(),
 });
 export type MeetingAudio = z.infer<typeof MeetingAudio>;
 

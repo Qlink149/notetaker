@@ -39,6 +39,17 @@ export function meetingView(m: MeetingDoc): Meeting {
       playbackUrl: playbackUrlOf(m),
       analysisUrl: m.audio.analysisUrl ?? null,
       analysisPublicId: m.audio.analysisPublicId ?? null,
+      ...(m.audio.parts?.length
+        ? {
+            parts: m.audio.parts.map((p) => ({
+              publicId: p.publicId,
+              url: p.url,
+              fileName: p.fileName ?? null,
+              durationSec: p.durationSec ?? null,
+              offsetSec: p.offsetSec ?? null,
+            })),
+          }
+        : {}),
     },
     coverage: m.coverage ?? null,
     participants: m.participants ?? [],

@@ -80,3 +80,27 @@ describe('transcript follow mode', () => {
     expect(onUserScroll).not.toHaveBeenCalled();
   });
 });
+
+describe('a meeting uploaded in several files', () => {
+  it('marks where each later file starts in the transcript', () => {
+    const { getAllByTestId } = render(
+      ui({
+        parts: [
+          { publicId: 'a', url: 'b2://a', fileName: 'a.m4a', durationSec: 10, offsetSec: 0 },
+          { publicId: 'b', url: 'b2://b', fileName: 'b.m4a', durationSec: 10, offsetSec: 10 },
+          { publicId: 'c', url: 'b2://c', fileName: null, durationSec: 10, offsetSec: 20 },
+        ],
+      }),
+    );
+    const dividers = getAllByTestId('part-divider');
+    expect(dividers.map((d) => d.textContent)).toEqual(['Part 2 · b.m4a', 'Part 3']);
+    // each divider sits right before the first line of its part
+    expect(dividers[0].nextElementSibling.textContent).toContain('two');
+    expect(dividers[1].nextElementSibling.textContent).toContain('three');
+  });
+
+  it('shows no divider for a meeting in one file', () => {
+    const { queryByTestId } = render(ui({}));
+    expect(queryByTestId('part-divider')).toBeNull();
+  });
+});

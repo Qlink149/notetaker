@@ -634,6 +634,7 @@ export default function MeetingDetail() {
             onActiveVisible={setActiveVisible}
             jumpRef={jumpRef}
             scriptMode={scriptMode}
+            parts={meeting.audio?.parts ?? []}
             speakers={speakers?.cards ?? []}
             {...(speakers?.source === 'pyannote' && !processing
               ? {

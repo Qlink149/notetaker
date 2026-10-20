@@ -1,9 +1,12 @@
 // Direct browser → Cloudinary upload with real progress, signed by the API for one meeting folder.
 import { api } from '@/api/client';
 
-/** Returns { meetingId, cloudName, apiKey, folder, timestamp, signature, uploadUrl }. */
-export function getUploadSignature() {
-  return api.uploads.sign();
+/**
+ * Returns { meetingId, cloudName, apiKey, folder, timestamp, signature, uploadUrl }. Pass the meeting id of the
+ * first file to sign files 2..n of a meeting uploaded in several files into the same folder.
+ */
+export function getUploadSignature(meetingId) {
+  return api.uploads.sign(meetingId);
 }
 
 // Direct browser upload with real progress. The server decides where the file goes and tells us how:

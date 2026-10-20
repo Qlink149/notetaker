@@ -238,6 +238,7 @@ export function testDeps(over: Partial<Deps> & Pick<Deps, 'storage' | 'engine'>)
       cutFlac: ffmpeg.cutFlac,
       decodePcm16k: ffmpeg.decodePcm16k,
       encodeFlac16k: ffmpeg.encodeFlac16k,
+      concatFlac: ffmpeg.concatFlac,
     },
     now: () => new Date(),
     ...over,

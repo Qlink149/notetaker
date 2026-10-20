@@ -25,6 +25,7 @@ export interface AudioTools {
   cutFlac: typeof ffmpeg.cutFlac;
   decodePcm16k: typeof ffmpeg.decodePcm16k;
   encodeFlac16k: typeof ffmpeg.encodeFlac16k;
+  concatFlac: typeof ffmpeg.concatFlac;
 }
 
 export interface GeminiFiles {
@@ -64,6 +65,7 @@ export function defaultDeps(): Deps {
       cutFlac: ffmpeg.cutFlac,
       decodePcm16k: ffmpeg.decodePcm16k,
       encodeFlac16k: ffmpeg.encodeFlac16k,
+      concatFlac: ffmpeg.concatFlac,
     },
     speakerSource: env().SPEAKER_SOURCE ?? (env().PYANNOTEAI_API_KEY ? 'pyannote' : 'text'),
     now: () => new Date(),

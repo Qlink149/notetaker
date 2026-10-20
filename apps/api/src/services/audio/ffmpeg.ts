@@ -180,6 +180,31 @@ export async function toAnalysisFlac(input: string, output: string): Promise<voi
  * Exact duration by decoding (container durations from browser recordings are often missing or
  * wrong, which is what produced "no playable audio" for valid files).
  */
+/**
+ * Join 16 kHz mono FLAC files end to end into one (a meeting uploaded in several files). The parts are decoded
+ * and encoded again, so their own headers and lengths cannot disagree with the result.
+ */
+export async function concatFlac(inputs: string[], output: string): Promise<void> {
+  if (!inputs.length) throw new Error('concatFlac: nothing to join');
+  const args = ['-y', '-hide_banner'];
+  for (const i of inputs) args.push('-i', i);
+  const pads = inputs.map((_, k) => `[${k}:a]`).join('');
+  args.push(
+    '-filter_complex',
+    `${pads}concat=n=${inputs.length}:v=0:a=1[a]`,
+    '-map',
+    '[a]',
+    '-ac',
+    '1',
+    '-ar',
+    '16000',
+    '-c:a',
+    'flac',
+    output,
+  );
+  await run(ffmpegPath(), args);
+}
+
 export async function decodedDuration(path: string): Promise<number> {
   const { stderr } = await run(ffmpegPath(), ['-hide_banner', '-i', path, '-f', 'null', '-']);
   const matches = [...stderr.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];

@@ -86,6 +86,7 @@ export function createB2Storage(o: B2Options): StorageService {
             Key: publicId,
             Body: createReadStream(path),
             ContentLength: size,
+            ...(path.endsWith('.flac') ? { ContentType: 'audio/flac' } : {}),
           }),
         );
         return { url: `${B2_SCHEME}${publicId}`, publicId };
@@ -123,7 +124,10 @@ export function createB2Storage(o: B2Options): StorageService {
           Key: key,
           ResponseCacheControl: `private, max-age=${PLAYBACK_CACHE_SECONDS}`,
         }),
-        { expiresIn: DOWNLOAD_LINK_SECONDS, signingDate: new Date(Math.floor(Date.now() / hour) * hour) },
+        {
+          expiresIn: DOWNLOAD_LINK_SECONDS,
+          signingDate: new Date(Math.floor(Date.now() / hour) * hour),
+        },
       );
     },
 

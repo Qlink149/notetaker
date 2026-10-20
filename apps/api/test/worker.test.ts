@@ -60,6 +60,100 @@ async function createMeeting(engine: 'gemini' | 'deepgram' = 'gemini') {
   return id;
 }
 
+describe('a meeting uploaded in several files (client request, 20 Oct)', () => {
+  it('joins the files in order into one recording and processes it as one meeting', async () => {
+    const engine = fakeEngine((input) => okResult(turnsCovering(0, input.endSec - input.startSec)));
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+      }),
+      stages,
+    );
+    const id = new Types.ObjectId();
+    const folder = `workspaces/kisna/meetings/${String(id)}`;
+    await MeetingModel.create({
+      _id: id,
+      workspaceId: workspace._id,
+      title: 'In three parts',
+      status: 'processing',
+      stage: 'ingest',
+      engine: 'gemini',
+      languages: ['hi', 'gu', 'en'],
+      audio: {
+        originalUrl: 'pending:concat',
+        originalPublicId: `${folder}/combined`,
+        parts: [1, 2, 3].map((n) => ({
+          publicId: `${folder}/part-${n}`,
+          url: fixture,
+          fileName: `Recording ${n}.m4a`,
+          durationSec: null,
+          offsetSec: null,
+        })),
+      },
+    });
+    await enqueue({ meetingId: id, stage: 'concat' });
+    await runner.drain();
+
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    // three 2-minute files: one 6-minute recording, each part placed after the previous one
+    expect(m?.durationSec).toBeCloseTo(360, 0);
+    expect(m?.audio.originalUrl).not.toBe('pending:concat');
+    expect(m?.audio.originalPublicId).toBe(`${folder}/combined-3.flac`);
+    const parts = m!.audio.parts!;
+    expect(parts.map((p) => p.fileName)).toEqual([
+      'Recording 1.m4a',
+      'Recording 2.m4a',
+      'Recording 3.m4a',
+    ]);
+    expect(parts.map((p) => Math.round(p.offsetSec!))).toEqual([0, 120, 240]);
+    expect(parts.every((p) => Math.round(p.durationSec!) === 120)).toBe(true);
+    // one transcript covering all of it, one summary
+    expect(m?.coverage?.ratio).toBeGreaterThan(0.9);
+    expect(m?.summaryStatus).toBe('completed');
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(Math.max(...data!.turns.map((t) => t.end))).toBeGreaterThan(330);
+  });
+
+  it('names the file that could not be read', async () => {
+    const runner = new Runner(
+      testDeps({ storage: await fakeStorage(), engine: () => fakeEngine(() => okResult([])) }),
+      stages,
+    );
+    const id = new Types.ObjectId();
+    await MeetingModel.create({
+      _id: id,
+      workspaceId: workspace._id,
+      title: 'Broken part',
+      status: 'processing',
+      stage: 'ingest',
+      engine: 'gemini',
+      languages: ['hi'],
+      audio: {
+        originalUrl: 'pending:concat',
+        originalPublicId: `workspaces/kisna/meetings/${String(id)}/combined`,
+        parts: [
+          { publicId: 'a', url: fixture, fileName: 'one.m4a', durationSec: null, offsetSec: null },
+          {
+            publicId: 'b',
+            url: join(tmpdir(), 'does-not-exist.m4a'),
+            fileName: 'two.m4a',
+            durationSec: null,
+            offsetSec: null,
+          },
+        ],
+      },
+    });
+    await enqueue({ meetingId: id, stage: 'concat', maxAttempts: 1 });
+    await runner.drain();
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('failed');
+    expect(m?.error?.message).toMatch(/two\.m4a/);
+  });
+});
+
 describe('worker state machine', () => {
   it('runs a 2-minute recording from ingest to done', async () => {
     const engine = fakeEngine((input) => okResult(turnsCovering(0, input.endSec - input.startSec)));
