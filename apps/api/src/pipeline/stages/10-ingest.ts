@@ -84,6 +84,40 @@ export const ingestStage: StageHandler = {
         .filter((c) => c.status === 'done' || (c.status === 'pending' && c.geminiFileUri))
         .map((c) => [`${c.index}:${c.startSec}:${c.endSec}`, c]),
     );
+    // A chunk that was split (Gemini refused it or looped) keeps its finished pieces too. The pieces are
+    // renumbered after the new plan, since audio added to the meeting gives the plan more chunks.
+    const chunksBefore = before?.chunks ?? [];
+    const pieces: typeof chunksBefore = [];
+    let nextIndex = plan.length;
+    for (const c of plan) {
+      const parent = chunksBefore.find(
+        (b) =>
+          b.status === 'superseded' &&
+          (b.parent ?? null) === null &&
+          b.index === c.index &&
+          b.startSec === c.startSec &&
+          b.endSec === c.endSec,
+      );
+      if (!parent) continue;
+      const family: typeof chunksBefore = [];
+      const walk = (index: number): void => {
+        for (const k of chunksBefore.filter((b) => b.parent === index)) {
+          family.push(k);
+          if (k.status === 'superseded') walk(k.index);
+        }
+      };
+      walk(parent.index);
+      if (!family.length || family.some((k) => k.status !== 'done' && k.status !== 'superseded'))
+        continue;
+      const renumber = new Map(family.map((k) => [k.index, nextIndex++]));
+      kept.set(`${c.index}:${c.startSec}:${c.endSec}`, parent);
+      for (const k of family)
+        pieces.push({
+          ...k,
+          index: renumber.get(k.index)!,
+          parent: k.parent === parent.index ? parent.index : renumber.get(k.parent!)!,
+        });
+    }
     const chunks = plan.map(
       (c) =>
         kept.get(`${c.index}:${c.startSec}:${c.endSec}`) ?? {
@@ -102,7 +136,9 @@ export const ingestStage: StageHandler = {
           responseId: null,
         },
     );
+    chunks.push(...pieces);
     const todo = chunks.filter((c) => c.status === 'pending');
+    const live = chunks.filter((c) => c.status !== 'superseded');
 
     await MeetingDataModel.updateOne(
       { meetingId: meeting._id },
@@ -132,7 +168,7 @@ export const ingestStage: StageHandler = {
           audioWarning,
           status: 'processing',
           stage: 'transcribe',
-          progress: { chunksTotal: chunks.length, chunksDone: chunks.length - todo.length },
+          progress: { chunksTotal: live.length, chunksDone: live.length - todo.length },
           error: null,
         },
       },

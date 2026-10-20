@@ -297,6 +297,16 @@ export interface MeetingDataDoc {
   } | null;
   /** Phase 1's turns, lines and speaker map before the pyannote join replaced them. */
   phase1: { turns: Turn[]; lines: Line[]; speakerMap: Record<string, string> } | null;
+  /**
+   * Audio was added to the meeting: its speaker cards and voices as they were over the earlier audio (0 to
+   * `endSec`), so the next identification can carry people's decisions onto the new voice labels. Cleared once
+   * it has.
+   */
+  carryOver?: {
+    endSec: number;
+    segments: { speaker: string; start: number; end: number }[];
+    cards: SpeakerCardDoc[];
+  } | null;
 }
 /** Who one pyannote speaker is in one meeting. */
 export interface SpeakerCardDoc {
@@ -367,6 +377,7 @@ const meetingDataSchema = new Schema<MeetingDataDoc>(
     speakerSource: { type: String, enum: ['pyannote', 'text-fallback'], default: 'text-fallback' },
     diarize: { type: Schema.Types.Mixed, default: null },
     phase1: { type: Schema.Types.Mixed, default: null },
+    carryOver: { type: Schema.Types.Mixed, default: null },
     gapFills: {
       type: [
         new Schema(

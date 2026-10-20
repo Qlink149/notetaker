@@ -154,6 +154,78 @@ describe('a meeting uploaded in several files (client request, 20 Oct)', () => {
   });
 });
 
+describe('a continuation added to a finished meeting (client request, 20 Oct)', () => {
+  it('transcribes only the new audio and the last earlier chunk, keeping pieces of a split chunk', async () => {
+    // chunk 0 (0-600 s) is refused by Gemini's filter once, so it is transcribed as two halves
+    const engine = fakeEngine((input) =>
+      input.startSec === 0 && input.endSec === 600
+        ? new Error('Input blocked by Gemini filters (PROHIBITED_CONTENT)')
+        : okResult(turnsCovering(0, input.endSec - input.startSec)),
+    );
+    const runner = new Runner(
+      testDeps({
+        storage: await fakeStorage(),
+        engine: () => engine,
+        summariser: fakeSummariser(),
+      }),
+      stages,
+    );
+    const id = new Types.ObjectId();
+    const folder = `workspaces/kisna/meetings/${String(id)}`;
+    const part = (n: number) => ({
+      publicId: `${folder}/part-${n}`,
+      url: fixture,
+      fileName: `Recording ${n}.m4a`,
+      durationSec: null,
+      offsetSec: null,
+    });
+    // 12 minutes in six files: chunks 0-600 and 570-720
+    await MeetingModel.create({
+      _id: id,
+      workspaceId: workspace._id,
+      title: 'Long one',
+      status: 'processing',
+      stage: 'ingest',
+      engine: 'gemini',
+      languages: ['hi'],
+      audio: {
+        originalUrl: 'pending:concat',
+        originalPublicId: `${folder}/combined`,
+        parts: [1, 2, 3, 4, 5, 6].map(part),
+      },
+    });
+    await enqueue({ meetingId: id, stage: 'concat' });
+    await runner.drain();
+    let m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    const firstRun = engine.calls.map((c) => `${c.startSec}-${c.endSec}`);
+    expect(firstRun).toContain('0-600');
+    expect(firstRun).toContain('570-720');
+    expect(firstRun.length).toBe(4); // 0-600 refused, its two halves, 570-720
+
+    // two more minutes recorded later
+    const { addContinuation } = await import('../src/services/continuation.js');
+    await addContinuation(m!, [part(7)]);
+    await enqueue({ meetingId: id, stage: 'concat' });
+    await runner.drain();
+
+    m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('completed');
+    expect(m?.durationSec).toBeCloseTo(840, 0);
+    expect(m?.audio.parts?.map((p) => Math.round(p.offsetSec!))).toEqual([
+      0, 120, 240, 360, 480, 600, 720,
+    ]);
+    // only the stretch whose end moved (570 s to the new end) is sent again; chunk 0's halves are kept
+    expect(engine.calls.slice(4).map((c) => `${c.startSec}-${c.endSec}`)).toEqual(['570-840']);
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    const live = data!.chunks.filter((c) => c.status !== 'superseded');
+    expect(live.every((c) => c.status === 'done')).toBe(true);
+    expect(new Set(data!.chunks.map((c) => c.index)).size).toBe(data!.chunks.length);
+    expect(Math.max(...data!.turns.map((t) => t.end))).toBeGreaterThan(800);
+    expect(m?.progress).toMatchObject({ chunksTotal: live.length, chunksDone: live.length });
+  });
+});
+
 describe('worker state machine', () => {
   it('runs a 2-minute recording from ingest to done', async () => {
     const engine = fakeEngine((input) => okResult(turnsCovering(0, input.endSec - input.startSec)));

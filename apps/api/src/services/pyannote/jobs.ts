@@ -31,11 +31,13 @@ export const scratchDir = (...parts: string[]): string => join(repoRoot, 'scratc
 
 /** 16 kHz mono FLAC of the meeting's original, cached locally; same transform as Phase 1 ingest. */
 export async function analysisFlac(meetingId: string): Promise<string> {
-  const dir = scratchDir(meetingId);
+  const meeting = await MeetingModel.findById(meetingId, { audio: 1 }).lean();
+  if (!meeting?.audio?.originalUrl) throw new Error(`meeting ${meetingId} has no original audio`);
+  // one copy per recording: audio added to a meeting gives it a new recording, and the old copy must not be used
+  const tag = createHash('sha1').update(meeting.audio.originalUrl).digest('hex').slice(0, 8);
+  const dir = scratchDir(meetingId, tag);
   const flac = join(dir, 'analysis.flac');
   if (existsSync(flac)) return flac;
-  const meeting = await MeetingModel.findById(meetingId).lean();
-  if (!meeting?.audio?.originalUrl) throw new Error(`meeting ${meetingId} has no original audio`);
   await mkdir(dir, { recursive: true });
   // The same shared copy the pipeline stages use (built once at ingest), so a meeting's original is not fetched
   // from storage and converted again here; concurrent callers (one per speaker) wait for a single build.

@@ -42,6 +42,15 @@ export type CreateMeetingBody = z.infer<typeof CreateMeetingBody>;
 export const PatchMeetingBody = z.object({ title: z.string().trim().min(1).max(200) });
 export type PatchMeetingBody = z.infer<typeof PatchMeetingBody>;
 
+/** Most files one meeting can hold in all, continuations included. */
+export const MAX_MEETING_PARTS = 10;
+
+/** Recordings added to the end of an existing meeting (a continuation recorded later). */
+export const AddPartsBody = z.object({
+  parts: z.array(UploadedPart).min(1).max(MAX_AUDIO_PARTS),
+});
+export type AddPartsBody = z.infer<typeof AddPartsBody>;
+
 export const RetryBody = z.object({ stage: RetryableStage });
 export type RetryBody = z.infer<typeof RetryBody>;
 

@@ -1,7 +1,9 @@
 import { Router, type Request } from 'express';
 import { Types } from 'mongoose';
 import {
+  AddPartsBody,
   CreateMeetingBody,
+  MAX_MEETING_PARTS,
   UploadSignBody,
   PatchMeetingBody,
   RetryBody,
@@ -14,6 +16,7 @@ import { logger } from '../lib/logger.js';
 import { meetingDataView, meetingView } from '../lib/views.js';
 import { JobModel, MeetingDataModel, MeetingModel, type MeetingDoc } from '../models/index.js';
 import { enqueue } from '../pipeline/queue.js';
+import { addContinuation } from '../services/continuation.js';
 import { deleteMeetingEverywhere } from '../services/meetingDelete.js';
 import { PENDING_CONCAT } from '../pipeline/stages/07-concat.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
@@ -122,6 +125,46 @@ export function meetingsRouter(deps: ApiDeps): Router {
       { returnDocument: 'after' },
     ).lean<MeetingDoc>();
     res.json({ meeting: meetingView(updated!) });
+  });
+
+  /**
+   * Add recordings to the end of a meeting (a continuation recorded later). The files are uploaded into the
+   * meeting's folder first (`/uploads/sign` with the meeting id); the meeting is then joined and processed again,
+   * keeping the work on the earlier audio that the new audio does not change (`addContinuation`).
+   */
+  r.post('/meetings/:id/parts', async (req, res) => {
+    const m = await own(req);
+    const { parts } = body(AddPartsBody, req);
+    if (
+      m.status === 'processing' ||
+      m.audio.originalUrl === PENDING_CONCAT ||
+      (await JobModel.exists({
+        meetingId: m._id,
+        status: { $in: ['queued', 'running'] },
+        stage: { $nin: ['benchmark', 'learnvoice'] },
+      }))
+    )
+      throw new HttpError(409, 'meeting_is_processing');
+    const folder = meetingFolder(ws(req).slug, String(m._id));
+    for (const f of parts)
+      if (!f.publicId.startsWith(`${folder}/`))
+        throw new HttpError(400, "publicId is not in this meeting's upload folder");
+    if ((m.audio.parts?.length || 1) + parts.length > MAX_MEETING_PARTS)
+      throw new HttpError(400, `a meeting can hold at most ${MAX_MEETING_PARTS} files`);
+    await addContinuation(
+      m,
+      parts.map((f) => ({
+        publicId: f.publicId,
+        url: f.url,
+        fileName: f.fileName ?? null,
+        durationSec: null,
+        offsetSec: null,
+      })),
+    );
+    await JobModel.deleteMany({ meetingId: m._id, stage: 'concat', status: 'failed' });
+    await enqueue({ meetingId: m._id, stage: 'concat' });
+    const updated = await MeetingModel.findById(m._id).lean<MeetingDoc>();
+    res.status(202).json({ meeting: meetingView(updated!) });
   });
 
   /** Re-queue one stage only (fixes X1: never restart from zero). */

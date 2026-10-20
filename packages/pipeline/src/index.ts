@@ -8,6 +8,7 @@ export * from './repetition.js';
 export * from './glossaryPrompt.js';
 export * from './summaryParse.js';
 export * from './summaryRename.js';
+export * from './carryOver.js';
 export * from './summaryInput.js';
 export * from './normalize.js';
 export * from './assemble.js';

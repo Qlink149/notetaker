@@ -20,6 +20,7 @@ import { fmtDuration, fmtTime, waitEstimate } from '@/lib/format';
 import TranscriptView from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
+import AddContinuation from '@/components/AddContinuation';
 import MeetingExport from '@/components/MeetingExport';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -652,7 +653,18 @@ export default function MeetingDetail() {
         </div>
       )}
 
-      <div className="mt-8 pt-6 border-t border-border">
+      <div className="mt-8 pt-6 border-t border-border space-y-3">
+        {!processing && (
+          <AddContinuation
+            meeting={meeting}
+            onAdded={(m) => {
+              setMeeting(m);
+              setData(null);
+              setSpeakers(null);
+              dataKey.current = null;
+            }}
+          />
+        )}
         <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
           <AlertDialogTrigger asChild>
             <Button

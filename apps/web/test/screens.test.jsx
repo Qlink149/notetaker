@@ -36,6 +36,7 @@ vi.mock('qrcode', () => ({
   default: { toDataURL: vi.fn().mockResolvedValue('data:image/png;base64,AAAA') },
 }));
 vi.mock('@/lib/cloudinaryUpload', () => ({
+  AUDIO_ACCEPT: 'audio/*',
   uploadToCloudinary: upload,
   getUploadSignature: vi.fn(),
   validateAudioFile: vi.fn(),

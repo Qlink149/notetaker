@@ -215,6 +215,11 @@ export const api = {
       request<{ meeting: Meeting }>('POST', '/meetings', input).then((r) => r.meeting),
     rename: (id: string, title: string) =>
       request<{ meeting: Meeting }>('PATCH', `/meetings/${id}`, { title }).then((r) => r.meeting),
+    /** Add recordings made later to the end of a meeting (uploaded first with `uploads.sign(id)`). */
+    addParts: (id: string, parts: { publicId: string; url: string; fileName?: string }[]) =>
+      request<{ meeting: Meeting }>('POST', `/meetings/${id}/parts`, { parts }).then(
+        (r) => r.meeting,
+      ),
     retry: (id: string, stage: RetryableStage) =>
       request<{ meeting: Meeting }>('POST', `/meetings/${id}/retry`, { stage }).then(
         (r) => r.meeting,

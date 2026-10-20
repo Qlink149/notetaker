@@ -10,6 +10,7 @@ import {
   pickVoiceprints,
   resolveNames,
   selectClips,
+  carrySpeakers,
   type DiarSegment,
   type DiarizationOutput,
   type NameResolution,
@@ -94,11 +95,66 @@ export function cardCandidate(res: NameResolution | undefined): SpeakerCardDoc['
   };
 }
 
+/**
+ * `name`, or `name 2`, `name 3`… when a person already has it (names are unique in a workspace). After audio is
+ * added to a meeting its voices are labelled afresh, so "Speaker B (Meeting Plan)" can already belong to the
+ * voice that was Speaker B before.
+ */
+async function freeName(workspaceId: string, name: string): Promise<string> {
+  const ws = new Types.ObjectId(workspaceId);
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${name} ${n}`;
+    if (!(await SpeakerModel.exists({ workspaceId: ws, name: candidate }))) return candidate;
+  }
+}
+
+/** Prefix of a person's origin label while audio added to their meeting is identified again. */
+export const FORMER = 'pre:';
+
+export interface Carried {
+  /** Decided cards over the earlier audio, under the new voice labels. */
+  decided: Map<string, SpeakerCardDoc>;
+  /** New voice label → the label the same voice had before audio was added (for people made from it). */
+  formerLabel: Map<string, string>;
+}
+
+/**
+ * After audio was added to the meeting (`carryOver`): which new voice each earlier voice became, so people's
+ * decisions and the people made from this meeting follow the voice rather than the old label. Null when no
+ * audio was added since the last identification.
+ */
+export async function carriedCards(
+  meetingId: string,
+  segments: DiarSegment[],
+): Promise<Carried | null> {
+  const data = await MeetingDataModel.findOne({ meetingId }, { carryOver: 1 }).lean();
+  const carry = data?.carryOver;
+  if (!carry) return null;
+  const map = carrySpeakers(
+    carry.segments,
+    segments,
+    carry.endSec,
+    carry.cards.map((c) => c.diar),
+  );
+  const formerLabel = new Map([...map].map(([from, to]) => [to, from]));
+  const decided = await decidedOf(carry.cards);
+  const out = new Map<string, SpeakerCardDoc>();
+  for (const [from, card] of decided) {
+    const to = map.get(from);
+    if (to) out.set(to, { ...card, diar: to });
+  }
+  return { decided: out, formerLabel };
+}
+
 /** This meeting's speaker cards that a person decided (named, linked, confirmed, merged, split), by voice. */
 export async function decidedCards(meetingId: string): Promise<Map<string, SpeakerCardDoc>> {
   const data = await MeetingDataModel.findOne({ meetingId }, { speakerCards: 1 }).lean();
+  return decidedOf((data?.speakerCards ?? []) as SpeakerCardDoc[]);
+}
+
+async function decidedOf(cards: SpeakerCardDoc[]): Promise<Map<string, SpeakerCardDoc>> {
   const out = new Map<string, SpeakerCardDoc>();
-  for (const c of (data?.speakerCards ?? []) as SpeakerCardDoc[]) {
+  for (const c of cards) {
     if (!(c.confirmed || c.status === 'manual')) continue;
     // a person deleted since (Speakers page) is no decision to keep
     if (c.personId && !(await SpeakerModel.exists({ _id: c.personId }))) continue;
@@ -409,7 +465,9 @@ export async function identifyMeeting(
   // A voice a person named, linked, confirmed, merged or split keeps that decision when the meeting is
   // processed again (a retry re-runs this): on 19 Oct a retry of "200 planning" re-guessed every voice and
   // dropped the client's links. Only voices nobody touched are identified afresh.
-  const decided = await decidedCards(meetingId);
+  // After audio was added, the earlier decisions are carried onto the new voice labels.
+  const carried = await carriedCards(meetingId, pya.segments);
+  const decided = carried?.decided ?? (await decidedCards(meetingId));
   for (const [diar, sec] of seconds) {
     const res = resolutions[diar];
     const clips = clipsFor(diar, pya.segments, pya.all, meetingSec);
@@ -417,6 +475,7 @@ export async function identifyMeeting(
     if (prev) {
       cards.push({
         ...prev,
+        ...(carried ? { label: labels[diar] ?? prev.label } : {}),
         speakerSec: Math.round(sec * 10) / 10,
         clips: clips.map((c) => ({ start: c.start, end: c.end, quality: c.quality })),
       });
@@ -437,16 +496,22 @@ export async function identifyMeeting(
       // (A voice whose best match is a known person already paired with another voice of this meeting is
       // left unlinked, with that person shown as the closest match, instead of becoming a new anonymous
       // person: that was how one speaker ended up in the library twice.)
+      // (After audio was added, the people made from this meeting carry their earlier label as "pre:<label>":
+      // the person made from this voice is found under the voice's earlier label and moved to the new one,
+      // and a voice with no clear earlier match gets a new person rather than whoever had its label before.)
+      const former = carried?.formerLabel.get(diar);
       const existing = await SpeakerModel.findOne({
         workspaceId: new Types.ObjectId(workspaceId),
         'origin.meetingId': new Types.ObjectId(meetingId),
-        'origin.diar': diar,
+        'origin.diar': carried ? { $in: [diar, ...(former ? [`${FORMER}${former}`] : [])] } : diar,
       }).lean<SpeakerDoc>();
+      if (existing && existing.origin?.diar !== diar)
+        await SpeakerModel.updateOne({ _id: existing._id }, { $set: { 'origin.diar': diar } });
       const person =
         existing ??
         (await SpeakerModel.create({
           workspaceId: new Types.ObjectId(workspaceId),
-          name: `${label} (Meeting ${short})`,
+          name: await freeName(workspaceId, `${label} (Meeting ${short})`),
           anonymous: true,
           origin: { meetingId: new Types.ObjectId(meetingId), diar },
         }));
@@ -469,7 +534,10 @@ export async function identifyMeeting(
     });
   }
   await mapLimit(enrolments, 4, (run) => run());
-  await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
+  await MeetingDataModel.updateOne(
+    { meetingId },
+    { $set: { speakerCards: cards, carryOver: null } },
+  );
   await P2IdentityRunModel.create({
     meetingId: new Types.ObjectId(meetingId),
     jobId: jobId ?? 'none',

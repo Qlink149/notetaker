@@ -1,14 +1,14 @@
-import { useState } from "react";
-import { Copy, Download, Printer, Check, FileText, Loader2 } from "lucide-react";
-import { api } from "@/api/client";
-import { Button } from "@/components/ui/button";
-import { fmtDuration, fmtTime, lineText } from "@/lib/format";
+import { useState } from 'react';
+import { Copy, Download, Printer, Check, FileText, Loader2, Share2, Sparkles } from 'lucide-react';
+import { api } from '@/api/client';
+import { Button } from '@/components/ui/button';
+import { fmtDuration, fmtTime, lineText } from '@/lib/format';
 
 function fmtDate(iso) {
   try {
     return new Date(iso).toLocaleString();
   } catch {
-    return "";
+    return '';
   }
 }
 
@@ -16,56 +16,90 @@ function fmtDate(iso) {
 function transcriptLines(lines, scriptMode) {
   return lines.map((l) => {
     const head = `[${fmtTime(l.start)}] ${l.speakerName}: `;
-    if (scriptMode === "both" && l.textNative && l.textNative !== l.textRoman) {
-      return `${head}${l.textRoman}\n${" ".repeat(head.length)}${l.textNative}`;
+    if (scriptMode === 'both' && l.textNative && l.textNative !== l.textRoman) {
+      return `${head}${l.textRoman}\n${' '.repeat(head.length)}${l.textNative}`;
     }
-    return head + lineText(l, scriptMode === "native" ? "native" : "roman");
+    return head + lineText(l, scriptMode === 'native' ? 'native' : 'roman');
   });
 }
 
 function buildText(meeting, lines, scriptMode) {
   const out = [`Meeting: ${meeting.title}`, `Date: ${fmtDate(meeting.date)}`];
   if (meeting.durationSec) out.push(`Duration: ${fmtDuration(meeting.durationSec)}`);
-  out.push("");
-  if (meeting.summary) out.push("SUMMARY", "=======", meeting.summary, "");
+  out.push('');
+  if (meeting.summary) out.push('SUMMARY', '=======', meeting.summary, '');
   if (meeting.actionItems?.length) {
-    out.push("ACTION ITEMS", "============");
+    out.push('ACTION ITEMS', '============');
     meeting.actionItems.forEach((a) => out.push(`- [${a.speakerName}] ${a.text}`));
-    out.push("");
+    out.push('');
   }
-  if (lines.length) out.push("TRANSCRIPT", "==========", ...transcriptLines(lines, scriptMode));
-  return out.join("\n");
+  if (lines.length) out.push('TRANSCRIPT', '==========', ...transcriptLines(lines, scriptMode));
+  return out.join('\n');
+}
+
+/**
+ * The meeting as Markdown for pasting into Claude (or any assistant): a short instruction, the summary, action
+ * items, who spoke and the full transcript with times, so questions about the meeting can be answered from it.
+ */
+export function buildForClaude(meeting, lines) {
+  const out = [
+    `Below are the notes of a meeting ("${meeting.title}", ${fmtDate(meeting.date)}${
+      meeting.durationSec ? `, ${fmtDuration(meeting.durationSec)}` : ''
+    }): a summary, action items and the full transcript. Use them to answer my questions about this meeting.`,
+    '',
+    `# ${meeting.title}`,
+  ];
+  const speakers = [...new Set(lines.map((l) => l.speakerName))];
+  if (speakers.length) out.push('', `Speakers: ${speakers.join(', ')}`);
+  if (meeting.summary) out.push('', '## Summary', '', meeting.summary.trim());
+  if (meeting.actionItems?.length) {
+    out.push('', '## Action items', '');
+    meeting.actionItems.forEach((a) => out.push(`- **${a.speakerName}**: ${a.text}`));
+  }
+  if (lines.length) {
+    out.push('', '## Transcript', '');
+    lines.forEach((l) =>
+      out.push(`[${fmtTime(l.start)}] **${l.speakerName}**: ${lineText(l, 'roman')}`),
+    );
+  }
+  return out.join('\n');
 }
 
 // PDF is the browser's print-to-PDF (system fonts for Gujarati and Devanagari): no browser engine is bundled
 // on the server. The Word export embeds the fonts.
 function buildPrintHtml(meeting, lines, scriptMode) {
-  const esc = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const parts = [`<h1>${esc(meeting.title)}</h1>`, `<p class="meta">${esc(fmtDate(meeting.date))}`];
   if (meeting.durationSec) parts.push(` · ${fmtDuration(meeting.durationSec)}`);
-  parts.push("</p>");
+  parts.push('</p>');
   if (meeting.summary) {
     const html = esc(meeting.summary)
-      .replace(/^## (.+)$/gm, "<h3>$1</h3>")
-      .replace(/^### (.+)$/gm, "<h4>$1</h4>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/^- (.+)$/gm, "<li>$1</li>")
-      .replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
+      .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/^- (.+)$/gm, '<li>$1</li>')
+      .replace(/(<li>[\s\S]*?<\/li>)/g, '<ul>$1</ul>');
     parts.push(`<div class="section"><h2>Summary</h2><div class="summary">${html}</div></div>`);
   }
   if (meeting.actionItems?.length) {
     parts.push('<div class="section"><h2>Action Items</h2><ul class="actions">');
-    meeting.actionItems.forEach((a) => parts.push(`<li><span class="speaker">${esc(a.speakerName)}</span>: ${esc(a.text)}</li>`));
-    parts.push("</ul></div>");
+    meeting.actionItems.forEach((a) =>
+      parts.push(`<li><span class="speaker">${esc(a.speakerName)}</span>: ${esc(a.text)}</li>`),
+    );
+    parts.push('</ul></div>');
   }
   if (lines.length) {
     parts.push('<div class="section"><h2>Transcript</h2>');
     lines.forEach((l) => {
-      const both = scriptMode === "both" && l.textNative && l.textNative !== l.textRoman;
-      const text = both ? `${esc(l.textRoman)}<br><span class="native">${esc(l.textNative)}</span>` : esc(lineText(l, scriptMode === "native" ? "native" : "roman"));
-      parts.push(`<div class="line"><span class="ts">${fmtTime(l.start)}</span> <span class="sp">${esc(l.speakerName)}</span>: ${text}</div>`);
+      const both = scriptMode === 'both' && l.textNative && l.textNative !== l.textRoman;
+      const text = both
+        ? `${esc(l.textRoman)}<br><span class="native">${esc(l.textNative)}</span>`
+        : esc(lineText(l, scriptMode === 'native' ? 'native' : 'roman'));
+      parts.push(
+        `<div class="line"><span class="ts">${fmtTime(l.start)}</span> <span class="sp">${esc(l.speakerName)}</span>: ${text}</div>`,
+      );
     });
-    parts.push("</div>");
+    parts.push('</div>');
   }
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>${esc(meeting.title)} — Export</title>
@@ -82,14 +116,58 @@ function buildPrintHtml(meeting, lines, scriptMode) {
   .native { color: #555; }
   .ts { color: #999; font-size: 11px; font-family: monospace; }
   @media print { body { margin: 0; padding: 12px; } }
-</style></head><body>${parts.join("\n")}
+</style></head><body>${parts.join('\n')}
 <script>window.onload = () => setTimeout(() => window.print(), 300);</script>
 </body></html>`;
 }
 
-export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) {
+export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) {
   const [copied, setCopied] = useState(false);
   const [wordBusy, setWordBusy] = useState(false);
+  const [copiedClaude, setCopiedClaude] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  const copyForClaude = async () => {
+    try {
+      await navigator.clipboard.writeText(buildForClaude(meeting, lines));
+      setCopiedClaude(true);
+      setTimeout(() => setCopiedClaude(false), 2000);
+    } catch {
+      alert('Could not copy. Try the Download button.');
+    }
+  };
+
+  // The phone's share sheet (Drive, Claude, WhatsApp, Mail…) with the Word file; where files cannot be shared,
+  // the text version instead.
+  const share = async () => {
+    setShareBusy(true);
+    try {
+      const name = `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}.docx`;
+      let shared = false;
+      try {
+        const blob = await api.meetings.exportDocx(meeting.id, scriptMode);
+        const file = new File([blob], name, {
+          type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], title: meeting.title });
+          shared = true;
+        }
+      } catch (e) {
+        if (e?.name === 'AbortError') return; // the person closed the share sheet
+      }
+      if (!shared)
+        await navigator.share({
+          title: meeting.title,
+          text: buildText(meeting, lines, scriptMode),
+        });
+    } catch (e) {
+      if (e?.name !== 'AbortError') alert(e?.message || 'Could not share.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
 
   const copy = async () => {
     try {
@@ -97,16 +175,18 @@ export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) 
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      alert("Could not copy. Try the Download button.");
+      alert('Could not copy. Try the Download button.');
     }
   };
 
   const downloadTxt = () => {
-    const blob = new Blob([buildText(meeting, lines, scriptMode)], { type: "text/plain;charset=utf-8" });
+    const blob = new Blob([buildText(meeting, lines, scriptMode)], {
+      type: 'text/plain;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
     a.href = url;
-    a.download = `${meeting.title.replace(/[^a-z0-9]+/gi, "_")}_transcript.txt`;
+    a.download = `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}_transcript.txt`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -116,36 +196,55 @@ export default function MeetingExport({ meeting, lines, scriptMode = "roman" }) 
     try {
       const blob = await api.meetings.exportDocx(meeting.id, scriptMode);
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
+      const a = document.createElement('a');
       a.href = url;
-      a.download = `${meeting.title.replace(/[^a-z0-9]+/gi, "_")}.docx`;
+      a.download = `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}.docx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      alert(e?.message || "Could not create the Word file.");
+      alert(e?.message || 'Could not create the Word file.');
     } finally {
       setWordBusy(false);
     }
   };
 
   const printPdf = () => {
-    const w = window.open("", "_blank");
-    if (!w) return alert("Please allow pop-ups to export as PDF.");
+    const w = window.open('', '_blank');
+    if (!w) return alert('Please allow pop-ups to export as PDF.');
     w.document.write(buildPrintHtml(meeting, lines, scriptMode));
     w.document.close();
   };
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 flex-wrap">
+      {canShare && (
+        <Button variant="outline" size="sm" onClick={share} disabled={shareBusy}>
+          {shareBusy ? (
+            <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+          ) : (
+            <Share2 className="w-4 h-4 mr-1" />
+          )}{' '}
+          Share…
+        </Button>
+      )}
+      <Button variant="outline" size="sm" onClick={copyForClaude}>
+        {copiedClaude ? <Check className="w-4 h-4 mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
+        {copiedClaude ? 'Copied' : 'Copy for Claude'}
+      </Button>
       <Button variant="outline" size="sm" onClick={copy}>
         {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
-        {copied ? "Copied" : "Copy"}
+        {copied ? 'Copied' : 'Copy'}
       </Button>
       <Button variant="outline" size="sm" onClick={downloadTxt}>
         <Download className="w-4 h-4 mr-1" /> .txt
       </Button>
       <Button variant="outline" size="sm" onClick={downloadWord} disabled={wordBusy}>
-        {wordBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <FileText className="w-4 h-4 mr-1" />} Word
+        {wordBusy ? (
+          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+        ) : (
+          <FileText className="w-4 h-4 mr-1" />
+        )}{' '}
+        Word
       </Button>
       <Button variant="outline" size="sm" onClick={printPdf}>
         <Printer className="w-4 h-4 mr-1" /> PDF
