@@ -1,122 +1,37 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  BarChart3,
-  Check,
-  ChevronRight,
-  Gauge,
-  Loader2,
-  LogOut,
-  Mic2,
-  Plus,
-  RefreshCw,
-  Settings,
-  Sparkles,
-} from 'lucide-react';
-import { useAuth } from '@/lib/AuthContext';
+import { Check, ChevronRight, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { api } from '@/api/client';
 import { useKept } from '@/lib/keptStore';
-import { FEATURES } from '@/lib/features';
-import { Avatar, Sheet, SkyArt, WhatsAppIcon } from '@/components/kept/bits';
+import { SkyArt } from '@/components/kept/bits';
 import TaskRow from '@/components/kept/TaskRow';
 import {
   daysUntil,
-  dueLabel,
   firstName,
   greeting,
   initialsOf,
   isoDay,
-  nudgeText,
   phaseNow,
   textOn,
   today,
-  waLink,
 } from '@/lib/kept';
 
 const ORDER = { high: 0, med: 1, low: 2 };
 const byPriority = (a, b) => ORDER[a.priority] - ORDER[b.priority];
 const byDue = (a, b) => (a.due ?? '9999').localeCompare(b.due ?? '9999');
 
-/** Who "me" is, Speakers, Settings, sign out. */
-function ProfileSheet({ onClose }) {
-  const { people, me, setMe, toast } = useKept();
-  const { logout } = useAuth();
-  const [busy, setBusy] = useState(false);
-  const mine = people.find((p) => p.id === me);
-  return (
-    <Sheet title={mine?.name ?? 'You'} onClose={onClose}>
-      <div className="px-[18px] pb-4">
-        <div className="k-lbl">This is me</div>
-        <select
-          className="k-inp"
-          aria-label="This is me"
-          value={me ?? ''}
-          disabled={busy}
-          onChange={async (e) => {
-            setBusy(true);
-            try {
-              await setMe(e.target.value || null);
-              toast('Saved. “My tasks” now follows this person.');
-            } catch (err) {
-              toast(err?.message || 'Could not save.');
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <option value="">Choose a person from the speaker directory…</option>
-          {people.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-[var(--k-sub)] mt-2 px-1">
-          Your tasks, the ones you give others, and “Given by” use this person.
-        </p>
-        <div className="k-list mt-4">
-          <Link to="/speakers" className="k-act" onClick={onClose}>
-            <span className="k-ic">
-              <Mic2 className="w-[18px] h-[18px]" />
-            </span>
-            Speakers (voice directory)
-          </Link>
-          {FEATURES.insights && (
-            <Link to="/dashboard" className="k-act" onClick={onClose}>
-              <span className="k-ic">
-                <BarChart3 className="w-[18px] h-[18px]" />
-              </span>
-              Insights
-            </Link>
-          )}
-          {FEATURES.benchmark && (
-            <Link to="/benchmark" className="k-act" onClick={onClose}>
-              <span className="k-ic">
-                <Gauge className="w-[18px] h-[18px]" />
-              </span>
-              Benchmark
-            </Link>
-          )}
-          <Link to="/settings" className="k-act" onClick={onClose}>
-            <span className="k-ic">
-              <Settings className="w-[18px] h-[18px]" />
-            </span>
-            Settings
-          </Link>
-          <button type="button" className="k-act k-red" onClick={logout}>
-            <span className="k-ic">
-              <LogOut className="w-[18px] h-[18px]" />
-            </span>
-            Sign out
-          </button>
-        </div>
-      </div>
-    </Sheet>
-  );
-}
+const groupOf = (t) =>
+  !t.due
+    ? 'No date'
+    : daysUntil(t.due) === 1
+      ? 'Tomorrow'
+      : daysUntil(t.due) < 7
+        ? 'This week'
+        : 'Later';
 
-function Section({ title, count, hint, children, onAdd, sectionRef }) {
+function Section({ title, count, hint, children, onAdd, sectionRef, first }) {
   return (
-    <div className="mt-6 k-fadein" ref={sectionRef}>
+    <div className={`${first ? 'mt-6 lg:mt-0' : 'mt-6'} k-fadein scroll-mt-6`} ref={sectionRef}>
       <div className="k-sech">
         <h2>{title}</h2>
         {count !== undefined && <span className="k-n">{count}</span>}
@@ -132,12 +47,13 @@ function Section({ title, count, hint, children, onAdd, sectionRef }) {
   );
 }
 
-/** My tasks (today, pending, upcoming) or the ones I gave others, grouped by person. */
+/**
+ * My tasks: due today, past their date, and coming up; suggested tasks from meetings to review. On a desktop the
+ * lists take the left column and the suggestions and today's finished tasks sit on the right.
+ */
 export default function Today() {
-  const { me, tasks, suggestions, people, refresh, openForm, openReview, openTask } = useKept();
-  const [seg, setSeg] = useState('mine');
+  const { me, tasks, suggestions, people, refresh, openForm, openReview, openProfile } = useKept();
   const [showDone, setShowDone] = useState(false);
-  const [profile, setProfile] = useState(false);
   const [spinning, setSpinning] = useState(false);
   const refs = { today: useRef(null), late: useRef(null), up: useRef(null) };
   const phase = phaseNow();
@@ -146,6 +62,19 @@ export default function Today() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // desktop: the latest meetings beside the lists, one click away
+  const [recent, setRecent] = useState([]);
+  useEffect(() => {
+    let live = true;
+    Promise.resolve()
+      .then(() => api.meetings.list(4))
+      .then((list) => live && setRecent(list ?? []))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const all = tasks ?? [];
   // without a "me", every open task is shown as mine (one person uses the workspace)
@@ -158,50 +87,28 @@ export default function Today() {
     (t) => t.status === 'done' && isMine(t) && t.doneAt && isoDay(t.doneAt) === today(),
   );
 
-  const delegated = me
-    ? all.filter(
-        (t) =>
-          t.createdById === me &&
-          t.ownerId !== me &&
-          (t.status === 'open' || (t.doneAt && daysUntil(isoDay(t.doneAt)) >= -1)),
-      )
-    : [];
-  const byOwner = new Map();
-  for (const t of delegated) byOwner.set(t.ownerId, [...(byOwner.get(t.ownerId) ?? []), t]);
-  const lateCount = (list) =>
-    list.filter((t) => t.status === 'open' && daysUntil(t.due) < 0).length;
-  const owners = [...byOwner].sort((a, b) => lateCount(b[1]) - lateCount(a[1]));
-
-  const groupOf = (t) =>
-    !t.due
-      ? 'No date'
-      : daysUntil(t.due) === 1
-        ? 'Tomorrow'
-        : daysUntil(t.due) < 7
-          ? 'This week'
-          : 'Later';
-
   const reload = async () => {
     setSpinning(true);
     await refresh();
     setTimeout(() => setSpinning(false), 400);
   };
+  const jump = (ref) => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
-    <div className="-mx-4 -mt-6">
-      <div className={`k-hero ${textOn(phase) === 'dark' ? 'k-dark' : ''}`} style={{ height: 262 }}>
+    <div className="-mx-4 -mt-6 lg:mx-0 lg:mt-0">
+      <div className={`k-hero ${textOn(phase) === 'dark' ? 'k-dark' : ''} h-[262px] lg:h-[230px]`}>
         <SkyArt phase={phase} />
         <div className="k-in">
           <div className="flex items-center justify-between">
-            <span className="k-wordmark">Kept.</span>
+            <span className="k-wordmark lg:invisible">Kept.</span>
             <span className="flex gap-2">
               <button type="button" className="k-glass" onClick={reload} aria-label="Refresh">
                 <RefreshCw className={`w-[18px] h-[18px] ${spinning ? 'animate-spin' : ''}`} />
               </button>
               <button
                 type="button"
-                className="k-glass"
-                onClick={() => setProfile(true)}
+                className="k-glass lg:hidden"
+                onClick={openProfile}
                 aria-label="Profile"
               >
                 {mePerson ? initialsOf(mePerson.name) : 'Me'}
@@ -217,217 +124,185 @@ export default function Today() {
           </div>
           <h1 className="!m-0">
             {greeting()},
-            <br />
-            {mePerson ? firstName(mePerson.name) : 'there'}.
+            <br className="lg:hidden" /> {mePerson ? firstName(mePerson.name) : 'there'}.
           </h1>
-          <div className="h-[52px]" />
+          <div className="h-[52px] lg:h-[60px]" />
         </div>
       </div>
 
-      <div className="k-summary" data-testid="today-summary">
-        <button
-          type="button"
-          onClick={() => refs.today.current?.scrollIntoView({ behavior: 'smooth' })}
-        >
+      <div className="k-summary lg:max-w-[560px]" data-testid="today-summary">
+        <button type="button" onClick={() => jump(refs.today)}>
           <b>{dueToday.length}</b>
           <span>Today</span>
         </button>
         <button
           type="button"
           className={late.length ? 'k-late' : ''}
-          onClick={() => refs.late.current?.scrollIntoView({ behavior: 'smooth' })}
+          onClick={() => jump(refs.late)}
         >
           <b>{late.length}</b>
           <span>Pending</span>
         </button>
-        <button
-          type="button"
-          onClick={() => refs.up.current?.scrollIntoView({ behavior: 'smooth' })}
-        >
+        <button type="button" onClick={() => jump(refs.up)}>
           <b>{upcoming.length}</b>
           <span>Upcoming</span>
         </button>
       </div>
 
-      <div className="px-4">
-        {!me && people.length > 0 && (
-          <button type="button" className="k-suggest mt-4" onClick={() => setProfile(true)}>
-            <span className="k-icon k-ac bg-white">
-              <Sparkles className="w-[18px] h-[18px]" />
-            </span>
-            <span>
-              <b>Who are you?</b>
-              <small>Pick yourself once, so “My tasks” and “Delegated” know.</small>
-            </span>
-            <ChevronRight className="w-[18px] h-[18px] ml-auto text-[var(--k-accent)]" />
-          </button>
-        )}
-        {suggestions.length > 0 && (
+      {/* phones: one column (prompts, lists, done); desktop: lists left, prompts and done right */}
+      <div className="px-4 lg:px-0 lg:mt-8 lg:grid lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_auto_1fr] lg:gap-x-8 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="lg:col-start-2 lg:row-start-1 space-y-3 pt-4 lg:pt-0">
+          {!me && people.length > 0 && (
+            <button type="button" className="k-suggest" onClick={openProfile}>
+              <span className="k-icon k-ac bg-white">
+                <Sparkles className="w-[18px] h-[18px]" />
+              </span>
+              <span>
+                <b>Who are you?</b>
+                <small>Pick yourself once, so “My tasks” shows your tasks.</small>
+              </span>
+              <ChevronRight className="w-[18px] h-[18px] ml-auto text-[var(--k-accent)]" />
+            </button>
+          )}
+          {suggestions.length > 0 && (
+            <button
+              type="button"
+              className="k-suggest"
+              onClick={() => openReview()}
+              data-testid="suggested"
+            >
+              <span className="k-icon k-ac bg-white">
+                <Sparkles className="w-[18px] h-[18px]" />
+              </span>
+              <span>
+                <b>
+                  {suggestions.length} suggested task{suggestions.length === 1 ? '' : 's'}
+                </b>
+                <small>From your meetings’ action items · tap to review</small>
+              </span>
+              <ChevronRight className="w-[18px] h-[18px] ml-auto text-[var(--k-accent)]" />
+            </button>
+          )}
           <button
             type="button"
-            className="k-suggest mt-4"
-            onClick={() => openReview()}
-            data-testid="suggested"
+            className="k-btn k-ghost !h-11 !text-sm hidden lg:flex"
+            onClick={() => openForm({ ownerId: me, due: today() })}
           >
-            <span className="k-icon k-ac bg-white">
-              <Sparkles className="w-[18px] h-[18px]" />
-            </span>
-            <span>
-              <b>
-                {suggestions.length} suggested task{suggestions.length === 1 ? '' : 's'}
-              </b>
-              <small>From your meetings’ action items · tap to review</small>
-            </span>
-            <ChevronRight className="w-[18px] h-[18px] ml-auto text-[var(--k-accent)]" />
-          </button>
-        )}
-
-        <div className="k-seg mt-5" role="group" aria-label="Whose tasks">
-          <button type="button" aria-pressed={seg === 'mine'} onClick={() => setSeg('mine')}>
-            My tasks
-          </button>
-          <button type="button" aria-pressed={seg === 'del'} onClick={() => setSeg('del')}>
-            Delegated
+            <Plus className="w-4 h-4" strokeWidth={2.2} /> New task
           </button>
         </div>
 
-        {!tasks ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : seg === 'mine' ? (
-          <>
-            <Section
-              title="Today"
-              count={dueToday.length}
-              sectionRef={refs.today}
-              onAdd={() => openForm({ ownerId: me, due: today() })}
-            >
-              <div className="k-list">
-                {dueToday.length ? (
-                  dueToday.map((t) => <TaskRow key={t.id} task={t} />)
-                ) : (
-                  <div className="k-empty">Nothing due today. Enjoy the calm ✦</div>
-                )}
-              </div>
-            </Section>
-            {late.length > 0 && (
+        <div className="lg:col-start-1 lg:row-start-1 lg:row-span-3">
+          {!tasks ? (
+            <div className="flex justify-center py-16">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <>
               <Section
-                title="Pending"
-                count={late.length}
-                hint="past their date"
-                sectionRef={refs.late}
+                first
+                title="Today"
+                count={dueToday.length}
+                sectionRef={refs.today}
+                onAdd={() => openForm({ ownerId: me, due: today() })}
               >
                 <div className="k-list">
-                  {late.map((t) => (
-                    <TaskRow key={t.id} task={t} />
-                  ))}
+                  {dueToday.length ? (
+                    dueToday.map((t) => <TaskRow key={t.id} task={t} />)
+                  ) : (
+                    <div className="k-empty">Nothing due today. Enjoy the calm ✦</div>
+                  )}
                 </div>
               </Section>
-            )}
-            <Section title="Upcoming" count={upcoming.length} sectionRef={refs.up}>
-              <div className="k-list">
-                {upcoming.length ? (
-                  upcoming.map((t, i) => {
-                    const g = groupOf(t);
-                    const head = i === 0 || groupOf(upcoming[i - 1]) !== g;
-                    return (
-                      <div key={t.id}>
-                        {head && <div className="k-group">{g}</div>}
-                        <TaskRow task={t} />
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="k-empty">Nothing coming up yet.</div>
-                )}
-              </div>
-            </Section>
-            {doneToday.length > 0 && (
-              <div className="mt-4">
-                <button type="button" className="k-donefold" onClick={() => setShowDone((x) => !x)}>
-                  <Check className="w-4 h-4" strokeWidth={2.2} /> {doneToday.length} completed today
-                  <span className="text-[var(--k-faint)]">· {showDone ? 'hide' : 'show'}</span>
-                </button>
-                {showDone && (
-                  <div className="k-list mt-2.5">
-                    {doneToday.map((t) => (
+              {late.length > 0 && (
+                <Section
+                  title="Pending"
+                  count={late.length}
+                  hint="past their date"
+                  sectionRef={refs.late}
+                >
+                  <div className="k-list">
+                    {late.map((t) => (
                       <TaskRow key={t.id} task={t} />
                     ))}
                   </div>
-                )}
-              </div>
-            )}
-          </>
-        ) : (
-          <Section
-            title="Delegated"
-            count={`${delegated.filter((t) => t.status === 'open').length} open`}
-          >
-            {!me ? (
-              <div className="k-list">
-                <div className="k-empty">
-                  Pick who you are (profile button) to see the tasks you gave.
+                </Section>
+              )}
+              <Section title="Upcoming" count={upcoming.length} sectionRef={refs.up}>
+                <div className="k-list">
+                  {upcoming.length ? (
+                    upcoming.map((t, i) => {
+                      const g = groupOf(t);
+                      const head = i === 0 || groupOf(upcoming[i - 1]) !== g;
+                      return (
+                        <div key={t.id}>
+                          {head && <div className="k-group">{g}</div>}
+                          <TaskRow task={t} />
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="k-empty">Nothing coming up yet.</div>
+                  )}
                 </div>
-              </div>
-            ) : owners.length ? (
-              owners.map(([pid, list]) => {
-                const name = list[0].ownerName;
-                const openList = list.filter((t) => t.status === 'open');
-                const lateN = lateCount(list);
-                return (
-                  <div className="k-pgroup" key={pid}>
-                    <div className="k-phead">
-                      <Avatar id={pid} name={name} size="av" />
-                      <div className="k-who">
-                        <b>{name}</b>
-                        <small>
-                          {openList.length} open
-                          {lateN > 0 && <span className="k-late"> · {lateN} late</span>}
-                        </small>
-                      </div>
-                      {openList.length > 0 && (
-                        <a
-                          className="k-icon k-wa"
-                          href={waLink(nudgeText(name, openList))}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`Nudge ${firstName(name)} on WhatsApp`}
-                        >
-                          <WhatsAppIcon />
-                        </a>
-                      )}
-                    </div>
-                    {[...list]
-                      .sort((a, b) => (a.status === 'done') - (b.status === 'done') || byDue(a, b))
-                      .map((t) => (
-                        <button
-                          type="button"
-                          key={t.id}
-                          className={`k-srow p-${t.priority}${t.status === 'done' ? ' k-done' : ''}`}
-                          onClick={() => openTask(t.id)}
-                        >
-                          <span className="k-sdot" />
-                          <span className="k-t">{t.title}</span>
-                          <span
-                            className={`k-d ${t.status === 'open' && daysUntil(t.due) < 0 ? 'k-late' : ''}`}
-                          >
-                            {t.status === 'done' ? 'Done' : dueLabel(t.due)}
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                );
-              })
-            ) : (
-              <div className="k-list">
-                <div className="k-empty">Tasks you give others will wait here.</div>
+              </Section>
+            </>
+          )}
+        </div>
+
+        {recent.length > 0 && (
+          <div
+            className="hidden lg:block lg:col-start-2 lg:row-start-3 mt-8"
+            data-testid="recent-meetings"
+          >
+            <div className="k-sech">
+              <h2 className="!text-[22px]">Recent meetings</h2>
+              <Link to="/meetings" className="k-hint hover:text-[var(--k-ink)]">
+                All
+              </Link>
+            </div>
+            <div className="k-list">
+              {recent.map((m) => (
+                <Link key={m.id} to={`/meetings/${m.id}`} className="k-srch">
+                  <span className="min-w-0">
+                    <b className="truncate">{m.title}</b>
+                    <small>
+                      {m.status === 'processing'
+                        ? 'Processing…'
+                        : new Date(m.date).toLocaleDateString('en-IN', {
+                            weekday: 'short',
+                            day: 'numeric',
+                            month: 'short',
+                          })}
+                    </small>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {doneToday.length > 0 && (
+          <div className="mt-4 lg:mt-6 lg:col-start-2 lg:row-start-2">
+            <button
+              type="button"
+              className="k-donefold"
+              onClick={() => setShowDone((x) => !x)}
+              aria-expanded={showDone}
+            >
+              <Check className="w-4 h-4" strokeWidth={2.2} /> {doneToday.length} completed today
+              <span className="text-[var(--k-faint)]">· {showDone ? 'hide' : 'show'}</span>
+            </button>
+            {showDone && (
+              <div className="k-list mt-2.5">
+                {doneToday.map((t) => (
+                  <TaskRow key={t.id} task={t} />
+                ))}
               </div>
             )}
-          </Section>
+          </div>
         )}
       </div>
-      {profile && <ProfileSheet onClose={() => setProfile(false)} />}
     </div>
   );
 }

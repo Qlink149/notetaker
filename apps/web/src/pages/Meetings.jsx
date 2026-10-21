@@ -52,13 +52,15 @@ export default function Meetings() {
 
   return (
     <div>
-      <div className="k-ptitle">
-        <h1>Meetings</h1>
-        <p>Everything that was said, and who owns what.</p>
+      <div className="lg:flex lg:items-end lg:justify-between lg:gap-6 lg:mb-8">
+        <div className="k-ptitle">
+          <h1>Meetings</h1>
+          <p>Everything that was said, and who owns what.</p>
+        </div>
+        <Link to="/record" className="k-btn k-primary mt-4 mb-5 lg:hidden">
+          <Plus className="w-5 h-5" strokeWidth={2} /> New meeting
+        </Link>
       </div>
-      <Link to="/record" className="k-btn k-primary mt-4 mb-5">
-        <Plus className="w-5 h-5" strokeWidth={2} /> New meeting
-      </Link>
 
       {!meetings ? (
         <div className="flex justify-center py-20">
@@ -73,7 +75,7 @@ export default function Meetings() {
           </Link>
         </div>
       ) : (
-        <div>
+        <div className="lg:grid lg:grid-cols-2 lg:gap-4 2xl:grid-cols-3">
           {meetings.map((m) => {
             const badge = BADGES[m.status];
             const ts = (tasks ?? []).filter((t) => t.meetingId === m.id);

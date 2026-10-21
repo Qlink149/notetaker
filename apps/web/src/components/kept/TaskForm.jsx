@@ -213,11 +213,13 @@ export default function TaskForm({ initial, onDone }) {
             No date
           </button>
         </div>
-        <div className="h-[22px]" />
-        <button type="button" className="k-btn k-primary" disabled={busy} onClick={save}>
-          {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-          {f.editId ? 'Save changes' : f.fromSuggestion ? 'Approve task' : 'Add task'}
-        </button>
+        {/* the save button stays in view while the form scrolls */}
+        <div className="sticky -bottom-5 mt-[22px] -mx-[18px] px-[18px] pt-3 pb-5 bg-background/95 backdrop-blur">
+          <button type="button" className="k-btn k-primary" disabled={busy} onClick={save}>
+            {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+            {f.editId ? 'Save changes' : f.fromSuggestion ? 'Approve task' : 'Add task'}
+          </button>
+        </div>
       </div>
     </Sheet>
   );

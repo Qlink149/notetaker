@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/AuthContext';
 import TaskSheet from '@/components/kept/TaskSheet';
 import TaskForm from '@/components/kept/TaskForm';
 import ReviewStack from '@/components/kept/ReviewStack';
+import ProfileSheet from '@/components/kept/ProfileSheet';
 
 // Shared state of the "Kept" screens: tasks, suggested tasks from meetings, the people tasks go to, and the
 // task sheet / form / review stack / toast that any screen can open.
@@ -24,6 +25,7 @@ export function KeptProvider({ children }) {
   const [people, setPeople] = useState([]);
   const [sheet, setSheet] = useState(null); // { type: 'task', id } | { type: 'form', form }
   const [review, setReview] = useState(null); // { meetingId|null, total, approved }
+  const [profile, setProfile] = useState(false);
   const [toast, setToastState] = useState(null);
   const toastTimer = useRef(null);
 
@@ -134,6 +136,7 @@ export function KeptProvider({ children }) {
       openTask: (id) => setSheet({ type: 'task', id }),
       openForm: (form = {}) => setSheet({ type: 'form', form }),
       closeSheet: () => setSheet(null),
+      openProfile: () => setProfile(true),
       openReview: (meetingId = null) => {
         const list = suggestions.filter((s) => !meetingId || s.meetingId === meetingId);
         if (list.length) setReview({ meetingId, total: list.length, approved: 0 });
@@ -170,6 +173,7 @@ export function KeptProvider({ children }) {
           onClose={() => setReview(null)}
         />
       )}
+      {profile && <ProfileSheet onClose={() => setProfile(false)} />}
       {sheet?.type === 'task' && <TaskSheet id={sheet.id} />}
       {sheet?.type === 'form' && (
         <TaskForm

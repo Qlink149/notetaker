@@ -67,11 +67,11 @@ export default function Team() {
     );
 
   return (
-    <div className="-mx-4 -mt-6">
-      <div className={`k-hero ${textOn(phase) === 'dark' ? 'k-dark' : ''}`} style={{ height: 190 }}>
+    <div className="-mx-4 -mt-6 lg:mx-0 lg:mt-0">
+      <div className={`k-hero ${textOn(phase) === 'dark' ? 'k-dark' : ''} h-[190px]`}>
         <SkyArt phase={phase} seed={4.2} sunX={90} sunY={70} />
         <div className="k-in">
-          <span className="k-wordmark">Kept.</span>
+          <span className="k-wordmark lg:invisible">Kept.</span>
           <div className="k-date mt-auto">
             {new Date().toLocaleDateString('en-IN', {
               weekday: 'long',
@@ -82,17 +82,17 @@ export default function Team() {
           <h1 className="!mt-0 mb-6">Team</h1>
         </div>
       </div>
-      <div className="px-4 pt-4">
-        <div className="flex gap-2.5">
+      <div className="px-4 pt-4 lg:px-0 lg:pt-6">
+        <div className="flex gap-2.5 lg:max-w-md">
           <button
             type="button"
-            className="k-btn k-primary"
+            className="k-btn k-primary lg:!h-11 lg:!text-sm"
             onClick={() => openForm({ due: today() })}
           >
             <Plus className="w-[18px] h-[18px]" /> New task
           </button>
           <a
-            className="k-btn k-wa"
+            className="k-btn k-wa lg:!h-11 lg:!text-sm"
             href={waLink(standupText(rows))}
             target="_blank"
             rel="noopener noreferrer"
@@ -101,9 +101,9 @@ export default function Team() {
           </a>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-6 lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
           {rows.length === 0 && (
-            <div className="k-list">
+            <div className="k-list lg:col-span-2">
               <div className="k-empty">
                 No one has tasks yet. Approve suggested tasks on Today, or add one.
               </div>
@@ -183,7 +183,7 @@ export default function Team() {
           ))}
         </div>
 
-        <Link to="/speakers" className="k-list k-act mt-2">
+        <Link to="/speakers" className="k-list k-act mt-2 lg:mt-6 lg:max-w-md">
           <span className="k-ic">
             <Mic2 className="w-[18px] h-[18px]" />
           </span>

@@ -300,7 +300,7 @@ export default function MeetingDetail() {
       </p>
 
       {meeting.audio?.playbackUrl && (
-        <div className="sticky top-0 z-30 -mx-4 px-4 py-2 mb-4 bg-background/95 backdrop-blur border-b border-border flex items-center gap-2">
+        <div className="sticky top-0 z-30 -mx-4 px-4 lg:-mx-10 lg:px-10 py-2 mb-4 bg-background/95 backdrop-blur border-b border-border flex items-center gap-2">
           <audio
             ref={audioRef}
             src={meeting.audio.playbackUrl}
@@ -500,171 +500,195 @@ export default function MeetingDetail() {
 
       {actionError && <p className="text-sm text-destructive mb-4">{actionError}</p>}
 
-      {meeting.summary && (
-        <div className="rounded-2xl border border-border bg-card p-4 mb-6">
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="w-4 h-4 text-muted-foreground" />
-            <h2 className="font-semibold">Summary</h2>
-            {!processing && !meeting.summaryOutdated && (
-              <button
-                type="button"
-                className="ml-auto text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
-                disabled={busy}
-                title="Writes a new summary from the transcript (uses AI credits)"
-                onClick={summariseAnyway}
-              >
-                New summary
-              </button>
-            )}
-          </div>
-          {summaryNote && (
-            <p className="text-xs text-emerald-700 mb-2" role="status" data-testid="summary-note">
-              {summaryNote}
-            </p>
-          )}
-          <div className="text-sm leading-relaxed text-muted-foreground meeting-summary">
-            <ReactMarkdown
-              components={{
-                h1: ({ node, ...p }) => (
-                  <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />
-                ),
-                h2: ({ node, ...p }) => (
-                  <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />
-                ),
-                h3: ({ node, ...p }) => (
-                  <h4 className="text-sm font-semibold mt-2 mb-1 text-foreground" {...p} />
-                ),
-                ul: ({ node, ...p }) => <ul className="list-disc pl-5 space-y-1 my-1" {...p} />,
-                ol: ({ node, ...p }) => <ol className="list-decimal pl-5 space-y-1 my-1" {...p} />,
-                strong: ({ node, ...p }) => (
-                  <strong className="font-semibold text-foreground" {...p} />
-                ),
-              }}
-            >
-              {meeting.summary}
-            </ReactMarkdown>
-          </div>
-        </div>
-      )}
-
-      {!processing && meeting.summaryStatus === 'failed' && (
-        <div className="rounded-2xl border border-border bg-card p-4 mb-6 text-center">
-          <p className="text-sm text-muted-foreground mb-3">
-            {meeting.error?.stage === 'summarise'
-              ? meeting.error.message
-              : 'The summary could not be generated.'}
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => retryStage('summarise')}
-          >
-            <RefreshCw className="w-4 h-4 mr-1" /> Retry summary
-          </Button>
-        </div>
-      )}
-
-      {meeting.summaryOutdated && meeting.summary && !processing && (
+      {/* desktop: transcript on the left, the summary panel on the right staying in view */}
+      <div
+        className={
+          hasTranscript
+            ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] lg:gap-8 lg:items-start'
+            : ''
+        }
+      >
         <div
-          className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap"
-          data-testid="summary-outdated"
+          className={
+            hasTranscript
+              ? 'lg:col-start-2 lg:row-start-1 lg:sticky lg:top-[76px] lg:max-h-[calc(100vh-92px)] lg:overflow-y-auto lg:pr-1'
+              : ''
+          }
+          data-testid="meeting-side"
         >
-          <span className="flex-1 min-w-48">
-            This speaker change needs a new summary (speakers were joined or split, a line moved to
-            someone else, or a name is also someone mentioned in the meeting). Until then the
-            summary above may use the earlier names; the action items already show the new ones.
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              setSummaryNote('');
-              summariseAnyway();
-            }}
-          >
-            <Sparkles className="w-4 h-4 mr-1" /> Refresh summary
-          </Button>
-        </div>
-      )}
-
-      <ActionItems actionItems={meeting.actionItems} />
-      {!processing && <MeetingTasks meetingId={id} summaryKey={meeting.summaryStatus} />}
-
-      {speakers?.source === 'text-fallback' && hasTranscript && !processing && (
-        <TextSpeakersNotice busy={busy} onRerun={() => retryStage('diarize')} />
-      )}
-
-      {speakers?.cards?.length > 0 && !processing && (
-        <SpeakerReview
-          meetingId={id}
-          source={speakers.source}
-          cards={speakers.cards}
-          autoMerged={speakers.autoMerged}
-          onPlay={playRange}
-          onChanged={afterEdit}
-        />
-      )}
-
-      {(hasTranscript || !processing) && (
-        <div>
-          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h2 className="font-semibold">Transcript</h2>
-            <div className="flex items-center gap-2 flex-wrap">
-              {hasTranscript && (
-                <MeetingExport meeting={meeting} lines={data.lines} scriptMode={scriptMode} />
-              )}
-              <div
-                className="flex gap-1 bg-secondary rounded-full p-0.5"
-                role="group"
-                aria-label="Script"
-              >
-                {SCRIPT_MODES.map((s) => (
+          {meeting.summary && (
+            <div className="rounded-2xl border border-border bg-card p-4 mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-4 h-4 text-muted-foreground" />
+                <h2 className="font-semibold">Summary</h2>
+                {!processing && !meeting.summaryOutdated && (
                   <button
-                    key={s.mode}
-                    onClick={() => setScriptMode(s.mode)}
-                    aria-pressed={scriptMode === s.mode}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                      scriptMode === s.mode
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground'
-                    }`}
+                    type="button"
+                    className="ml-auto text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
+                    disabled={busy}
+                    title="Writes a new summary from the transcript (uses AI credits)"
+                    onClick={summariseAnyway}
                   >
-                    {s.label}
+                    New summary
                   </button>
-                ))}
+                )}
+              </div>
+              {summaryNote && (
+                <p
+                  className="text-xs text-emerald-700 mb-2"
+                  role="status"
+                  data-testid="summary-note"
+                >
+                  {summaryNote}
+                </p>
+              )}
+              <div className="text-sm leading-relaxed text-muted-foreground meeting-summary">
+                <ReactMarkdown
+                  components={{
+                    h1: ({ node, ...p }) => (
+                      <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />
+                    ),
+                    h2: ({ node, ...p }) => (
+                      <h3 className="text-base font-semibold mt-3 mb-1 text-foreground" {...p} />
+                    ),
+                    h3: ({ node, ...p }) => (
+                      <h4 className="text-sm font-semibold mt-2 mb-1 text-foreground" {...p} />
+                    ),
+                    ul: ({ node, ...p }) => <ul className="list-disc pl-5 space-y-1 my-1" {...p} />,
+                    ol: ({ node, ...p }) => (
+                      <ol className="list-decimal pl-5 space-y-1 my-1" {...p} />
+                    ),
+                    strong: ({ node, ...p }) => (
+                      <strong className="font-semibold text-foreground" {...p} />
+                    ),
+                  }}
+                >
+                  {meeting.summary}
+                </ReactMarkdown>
               </div>
             </div>
-          </div>
-          <TranscriptView
-            lines={data?.lines}
-            currentTime={currentTime}
-            onSeek={seekTo}
-            follow={follow}
-            onUserScroll={stopFollowing}
-            onActiveVisible={setActiveVisible}
-            jumpRef={jumpRef}
-            scriptMode={scriptMode}
-            parts={meeting.audio?.parts ?? []}
-            speakers={speakers?.cards ?? []}
-            {...(speakers?.source === 'pyannote' && !processing
-              ? {
-                  onReassign: async (i, toDiar) => {
-                    await api.meetings.reassignLine(id, i, toDiar);
-                    await afterEdit();
-                  },
-                  onSplit: async (i) => {
-                    await api.meetings.splitSpeaker(id, i);
-                    await afterEdit();
-                  },
-                }
-              : {})}
-          />
-        </div>
-      )}
+          )}
 
-      <div className="mt-8 pt-6 border-t border-border space-y-3">
+          {!processing && meeting.summaryStatus === 'failed' && (
+            <div className="rounded-2xl border border-border bg-card p-4 mb-6 text-center">
+              <p className="text-sm text-muted-foreground mb-3">
+                {meeting.error?.stage === 'summarise'
+                  ? meeting.error.message
+                  : 'The summary could not be generated.'}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => retryStage('summarise')}
+              >
+                <RefreshCw className="w-4 h-4 mr-1" /> Retry summary
+              </Button>
+            </div>
+          )}
+
+          {meeting.summaryOutdated && meeting.summary && !processing && (
+            <div
+              className="rounded-2xl border border-amber-300 bg-amber-50 p-3 mb-6 text-sm text-amber-900 flex items-center gap-3 flex-wrap"
+              data-testid="summary-outdated"
+            >
+              <span className="flex-1 min-w-48">
+                This speaker change needs a new summary (speakers were joined or split, a line moved
+                to someone else, or a name is also someone mentioned in the meeting). Until then the
+                summary above may use the earlier names; the action items already show the new ones.
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => {
+                  setSummaryNote('');
+                  summariseAnyway();
+                }}
+              >
+                <Sparkles className="w-4 h-4 mr-1" /> Refresh summary
+              </Button>
+            </div>
+          )}
+
+          <ActionItems actionItems={meeting.actionItems} />
+          {!processing && <MeetingTasks meetingId={id} summaryKey={meeting.summaryStatus} />}
+
+          {speakers?.source === 'text-fallback' && hasTranscript && !processing && (
+            <TextSpeakersNotice busy={busy} onRerun={() => retryStage('diarize')} />
+          )}
+
+          {speakers?.cards?.length > 0 && !processing && (
+            <SpeakerReview
+              meetingId={id}
+              source={speakers.source}
+              cards={speakers.cards}
+              autoMerged={speakers.autoMerged}
+              onPlay={playRange}
+              onChanged={afterEdit}
+            />
+          )}
+        </div>
+
+        {(hasTranscript || !processing) && (
+          <div className="lg:col-start-1 lg:row-start-1">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 className="font-semibold">Transcript</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                {hasTranscript && (
+                  <MeetingExport meeting={meeting} lines={data.lines} scriptMode={scriptMode} />
+                )}
+                <div
+                  className="flex gap-1 bg-secondary rounded-full p-0.5"
+                  role="group"
+                  aria-label="Script"
+                >
+                  {SCRIPT_MODES.map((s) => (
+                    <button
+                      key={s.mode}
+                      onClick={() => setScriptMode(s.mode)}
+                      aria-pressed={scriptMode === s.mode}
+                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                        scriptMode === s.mode
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <TranscriptView
+              lines={data?.lines}
+              currentTime={currentTime}
+              onSeek={seekTo}
+              follow={follow}
+              onUserScroll={stopFollowing}
+              onActiveVisible={setActiveVisible}
+              jumpRef={jumpRef}
+              scriptMode={scriptMode}
+              parts={meeting.audio?.parts ?? []}
+              speakers={speakers?.cards ?? []}
+              {...(speakers?.source === 'pyannote' && !processing
+                ? {
+                    onReassign: async (i, toDiar) => {
+                      await api.meetings.reassignLine(id, i, toDiar);
+                      await afterEdit();
+                    },
+                    onSplit: async (i) => {
+                      await api.meetings.splitSpeaker(id, i);
+                      await afterEdit();
+                    },
+                  }
+                : {})}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8 pt-6 border-t border-border space-y-3 lg:space-y-0 lg:flex lg:gap-3 lg:items-start lg:[&>*]:flex-1">
         {!processing && (
           <AddContinuation
             meeting={meeting}

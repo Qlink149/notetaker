@@ -122,10 +122,9 @@ describe('Today', () => {
     expect(screen.getByText('1 completed today')).toBeTruthy();
     expect(screen.getByRole('heading', { name: /Heet\./ })).toBeTruthy();
 
-    // the ones I gave others, by person, with a WhatsApp nudge
-    fireEvent.click(screen.getByRole('button', { name: 'Delegated' }));
-    const nudge = await screen.findByRole('link', { name: 'Nudge Paresh on WhatsApp' });
-    expect(nudge.getAttribute('href')).toMatch(/^https:\/\/wa\.me\/\?text=.*Task%20others/);
+    // tasks given to others are not on Today (Team shows everyone's work)
+    expect(screen.queryByRole('button', { name: 'Delegated' })).toBeNull();
+    expect(screen.queryByText('Task others')).toBeNull();
   });
 
   it('asks who you are when nobody is set as me', async () => {
