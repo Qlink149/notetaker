@@ -17,6 +17,7 @@ import { clearRecording } from '@/lib/recordingStore';
 import { useLeaveWarning } from '@/lib/useLeaveWarning';
 import { LANGUAGES } from '@/lib/format';
 import { FEATURES } from '@/lib/features';
+import { useKeptOptional } from '@/lib/keptStore';
 
 /** Most files one meeting can be uploaded in (the server checks it too). */
 const MAX_PARTS = 5;
@@ -35,6 +36,9 @@ export default function Record() {
   const [uploadPart, setUploadPart] = useState(0);
   const [languages, setLanguages] = useState(['hi', 'gu', 'en']);
   const [participants, setParticipants] = useState('');
+  // the folder this meeting is filed under (Jolto, Internal…), from the workspace's list
+  const folders = useKeptOptional()?.folders ?? [];
+  const [folder, setFolder] = useState(null);
   const [engine, setEngine] = useState('');
   const [defaultEngine, setDefaultEngine] = useState('gemini');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -148,6 +152,7 @@ export default function Record() {
         ...(uploaded.length > 1 ? { parts: uploaded } : {}),
         languages,
         expectedParticipants: Number.isFinite(count) && count > 0 ? count : null,
+        ...(folder ? { folder } : {}),
         ...(engine ? { engine } : {}),
       });
       // the server has the meeting: only now is the phone's saved copy of a recording no longer needed
@@ -172,6 +177,32 @@ export default function Record() {
             placeholder="e.g. Weekly sync"
           />
         </div>
+
+        {folders.length > 0 && (
+          <div>
+            <label className="text-sm font-medium mb-2 block">Folder (optional)</label>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Folder">
+              {folders.map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  aria-pressed={folder === f}
+                  onClick={() => setFolder(folder === f ? null : f)}
+                  className={`px-3 py-1.5 rounded-full text-sm transition-colors ${
+                    folder === f
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              You can change it later on the meeting. Folders are edited in Settings.
+            </p>
+          </div>
+        )}
 
         <div>
           <label className="text-sm font-medium mb-2 block">Languages spoken</label>

@@ -16,6 +16,7 @@ import type { ApiDeps } from './routes/deps.js';
 import { meetingSpeakersRouter } from './routes/meetingSpeakers.js';
 import { meetingsRouter } from './routes/meetings.js';
 import { sessionsGuestRouter, sessionsHostRouter } from './routes/sessions.js';
+import { driveRouter, googleCallbackRouter } from './routes/drive.js';
 import { searchRouter } from './routes/search.js';
 import { speakersRouter } from './routes/speakers.js';
 import { tasksRouter } from './routes/tasks.js';
@@ -64,6 +65,8 @@ export function createApp(deps: ApiDeps): Express {
   v1.use(sessionsGuestRouter(deps));
   // signed playback links authenticate themselves (an <audio> tag cannot send a login token)
   v1.use(audioRouter(deps));
+  // Google's redirect after connecting Drive carries no login, only the state the API signed
+  v1.use(googleCallbackRouter());
   v1.use(workspaceRouter());
   const authed = Router();
   authed.use(requireAuth);
@@ -76,6 +79,7 @@ export function createApp(deps: ApiDeps): Express {
   authed.use(speakersRouter(deps));
   authed.use(tasksRouter());
   authed.use(searchRouter());
+  authed.use(driveRouter());
   authed.use(benchmarkRouter());
   v1.use(authed);
 

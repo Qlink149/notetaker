@@ -55,6 +55,12 @@ const EnvSchema = z.object({
   B2_APPLICATION_KEY: optional,
   /** Public address of this API (https://...), used to build audio playback links. */
   PUBLIC_API_URL: optional,
+  /** Google OAuth client (Web application) for "Save to Google Drive"; the redirect URI is
+   * `${PUBLIC_API_URL}/api/v1/integrations/google/callback`. Unset = the Drive button is not offered. */
+  GOOGLE_CLIENT_ID: optional,
+  GOOGLE_CLIENT_SECRET: optional,
+  /** Where the browser returns after connecting Google (the web app); defaults to the first CORS origin. */
+  WEB_APP_URL: optional,
   GEMINI_ALLOW_FREE_KEYS: z
     .preprocess((v) => v === 'true' || v === '1', z.boolean())
     .default(false),

@@ -49,6 +49,16 @@ export interface WorkspaceDoc {
   settings: WorkspaceSettings;
   /** The person in the speaker directory who uses this workspace ("my tasks"). */
   mePersonId?: Types.ObjectId | null;
+  /** Folders meetings are filed under; unset = the defaults (`DEFAULT_FOLDERS`). */
+  folders?: string[] | null;
+  /** Google Drive connection: the refresh token (encrypted), the account, and the folders made in it. */
+  google?: {
+    refreshTokenEnc: string;
+    email: string | null;
+    connectedAt: Date;
+    rootFolderId: string | null;
+    folderIds: Record<string, string>;
+  } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -59,6 +69,8 @@ const workspaceSchema = new Schema<WorkspaceDoc>(
     accessCodeHash: { type: String, required: true },
     tokenVersion: { type: Number, default: 1 },
     mePersonId: { type: Schema.Types.ObjectId, default: null },
+    folders: { type: [String], default: undefined },
+    google: { type: Schema.Types.Mixed, default: null },
     settings: {
       engine: { type: String, enum: EngineName.options, default: 'gemini' },
       languages: { type: [String], enum: Language.options, default: ['hi', 'gu', 'en'] },
@@ -137,6 +149,10 @@ export interface MeetingDoc {
   summaryNames?: Record<string, string> | null;
   /** When the current summary was written (a new summary gives new suggested tasks). */
   summaryAt?: Date | null;
+  /** The workspace folder this meeting is filed under, or none. */
+  folder?: string | null;
+  /** The Google Doc this meeting was saved to. */
+  drive?: { fileId: string; url: string; folder: string | null; savedAt: Date } | null;
   /** Suggested tasks (action items, by position) already approved or skipped for the summary written at `summaryAt`. */
   taskReview?: { summaryKey: string; handled: number[] } | null;
   /** Set at ingest when the converted audio is shorter than the file says: part of the recording may be missing. */
@@ -197,6 +213,8 @@ const meetingSchema = new Schema<MeetingDoc>(
     summaryOutdated: { type: Boolean, default: false },
     summaryNames: { type: Schema.Types.Mixed, default: null },
     summaryAt: { type: Date, default: null },
+    folder: { type: String, default: null },
+    drive: { type: Schema.Types.Mixed, default: null },
     taskReview: { type: Schema.Types.Mixed, default: null },
     audioWarning: { type: String, default: null },
     notice: { type: String, default: null },

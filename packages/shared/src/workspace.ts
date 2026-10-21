@@ -19,6 +19,8 @@ export const Workspace = z.object({
   settings: WorkspaceSettings,
   /** The person in the speaker directory who uses this workspace ("my tasks"); one person for now. */
   mePersonId: z.string().nullable().optional(),
+  /** Folders meetings can be filed under (also the subfolders in Google Drive). */
+  folders: z.array(z.string()).optional(),
   createdAt: z.string(),
 });
 export type Workspace = z.infer<typeof Workspace>;

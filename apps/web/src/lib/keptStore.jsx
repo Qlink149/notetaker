@@ -30,6 +30,7 @@ export function KeptProvider({ children }) {
   const toastTimer = useRef(null);
 
   const me = workspace?.mePersonId ?? null;
+  const folders = workspace?.folders ?? [];
 
   const refresh = useCallback(async () => {
     // one failing list (or an older API without tasks) never breaks the others
@@ -123,6 +124,7 @@ export function KeptProvider({ children }) {
   const value = useMemo(
     () => ({
       me,
+      folders,
       tasks,
       suggestions,
       people,
@@ -144,6 +146,7 @@ export function KeptProvider({ children }) {
     }),
     [
       me,
+      folders,
       tasks,
       suggestions,
       people,

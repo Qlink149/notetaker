@@ -164,6 +164,13 @@ export const Meeting = z.object({
   notice: z.string().nullable().optional(),
   summary: z.string().nullable(),
   actionItems: z.array(ActionItem),
+  /** The workspace folder this meeting is filed under (Jolto, Internal…), or none. */
+  folder: z.string().nullable().optional(),
+  /** Saved to Google Drive: the document and when. */
+  drive: z
+    .object({ fileId: z.string(), url: z.string(), folder: z.string().nullable(), savedAt: z.string() })
+    .nullable()
+    .optional(),
   error: MeetingError.nullable(),
   cost: MeetingCost,
   createdAt: z.string(),

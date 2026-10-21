@@ -13,14 +13,27 @@ import {
 import { ws } from '../lib/auth.js';
 import { HttpError, assertEngineEnabled, body, idParam, notFound } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
-import { meetingDataView, meetingView } from '../lib/views.js';
-import { JobModel, MeetingDataModel, MeetingModel, type MeetingDoc } from '../models/index.js';
+import { foldersOf, meetingDataView, meetingView } from '../lib/views.js';
+import {
+  JobModel,
+  MeetingDataModel,
+  MeetingModel,
+  type MeetingDoc,
+  type WorkspaceDoc,
+} from '../models/index.js';
 import { enqueue } from '../pipeline/queue.js';
 import { addContinuation } from '../services/continuation.js';
 import { deleteMeetingEverywhere } from '../services/meetingDelete.js';
 import { PENDING_CONCAT } from '../pipeline/stages/07-concat.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
 import type { ApiDeps } from './deps.js';
+
+/** A folder the workspace has (none when not given); an unknown folder is refused. */
+function folderIn(w: WorkspaceDoc, folder: string | null | undefined): string | null {
+  if (!folder) return null;
+  if (!foldersOf(w).includes(folder)) throw new HttpError(400, 'unknown_folder');
+  return folder;
+}
 
 export function meetingsRouter(deps: ApiDeps): Router {
   const r = Router();
@@ -75,6 +88,7 @@ export function meetingsRouter(deps: ApiDeps): Router {
       engine: input.engine ?? workspace.settings.engine,
       languages: input.languages ?? workspace.settings.languages,
       expectedParticipants: input.expectedParticipants ?? null,
+      folder: folderIn(workspace, input.folder),
       audio: inParts
         ? {
             originalUrl: PENDING_CONCAT,
@@ -118,10 +132,13 @@ export function meetingsRouter(deps: ApiDeps): Router {
 
   r.patch('/meetings/:id', async (req, res) => {
     const m = await own(req);
-    const { title } = body(PatchMeetingBody, req);
+    const patch = body(PatchMeetingBody, req);
+    const set: Record<string, unknown> = {};
+    if (patch.title !== undefined) set.title = patch.title;
+    if (patch.folder !== undefined) set.folder = folderIn(ws(req), patch.folder);
     const updated = await MeetingModel.findByIdAndUpdate(
       m._id,
-      { $set: { title } },
+      { $set: set },
       { returnDocument: 'after' },
     ).lean<MeetingDoc>();
     res.json({ meeting: meetingView(updated!) });

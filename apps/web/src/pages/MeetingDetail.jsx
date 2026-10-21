@@ -21,6 +21,7 @@ import TranscriptView from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
 import MeetingTasks from '@/components/kept/MeetingTasks';
+import MeetingDrive from '@/components/kept/MeetingDrive';
 import AddContinuation from '@/components/AddContinuation';
 import MeetingExport from '@/components/MeetingExport';
 import { Button } from '@/components/ui/button';
@@ -293,11 +294,12 @@ export default function MeetingDetail() {
           </>
         )}
       </div>
-      <p className="text-sm text-muted-foreground mb-5">
+      <p className="text-sm text-muted-foreground mb-3">
         {new Date(meeting.date).toLocaleString()}
         {meeting.durationSec ? ` · ${fmtDuration(meeting.durationSec)}` : ''}
         {coveragePct !== null ? ` · ${coveragePct}% of speech transcribed` : ''}
       </p>
+      <MeetingDrive meeting={meeting} hasTranscript={hasTranscript} onChange={setMeeting} />
 
       {meeting.audio?.playbackUrl && (
         <div className="sticky top-0 z-30 -mx-4 px-4 lg:-mx-10 lg:px-10 py-2 mb-4 bg-background/95 backdrop-blur border-b border-border flex items-center gap-2">

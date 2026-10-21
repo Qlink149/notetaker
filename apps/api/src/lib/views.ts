@@ -1,5 +1,5 @@
 import type { EvalRun, Meeting, MeetingDataView, Workspace } from '@meetingid/shared';
-import { emptyCost } from '@meetingid/shared';
+import { DEFAULT_FOLDERS, emptyCost } from '@meetingid/shared';
 import type { EvalRunDoc, MeetingDataDoc, MeetingDoc, WorkspaceDoc } from '../models/index.js';
 import { audioLink } from './audioLink.js';
 import { isB2Url } from '../services/storage/b2.js';
@@ -60,6 +60,15 @@ export function meetingView(m: MeetingDoc): Meeting {
     notice: m.notice ?? null,
     summary: m.summary ?? null,
     actionItems: (m.actionItems ?? []).map((a) => ({ speakerName: a.speakerName, text: a.text })),
+    folder: m.folder ?? null,
+    drive: m.drive
+      ? {
+          fileId: m.drive.fileId,
+          url: m.drive.url,
+          folder: m.drive.folder ?? null,
+          savedAt: iso(m.drive.savedAt),
+        }
+      : null,
     error: m.error ?? null,
     cost: { ...emptyCost(), ...(m.cost ?? {}) },
     createdAt: iso(m.createdAt),
@@ -80,6 +89,10 @@ export function meetingDataView(
   };
 }
 
+/** The workspace's meeting folders (the defaults until someone changes them). */
+export const foldersOf = (w: Pick<WorkspaceDoc, 'folders'>): string[] =>
+  w.folders ?? [...DEFAULT_FOLDERS];
+
 export function workspaceView(w: WorkspaceDoc): Workspace {
   return {
     id: String(w._id),
@@ -87,6 +100,7 @@ export function workspaceView(w: WorkspaceDoc): Workspace {
     slug: w.slug,
     settings: w.settings,
     mePersonId: w.mePersonId ? String(w.mePersonId) : null,
+    folders: foldersOf(w),
     createdAt: iso(w.createdAt),
   };
 }

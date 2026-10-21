@@ -36,10 +36,18 @@ export const CreateMeetingBody = z.object({
   engine: EngineName.optional(),
   expectedParticipants: z.number().int().min(1).max(50).nullable().optional(),
   date: z.string().datetime().optional(),
+  /** One of the workspace's folders (Jolto, Internal…); none when left out. */
+  folder: z.string().trim().min(1).max(60).nullable().optional(),
 });
 export type CreateMeetingBody = z.infer<typeof CreateMeetingBody>;
 
-export const PatchMeetingBody = z.object({ title: z.string().trim().min(1).max(200) });
+export const PatchMeetingBody = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    folder: z.string().trim().min(1).max(60).nullable(),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, 'nothing to change');
 export type PatchMeetingBody = z.infer<typeof PatchMeetingBody>;
 
 /** Most files one meeting can hold in all, continuations included. */
@@ -121,3 +129,30 @@ export const PromoteEvalSetBody = z.object({
   meetingIds: z.array(z.string()).min(1),
 });
 export type PromoteEvalSetBody = z.infer<typeof PromoteEvalSetBody>;
+
+/** Folders a workspace starts with (client request, 20 Oct: "Jolto folder… internal… consultant"). */
+export const DEFAULT_FOLDERS = ['Jolto', 'Internal', 'Consultant'] as const;
+
+/** The workspace's folders for meetings. */
+export const FoldersBody = z.object({
+  folders: z.array(z.string().trim().min(1).max(60)).max(30),
+});
+export type FoldersBody = z.infer<typeof FoldersBody>;
+
+/** Where a meeting was saved in Google Drive. */
+export const MeetingDrive = z.object({
+  fileId: z.string(),
+  url: z.string(),
+  folder: z.string().nullable(),
+  savedAt: z.string(),
+});
+export type MeetingDrive = z.infer<typeof MeetingDrive>;
+
+/** The workspace's Google Drive connection, as the app shows it. */
+export const DriveStatus = z.object({
+  /** The server has a Google OAuth client set up. */
+  available: z.boolean(),
+  connected: z.boolean(),
+  email: z.string().nullable(),
+});
+export type DriveStatus = z.infer<typeof DriveStatus>;

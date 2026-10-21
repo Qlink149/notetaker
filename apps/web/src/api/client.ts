@@ -7,6 +7,7 @@ import type {
   Meeting,
   MeetingDataView,
   CreateTaskBody,
+  DriveStatus,
   PatchTaskBody,
   RetryableStage,
   Task,
@@ -207,6 +208,8 @@ export interface CreateMeetingInput {
   expectedParticipants?: number | null;
   /** A meeting recorded in several files, in order (the first is also publicId/url). */
   parts?: { publicId: string; url: string; fileName?: string }[];
+  /** One of the workspace's folders. */
+  folder?: string | null;
 }
 
 export const api = {
@@ -230,6 +233,12 @@ export const api = {
       request<{ meeting: Meeting }>('POST', '/meetings', input).then((r) => r.meeting),
     rename: (id: string, title: string) =>
       request<{ meeting: Meeting }>('PATCH', `/meetings/${id}`, { title }).then((r) => r.meeting),
+    /** File a meeting under one of the workspace's folders (null = none). */
+    setFolder: (id: string, folder: string | null) =>
+      request<{ meeting: Meeting }>('PATCH', `/meetings/${id}`, { folder }).then((r) => r.meeting),
+    /** Save (or save again) as a Google Doc in the connected Drive. */
+    saveToDrive: (id: string) =>
+      request<{ meeting: Meeting }>('POST', `/meetings/${id}/drive`).then((r) => r.meeting),
     /** Add recordings made later to the end of a meeting (uploaded first with `uploads.sign(id)`). */
     addParts: (id: string, parts: { publicId: string; url: string; fileName?: string }[]) =>
       request<{ meeting: Meeting }>('POST', `/meetings/${id}/parts`, { parts }).then(
@@ -301,7 +310,17 @@ export const api = {
     put: (entries: GlossaryEntry[]) =>
       request<{ entries: GlossaryEntry[] }>('PUT', '/glossary', { entries }).then((r) => r.entries),
   },
+  drive: {
+    status: () => request<DriveStatus>('GET', '/integrations/google'),
+    /** The Google consent page to send the browser to. */
+    start: () => request<{ url: string }>('POST', '/integrations/google/start').then((r) => r.url),
+    disconnect: () => request<void>('DELETE', '/integrations/google'),
+  },
   workspace: {
+    setFolders: (folders: string[]) =>
+      request<{ folders: string[] }>('PUT', '/workspace/folders', { folders }).then(
+        (r) => r.folders,
+      ),
     settings: () =>
       request<{ settings: WorkspaceSettings }>('GET', '/workspace/settings').then(
         (r) => r.settings,

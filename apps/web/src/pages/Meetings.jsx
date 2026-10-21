@@ -30,7 +30,10 @@ function gist(summary) {
 
 export default function Meetings() {
   const [meetings, setMeetings] = useState(null);
-  const { tasks, suggestions } = useKept();
+  const { tasks, suggestions, folders } = useKept();
+  // show one folder's meetings (null = all)
+  const [filter, setFilter] = useState(null);
+  const shown = (meetings ?? []).filter((m) => !filter || m.folder === filter);
 
   const load = async () => {
     try {
@@ -75,59 +78,95 @@ export default function Meetings() {
           </Link>
         </div>
       ) : (
-        <div className="lg:grid lg:grid-cols-2 lg:gap-4 2xl:grid-cols-3">
-          {meetings.map((m) => {
-            const badge = BADGES[m.status];
-            const ts = (tasks ?? []).filter((t) => t.meetingId === m.id);
-            const open = ts.filter((t) => t.status === 'open').length;
-            const suggested = suggestions.filter((s) => s.meetingId === m.id).length;
-            const about = gist(m.summary);
-            return (
-              <Link key={m.id} to={`/meetings/${m.id}`} className="k-mcard k-fadein">
-                <div className="flex items-center justify-between gap-2.5">
-                  <h3 className="text-base font-semibold truncate">{m.title}</h3>
-                  {badge ? (
-                    <span className={`flex items-center gap-1 text-xs shrink-0 ${badge.className}`}>
-                      {badge.spin && <Loader2 className="w-3 h-3 animate-spin" />}
-                      {badge.label}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-[var(--k-faint)] shrink-0">
-                      {niceDay(isoDay(m.date))}
-                    </span>
-                  )}
-                </div>
-                <p className="text-[13px] text-[var(--k-sub)] leading-normal mt-1.5 mb-3">
-                  {about || (
-                    <>
-                      {new Date(m.date).toLocaleString()}
-                      {m.durationSec ? ` · ${fmtDuration(m.durationSec)}` : ''}
-                    </>
-                  )}
-                </p>
-                <div className="flex items-center justify-between gap-2.5 text-xs text-[var(--k-sub)]">
-                  <div className="k-avstack">
-                    {(m.participants ?? []).slice(0, 5).map((name) => (
-                      <Avatar key={name} id={name} name={name} />
-                    ))}
-                    {(m.participants ?? []).length > 5 && (
-                      <span className="k-mini" style={{ background: '#c9cbd8' }}>
-                        +{m.participants.length - 5}
+        <>
+          {folders.length > 0 && (
+            <div className="k-hscroll mb-4" role="group" aria-label="Folder">
+              {[null, ...folders].map((f) => (
+                <button
+                  key={f ?? 'all'}
+                  type="button"
+                  aria-pressed={filter === f}
+                  onClick={() => setFilter(f)}
+                  className="k-pchip !pl-3.5 !pr-3.5"
+                >
+                  {f ?? 'All'}
+                  <span className="text-xs opacity-60">
+                    {f ? meetings.filter((m) => m.folder === f).length : meetings.length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {!shown.length && (
+            <div className="k-list">
+              <div className="k-empty">
+                No meetings in {filter} yet. Pick it when uploading, or on a meeting.
+              </div>
+            </div>
+          )}
+          <div className="lg:grid lg:grid-cols-2 lg:gap-4 2xl:grid-cols-3">
+            {shown.map((m) => {
+              const badge = BADGES[m.status];
+              const ts = (tasks ?? []).filter((t) => t.meetingId === m.id);
+              const open = ts.filter((t) => t.status === 'open').length;
+              const suggested = suggestions.filter((s) => s.meetingId === m.id).length;
+              const about = gist(m.summary);
+              return (
+                <Link key={m.id} to={`/meetings/${m.id}`} className="k-mcard k-fadein">
+                  <div className="flex items-center justify-between gap-2.5">
+                    <h3 className="text-base font-semibold truncate">
+                      {m.title}
+                      {m.folder && (
+                        <span className="k-chip !h-5 !px-2 !text-[10.5px] ml-2 align-middle">
+                          {m.folder}
+                        </span>
+                      )}
+                    </h3>
+                    {badge ? (
+                      <span
+                        className={`flex items-center gap-1 text-xs shrink-0 ${badge.className}`}
+                      >
+                        {badge.spin && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {badge.label}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-[var(--k-faint)] shrink-0">
+                        {niceDay(isoDay(m.date))}
                       </span>
                     )}
                   </div>
-                  <span>
-                    {m.durationSec ? fmtDuration(m.durationSec) : ''}
-                    {ts.length
-                      ? ` · ${ts.length} task${ts.length === 1 ? '' : 's'} · ${open} open`
-                      : ''}
-                    {suggested ? ` · ${suggested} suggested` : ''}
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
+                  <p className="text-[13px] text-[var(--k-sub)] leading-normal mt-1.5 mb-3">
+                    {about || (
+                      <>
+                        {new Date(m.date).toLocaleString()}
+                        {m.durationSec ? ` · ${fmtDuration(m.durationSec)}` : ''}
+                      </>
+                    )}
+                  </p>
+                  <div className="flex items-center justify-between gap-2.5 text-xs text-[var(--k-sub)]">
+                    <div className="k-avstack">
+                      {(m.participants ?? []).slice(0, 5).map((name) => (
+                        <Avatar key={name} id={name} name={name} />
+                      ))}
+                      {(m.participants ?? []).length > 5 && (
+                        <span className="k-mini" style={{ background: '#c9cbd8' }}>
+                          +{m.participants.length - 5}
+                        </span>
+                      )}
+                    </div>
+                    <span>
+                      {m.durationSec ? fmtDuration(m.durationSec) : ''}
+                      {ts.length
+                        ? ` · ${ts.length} task${ts.length === 1 ? '' : 's'} · ${open} open`
+                        : ''}
+                      {suggested ? ` · ${suggested} suggested` : ''}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );

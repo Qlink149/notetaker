@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { LANGUAGES } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DriveSettings, FolderSettings } from '@/components/kept/DriveSettings';
 
 const KINDS = ['company', 'person', 'competitor', 'agency', 'product', 'place', 'other'];
 
@@ -129,6 +130,9 @@ export default function Settings() {
         </Button>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      <DriveSettings />
+      <FolderSettings />
 
       <Section
         title="Transcription"
