@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Download, Printer, Check, FileText, Loader2, Share2, Sparkles } from 'lucide-react';
+import { Copy, Download, Printer, Check, FileText, Loader2, Share2 } from 'lucide-react';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { fmtDuration, fmtTime, lineText } from '@/lib/format';
@@ -34,34 +34,6 @@ function buildText(meeting, lines, scriptMode) {
     out.push('');
   }
   if (lines.length) out.push('TRANSCRIPT', '==========', ...transcriptLines(lines, scriptMode));
-  return out.join('\n');
-}
-
-/**
- * The meeting as Markdown for pasting into Claude (or any assistant): a short instruction, the summary, action
- * items, who spoke and the full transcript with times, so questions about the meeting can be answered from it.
- */
-export function buildForClaude(meeting, lines) {
-  const out = [
-    `Below are the notes of a meeting ("${meeting.title}", ${fmtDate(meeting.date)}${
-      meeting.durationSec ? `, ${fmtDuration(meeting.durationSec)}` : ''
-    }): a summary, action items and the full transcript. Use them to answer my questions about this meeting.`,
-    '',
-    `# ${meeting.title}`,
-  ];
-  const speakers = [...new Set(lines.map((l) => l.speakerName))];
-  if (speakers.length) out.push('', `Speakers: ${speakers.join(', ')}`);
-  if (meeting.summary) out.push('', '## Summary', '', meeting.summary.trim());
-  if (meeting.actionItems?.length) {
-    out.push('', '## Action items', '');
-    meeting.actionItems.forEach((a) => out.push(`- **${a.speakerName}**: ${a.text}`));
-  }
-  if (lines.length) {
-    out.push('', '## Transcript', '');
-    lines.forEach((l) =>
-      out.push(`[${fmtTime(l.start)}] **${l.speakerName}**: ${lineText(l, 'roman')}`),
-    );
-  }
   return out.join('\n');
 }
 
@@ -124,26 +96,15 @@ function buildPrintHtml(meeting, lines, scriptMode) {
 export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) {
   const [copied, setCopied] = useState(false);
   const [wordBusy, setWordBusy] = useState(false);
-  const [copiedClaude, setCopiedClaude] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
-  // Share is for phones (WhatsApp, Drive, the Claude app). On a computer Chrome refuses Word files in its share menu
+  // Share is for phones (WhatsApp, Drive). On a computer Chrome refuses Word files in its share menu
   // ("Permission denied") and the Word/PDF buttons beside it do the job, so it is not offered there.
   const canShare =
     typeof navigator !== 'undefined' &&
     typeof navigator.share === 'function' &&
     (typeof window.matchMedia !== 'function' || window.matchMedia('(pointer: coarse)').matches);
 
-  const copyForClaude = async () => {
-    try {
-      await navigator.clipboard.writeText(buildForClaude(meeting, lines));
-      setCopiedClaude(true);
-      setTimeout(() => setCopiedClaude(false), 2000);
-    } catch {
-      alert('Could not copy. Try the Download button.');
-    }
-  };
-
-  // The share menu (Drive, Claude, WhatsApp, Mail…) with the Word file. Browsers open it only straight from a
+  // The share menu (Drive, WhatsApp, Mail…) with the Word file. Browsers open it only straight from a
   // click, so the file is fetched beforehand (when the pointer reaches the button); a click before it is ready
   // makes the button "Tap to share" for a second click instead of failing.
   const [shareFile, setShareFile] = useState(null);
@@ -292,10 +253,6 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
                 : 'Share…'}
         </Button>
       )}
-      <Button variant="outline" size="sm" onClick={copyForClaude}>
-        {copiedClaude ? <Check className="w-4 h-4 mr-1" /> : <Sparkles className="w-4 h-4 mr-1" />}
-        {copiedClaude ? 'Copied' : 'Copy for Claude'}
-      </Button>
       <Button variant="outline" size="sm" onClick={copy}>
         {copied ? <Check className="w-4 h-4 mr-1" /> : <Copy className="w-4 h-4 mr-1" />}
         {copied ? 'Copied' : 'Copy'}

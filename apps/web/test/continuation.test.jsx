@@ -17,7 +17,7 @@ vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
 }));
 
 import AddContinuation from '@/components/AddContinuation';
-import MeetingExport, { buildForClaude } from '@/components/MeetingExport';
+import MeetingExport from '@/components/MeetingExport';
 
 afterEach(() => {
   cleanup();
@@ -77,28 +77,6 @@ describe('adding a continuation recording (client request, 20 Oct)', () => {
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Add and process' }));
     expect(await screen.findByText('meeting_is_processing')).toBeTruthy();
-  });
-});
-
-describe('Copy for Claude', () => {
-  it('gives the summary, action items, speakers and the timed transcript as Markdown', () => {
-    const text = buildForClaude(
-      {
-        ...meeting,
-        summary: '## Decisions\n- Launch in May',
-        actionItems: [{ speakerName: 'Heet', text: 'Send the plan' }],
-      },
-      [
-        { start: 0, speakerName: 'Heet', textRoman: 'Chalo shuru karte hain', textNative: 'ચાલો' },
-        { start: 65, speakerName: 'Paresh', textRoman: 'Haan', textNative: 'હા' },
-      ],
-    );
-    expect(text).toMatch(/^Below are the notes of a meeting \("Plan"/);
-    expect(text).toContain('Speakers: Heet, Paresh');
-    expect(text).toContain('## Summary\n\n## Decisions\n- Launch in May');
-    expect(text).toContain('- **Heet**: Send the plan');
-    expect(text).toContain('[0:00] **Heet**: Chalo shuru karte hain');
-    expect(text).toContain('[1:05] **Paresh**: Haan');
   });
 });
 
