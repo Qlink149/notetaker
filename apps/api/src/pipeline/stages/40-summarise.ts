@@ -78,6 +78,9 @@ export const summariseStage: StageHandler = {
               summaryOutdated: false,
               // the names it was written with: a later rename is swapped into the text instead of a new summary
               summaryNames: (data?.speakerMap ?? null) as Record<string, string> | null,
+              // a new summary: its action items are new suggested tasks
+              summaryAt: deps.now(),
+              taskReview: null,
               summary: result.summaryMarkdown,
               actionItems: result.actionItems,
               stage: 'finalise',

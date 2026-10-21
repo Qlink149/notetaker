@@ -47,6 +47,8 @@ export interface WorkspaceDoc {
   /** Bumped on access-code rotation; JWTs carrying an older version are rejected. */
   tokenVersion: number;
   settings: WorkspaceSettings;
+  /** The person in the speaker directory who uses this workspace ("my tasks"). */
+  mePersonId?: Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -56,6 +58,7 @@ const workspaceSchema = new Schema<WorkspaceDoc>(
     slug: { type: String, required: true, unique: true },
     accessCodeHash: { type: String, required: true },
     tokenVersion: { type: Number, default: 1 },
+    mePersonId: { type: Schema.Types.ObjectId, default: null },
     settings: {
       engine: { type: String, enum: EngineName.options, default: 'gemini' },
       languages: { type: [String], enum: Language.options, default: ['hi', 'gu', 'en'] },
@@ -132,6 +135,10 @@ export interface MeetingDoc {
   summaryOutdated?: boolean;
   /** Speaker id → name the summary was written with (renames are then swapped into it in place). */
   summaryNames?: Record<string, string> | null;
+  /** When the current summary was written (a new summary gives new suggested tasks). */
+  summaryAt?: Date | null;
+  /** Suggested tasks (action items, by position) already approved or skipped for the summary written at `summaryAt`. */
+  taskReview?: { summaryKey: string; handled: number[] } | null;
   /** Set at ingest when the converted audio is shorter than the file says: part of the recording may be missing. */
   audioWarning?: string | null;
   /** Processing is paused for a reason outside our control (e.g. the transcription credit ran out). */
@@ -189,6 +196,8 @@ const meetingSchema = new Schema<MeetingDoc>(
     summaryStatus: { type: String, enum: SummaryStatus.options, default: 'pending' },
     summaryOutdated: { type: Boolean, default: false },
     summaryNames: { type: Schema.Types.Mixed, default: null },
+    summaryAt: { type: Date, default: null },
+    taskReview: { type: Schema.Types.Mixed, default: null },
     audioWarning: { type: String, default: null },
     notice: { type: String, default: null },
     summary: { type: String, default: null },
@@ -726,6 +735,41 @@ export const EngineResponseModel = mongoose.model<EngineResponseDoc>(
   'engineresponses',
 );
 
+// ---------- Tasks ("Kept") ----------
+export interface TaskDoc {
+  _id: Types.ObjectId;
+  workspaceId: Types.ObjectId;
+  title: string;
+  ownerId: Types.ObjectId | null;
+  buddyId: Types.ObjectId | null;
+  priority: 'high' | 'med' | 'low';
+  due: string | null;
+  status: 'open' | 'done';
+  doneAt: Date | null;
+  createdById: Types.ObjectId | null;
+  meetingId: Types.ObjectId | null;
+  source: { meetingId: Types.ObjectId; index: number; text: string } | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+const taskSchema = new Schema<TaskDoc>(
+  {
+    workspaceId: { type: Schema.Types.ObjectId, required: true, index: true },
+    title: { type: String, required: true },
+    ownerId: { type: Schema.Types.ObjectId, default: null },
+    buddyId: { type: Schema.Types.ObjectId, default: null },
+    priority: { type: String, enum: ['high', 'med', 'low'], default: 'med' },
+    due: { type: String, default: null },
+    status: { type: String, enum: ['open', 'done'], default: 'open' },
+    doneAt: { type: Date, default: null },
+    createdById: { type: Schema.Types.ObjectId, default: null },
+    meetingId: { type: Schema.Types.ObjectId, default: null, index: true },
+    source: { type: Schema.Types.Mixed, default: null },
+  },
+  { timestamps: true },
+);
+export const TaskModel = mongoose.model<TaskDoc>('Task', taskSchema);
+
 import { LoudnessModel, ParticipantModel, SessionModel } from './session.js';
 
 export const allModels: Model<never>[] = [
@@ -742,6 +786,7 @@ export const allModels: Model<never>[] = [
   SpendModel,
   HandoffModel,
   EngineResponseModel,
+  TaskModel,
   SessionModel,
   ParticipantModel,
   LoudnessModel,

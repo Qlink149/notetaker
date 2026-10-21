@@ -16,7 +16,9 @@ import type { ApiDeps } from './routes/deps.js';
 import { meetingSpeakersRouter } from './routes/meetingSpeakers.js';
 import { meetingsRouter } from './routes/meetings.js';
 import { sessionsGuestRouter, sessionsHostRouter } from './routes/sessions.js';
+import { searchRouter } from './routes/search.js';
 import { speakersRouter } from './routes/speakers.js';
+import { tasksRouter } from './routes/tasks.js';
 import { authRouter, workspaceRouter } from './routes/workspace.js';
 
 export function createApp(deps: ApiDeps): Express {
@@ -72,6 +74,8 @@ export function createApp(deps: ApiDeps): Express {
   authed.use(dashboardRouter());
   authed.use(sessionsHostRouter());
   authed.use(speakersRouter(deps));
+  authed.use(tasksRouter());
+  authed.use(searchRouter());
   authed.use(benchmarkRouter());
   v1.use(authed);
 

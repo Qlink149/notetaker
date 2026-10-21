@@ -86,6 +86,7 @@ export function workspaceView(w: WorkspaceDoc): Workspace {
     name: w.name,
     slug: w.slug,
     settings: w.settings,
+    mePersonId: w.mePersonId ? String(w.mePersonId) : null,
     createdAt: iso(w.createdAt),
   };
 }

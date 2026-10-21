@@ -3,3 +3,4 @@ export * from './glossary.js';
 export * from './job.js';
 export * from './workspace.js';
 export * from './api.js';
+export * from './task.js';

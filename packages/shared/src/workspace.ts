@@ -17,6 +17,8 @@ export const Workspace = z.object({
   name: z.string(),
   slug: z.string(),
   settings: WorkspaceSettings,
+  /** The person in the speaker directory who uses this workspace ("my tasks"); one person for now. */
+  mePersonId: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 export type Workspace = z.infer<typeof Workspace>;

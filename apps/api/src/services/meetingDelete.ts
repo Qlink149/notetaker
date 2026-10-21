@@ -6,6 +6,7 @@ import {
   MeetingDataModel,
   MeetingModel,
   SpeakerModel,
+  TaskModel,
   type SpeakerDoc,
 } from '../models/index.js';
 import {
@@ -70,6 +71,7 @@ export async function deleteMeetingEverywhere(
     P2IdentityRunModel.deleteMany({ meetingId: id }),
     P2AuditModel.deleteMany({ meetingId: id }),
     HandoffModel.deleteMany({ meetingId: id }),
+    TaskModel.deleteMany({ meetingId: id }),
     LoudnessModel.deleteMany({ sessionId: { $in: sessionIds } }),
     ParticipantModel.deleteMany({ sessionId: { $in: sessionIds } }),
     SessionModel.deleteMany({ _id: { $in: sessionIds } }),
