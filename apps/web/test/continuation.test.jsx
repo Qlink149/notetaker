@@ -1,9 +1,14 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const h = vi.hoisted(() => ({ addParts: vi.fn(), upload: vi.fn(), sign: vi.fn() }));
+const h = vi.hoisted(() => ({
+  addParts: vi.fn(),
+  upload: vi.fn(),
+  sign: vi.fn(),
+  docx: vi.fn(),
+}));
 vi.mock('@/api/client', () => ({
-  api: { meetings: { addParts: (...a) => h.addParts(...a), exportDocx: vi.fn() } },
+  api: { meetings: { addParts: (...a) => h.addParts(...a), exportDocx: (...a) => h.docx(...a) } },
 }));
 vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
   ...(await orig()),
@@ -12,7 +17,7 @@ vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
 }));
 
 import AddContinuation from '@/components/AddContinuation';
-import { buildForClaude } from '@/components/MeetingExport';
+import MeetingExport, { buildForClaude } from '@/components/MeetingExport';
 
 afterEach(() => {
   cleanup();
@@ -94,5 +99,40 @@ describe('Copy for Claude', () => {
     expect(text).toContain('- **Heet**: Send the plan');
     expect(text).toContain('[0:00] **Heet**: Chalo shuru karte hain');
     expect(text).toContain('[1:05] **Paresh**: Haan');
+  });
+});
+
+describe('Share… (the browser opens the share menu only straight from a click)', () => {
+  const lines = [{ start: 0, speakerName: 'Heet', textRoman: 'Hello', textNative: '' }];
+  let share;
+  beforeEach(() => {
+    share = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    h.docx.mockResolvedValue(new Blob(['docx']));
+  });
+  afterEach(() => {
+    delete navigator.share;
+    delete navigator.canShare;
+  });
+
+  it('shares the Word file at once when it was prepared before the click', async () => {
+    render(<MeetingExport meeting={meeting} lines={lines} />);
+    const button = screen.getByRole('button', { name: /Share/ });
+    fireEvent.pointerEnter(button);
+    await waitFor(() => expect(h.docx).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    fireEvent.click(button);
+    expect(share).toHaveBeenCalledTimes(1);
+    const [arg] = share.mock.calls[0];
+    expect(arg.files[0].name).toBe('Plan.docx');
+  });
+
+  it('a click before the file is ready asks for a second click instead of failing', async () => {
+    render(<MeetingExport meeting={meeting} lines={lines} />);
+    fireEvent.click(screen.getByRole('button', { name: /Share/ }));
+    expect(share).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: /Tap to share/ }));
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('button', { name: /^\s*Share…/ })).toBeTruthy();
   });
 });
