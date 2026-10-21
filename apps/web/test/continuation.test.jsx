@@ -136,3 +136,41 @@ describe('Share… (the browser opens the share menu only straight from a click)
     expect(await screen.findByRole('button', { name: /^\s*Share…/ })).toBeTruthy();
   });
 });
+
+describe('Share… where the browser refuses the Word file (Chrome on a computer: "Permission denied")', () => {
+  const lines = [{ start: 0, speakerName: 'Heet', textRoman: 'Hello', textNative: '' }];
+  afterEach(() => {
+    delete navigator.share;
+    delete navigator.canShare;
+    delete window.matchMedia;
+  });
+
+  it('is not offered on a computer (mouse pointer)', () => {
+    Object.assign(navigator, { share: vi.fn(), canShare: () => true });
+    window.matchMedia = () => ({ matches: false });
+    render(<MeetingExport meeting={meeting} lines={lines} />);
+    expect(screen.queryByRole('button', { name: /Share/ })).toBeNull();
+    // the downloads are still there
+    expect(screen.getByRole('button', { name: /Word/ })).toBeTruthy();
+  });
+
+  it('on a phone, offers the text instead after the file is refused', async () => {
+    const refused = Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' });
+    const share = vi.fn().mockRejectedValueOnce(refused).mockResolvedValue(undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    window.matchMedia = () => ({ matches: true });
+    h.docx.mockResolvedValue(new Blob(['docx']));
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    render(<MeetingExport meeting={meeting} lines={lines} />);
+    const button = screen.getByRole('button', { name: /Share/ });
+    fireEvent.pointerEnter(button);
+    await waitFor(() => expect(h.docx).toHaveBeenCalled());
+    await act(async () => {});
+    fireEvent.click(button);
+    fireEvent.click(await screen.findByRole('button', { name: /Share as text/ }));
+    expect(share).toHaveBeenCalledTimes(2);
+    expect(share.mock.calls[1][0].text).toContain('Hello');
+    expect(alert).not.toHaveBeenCalled();
+    alert.mockRestore();
+  });
+});
