@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Download, Printer, Check, FileText, Loader2, Share2, Sparkles } from 'lucide-react';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/button';
@@ -138,35 +138,66 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
     }
   };
 
-  // The phone's share sheet (Drive, Claude, WhatsApp, Mail…) with the Word file; where files cannot be shared,
-  // the text version instead.
-  const share = async () => {
-    setShareBusy(true);
-    try {
-      const name = `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}.docx`;
-      let shared = false;
-      try {
-        const blob = await api.meetings.exportDocx(meeting.id, scriptMode);
-        const file = new File([blob], name, {
+  // The share menu (Drive, Claude, WhatsApp, Mail…) with the Word file. Browsers open it only straight from a
+  // click, so the file is fetched beforehand (when the pointer reaches the button); a click before it is ready
+  // makes the button "Tap to share" for a second click instead of failing.
+  const [shareFile, setShareFile] = useState(null);
+  // clicked before the file was ready: the next click shares
+  const [askAgain, setAskAgain] = useState(false);
+  const preparing = useRef(null);
+  const prepareShare = () => {
+    preparing.current ??= api.meetings
+      .exportDocx(meeting.id, scriptMode)
+      .then((blob) => {
+        const file = new File([blob], `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}.docx`, {
           type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         });
-        if (navigator.canShare?.({ files: [file] })) {
-          await navigator.share({ files: [file], title: meeting.title });
-          shared = true;
-        }
-      } catch (e) {
-        if (e?.name === 'AbortError') return; // the person closed the share sheet
-      }
-      if (!shared)
-        await navigator.share({
-          title: meeting.title,
-          text: buildText(meeting, lines, scriptMode),
-        });
-    } catch (e) {
-      if (e?.name !== 'AbortError') alert(e?.message || 'Could not share.');
-    } finally {
-      setShareBusy(false);
+        setShareFile(file);
+        return file;
+      })
+      .catch((e) => {
+        preparing.current = null;
+        throw e;
+      });
+    return preparing.current;
+  };
+  // a different script means a different Word file
+  useEffect(() => {
+    preparing.current = null;
+    setShareFile(null);
+  }, [scriptMode, meeting.id]);
+
+  const share = () => {
+    const text = { title: meeting.title, text: buildText(meeting, lines, scriptMode) };
+    const done = (p) =>
+      p.catch((e) => {
+        if (e?.name !== 'AbortError') alert(e?.message || 'Could not share.');
+      });
+    if (shareFile) {
+      setAskAgain(false);
+      // nothing awaited before this call: it still counts as the click
+      done(
+        navigator.share(
+          navigator.canShare?.({ files: [shareFile] })
+            ? { files: [shareFile], title: meeting.title }
+            : text,
+        ),
+      );
+      return;
     }
+    // this browser cannot share files at all: share the text now, while the click counts
+    if (
+      typeof navigator.canShare === 'function' &&
+      !navigator.canShare({ files: [new File([''], 'x.docx')] })
+    ) {
+      done(navigator.share(text));
+      return;
+    }
+    setShareBusy(true);
+    prepareShare()
+      .then(() => setAskAgain(true))
+      .catch((e) => alert(e?.message || 'Could not create the Word file.'))
+      .finally(() => setShareBusy(false));
   };
 
   const copy = async () => {
@@ -218,13 +249,20 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   return (
     <div className="flex gap-2 flex-wrap">
       {canShare && (
-        <Button variant="outline" size="sm" onClick={share} disabled={shareBusy}>
+        <Button
+          variant={askAgain ? 'default' : 'outline'}
+          size="sm"
+          onClick={share}
+          onPointerEnter={() => prepareShare().catch(() => {})}
+          onFocus={() => prepareShare().catch(() => {})}
+          disabled={shareBusy}
+        >
           {shareBusy ? (
             <Loader2 className="w-4 h-4 mr-1 animate-spin" />
           ) : (
             <Share2 className="w-4 h-4 mr-1" />
           )}{' '}
-          Share…
+          {shareBusy ? 'Preparing…' : askAgain ? 'Tap to share' : 'Share…'}
         </Button>
       )}
       <Button variant="outline" size="sm" onClick={copyForClaude}>
