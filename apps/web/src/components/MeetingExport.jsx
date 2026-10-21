@@ -126,7 +126,12 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   const [wordBusy, setWordBusy] = useState(false);
   const [copiedClaude, setCopiedClaude] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
-  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  // Share is for phones (WhatsApp, Drive, the Claude app). On a computer Chrome refuses Word files in its share menu
+  // ("Permission denied") and the Word/PDF buttons beside it do the job, so it is not offered there.
+  const canShare =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.share === 'function' &&
+    (typeof window.matchMedia !== 'function' || window.matchMedia('(pointer: coarse)').matches);
 
   const copyForClaude = async () => {
     try {
@@ -144,6 +149,8 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   const [shareFile, setShareFile] = useState(null);
   // clicked before the file was ready: the next click shares
   const [askAgain, setAskAgain] = useState(false);
+  // the browser refused the Word file: the next click shares the text instead
+  const [textOnly, setTextOnly] = useState(false);
   const preparing = useRef(null);
   const prepareShare = () => {
     preparing.current ??= api.meetings
@@ -169,28 +176,42 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
 
   const share = () => {
     const text = { title: meeting.title, text: buildText(meeting, lines, scriptMode) };
-    const done = (p) =>
+    const done = (p, withFile) =>
       p.catch((e) => {
-        if (e?.name !== 'AbortError') alert(e?.message || 'Could not share.');
+        if (e?.name === 'AbortError') return; // the person closed the share menu
+        if (withFile && e?.name === 'NotAllowedError') {
+          // this browser will not share a Word file: offer the text (a new click is needed to open the menu)
+          setTextOnly(true);
+          return;
+        }
+        alert(e?.message || 'Could not share.');
       });
+    if (textOnly) {
+      done(navigator.share(text), false);
+      return;
+    }
     if (shareFile) {
       setAskAgain(false);
+      const withFile = Boolean(navigator.canShare?.({ files: [shareFile] }));
       // nothing awaited before this call: it still counts as the click
       done(
-        navigator.share(
-          navigator.canShare?.({ files: [shareFile] })
-            ? { files: [shareFile], title: meeting.title }
-            : text,
-        ),
+        navigator.share(withFile ? { files: [shareFile], title: meeting.title } : text),
+        withFile,
       );
       return;
     }
     // this browser cannot share files at all: share the text now, while the click counts
     if (
       typeof navigator.canShare === 'function' &&
-      !navigator.canShare({ files: [new File([''], 'x.docx')] })
+      !navigator.canShare({
+        files: [
+          new File([''], 'x.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+        ],
+      })
     ) {
-      done(navigator.share(text));
+      done(navigator.share(text), false);
       return;
     }
     setShareBusy(true);
@@ -250,7 +271,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
     <div className="flex gap-2 flex-wrap">
       {canShare && (
         <Button
-          variant={askAgain ? 'default' : 'outline'}
+          variant={askAgain || textOnly ? 'default' : 'outline'}
           size="sm"
           onClick={share}
           onPointerEnter={() => prepareShare().catch(() => {})}
@@ -262,7 +283,13 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
           ) : (
             <Share2 className="w-4 h-4 mr-1" />
           )}{' '}
-          {shareBusy ? 'Preparing…' : askAgain ? 'Tap to share' : 'Share…'}
+          {shareBusy
+            ? 'Preparing…'
+            : textOnly
+              ? 'Share as text'
+              : askAgain
+                ? 'Tap to share'
+                : 'Share…'}
         </Button>
       )}
       <Button variant="outline" size="sm" onClick={copyForClaude}>
