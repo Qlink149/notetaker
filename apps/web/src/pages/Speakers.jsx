@@ -1,22 +1,28 @@
-import { useEffect, useState } from "react";
-import { api } from "@/api/client";
-import EnrollmentRecorder from "@/components/EnrollmentRecorder";
-import { Trash2, Loader2, Users, X, Volume2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from 'react';
+import { api } from '@/api/client';
+import EnrollmentRecorder from '@/components/EnrollmentRecorder';
+import { Trash2, Loader2, Users, X, Volume2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function Speakers() {
   const [speakers, setSpeakers] = useState(null);
   const [enrolling, setEnrolling] = useState(false);
-  const [name, setName] = useState("");
-  const [audioUrl, setAudioUrl] = useState("");
+  const [name, setName] = useState('');
+  const [audioUrl, setAudioUrl] = useState('');
   const [file, setFile] = useState(null);
   const [showEnroll, setShowEnroll] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
 
@@ -32,27 +38,25 @@ export default function Speakers() {
   }, []);
 
   const enroll = async () => {
-    setError("");
+    setError('');
     if (!name.trim()) {
-      setError("Enter a name.");
+      setError('Enter a name.');
       return;
     }
     if (!file) {
-      setError("Record a voice clip first.");
+      setError('Record a voice clip first.');
       return;
     }
     setEnrolling(true);
     try {
       await api.speakers.enrol(name.trim(), file);
-      setName("");
-      setAudioUrl("");
+      setName('');
+      setAudioUrl('');
       setFile(null);
       setShowEnroll(false);
       await load();
     } catch (e) {
-      setError(
-        e?.message || "Enrollment failed. Check your API keys and credits."
-      );
+      setError(e?.message || 'Enrollment failed. Check your API keys and credits.');
     } finally {
       setEnrolling(false);
     }
@@ -67,12 +71,8 @@ export default function Speakers() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Speakers</h1>
-        <Button
-          onClick={() => setShowEnroll((s) => !s)}
-          variant="outline"
-          className="rounded-full"
-        >
+        <h1 className="k-serif text-[40px] leading-tight">Speakers</h1>
+        <Button onClick={() => setShowEnroll((s) => !s)} variant="outline" className="rounded-full">
           {showEnroll ? (
             <>
               <X className="w-4 h-4 mr-1" /> Cancel
@@ -105,7 +105,7 @@ export default function Speakers() {
                   size="sm"
                   variant="ghost"
                   onClick={() => {
-                    setAudioUrl("");
+                    setAudioUrl('');
                     setFile(null);
                   }}
                 >
@@ -128,7 +128,8 @@ export default function Speakers() {
                 <span className="font-medium">Creating voiceprint…</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Analyzing the voice sample and creating a voiceprint. This takes about 10-20 seconds.
+                Analyzing the voice sample and creating a voiceprint. This takes about 10-20
+                seconds.
               </p>
             </div>
           ) : (
@@ -149,9 +150,7 @@ export default function Speakers() {
       ) : speakers.length === 0 ? (
         <p className="text-center py-20 text-muted-foreground text-sm">
           No speakers enrolled yet.
-          {!showEnroll && (
-            <span className="block mt-2">Tap “Add” to enroll one.</span>
-          )}
+          {!showEnroll && <span className="block mt-2">Tap “Add” to enroll one.</span>}
         </p>
       ) : (
         <div className="space-y-2">
@@ -172,7 +171,11 @@ export default function Speakers() {
               </div>
               <div className="flex items-center gap-1">
                 {s.enrollmentAudioUrl && (
-                  <Button size="icon" variant="ghost" onClick={() => setPlayingId(playingId === s.id ? null : s.id)}>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setPlayingId(playingId === s.id ? null : s.id)}
+                  >
                     <Volume2 className="w-4 h-4 text-muted-foreground" />
                   </Button>
                 )}
@@ -182,16 +185,19 @@ export default function Speakers() {
               </div>
             </div>
           ))}
-          {playingId && (() => {
-            const sp = speakers.find((s) => s.id === playingId);
-            if (!sp?.enrollmentAudioUrl) return null;
-            return (
-              <div className="rounded-xl border border-border bg-card p-3">
-                <p className="text-xs text-muted-foreground mb-2">Enrollment sample for {sp.name}</p>
-                <audio src={sp.enrollmentAudioUrl} controls autoPlay className="w-full" />
-              </div>
-            );
-          })()}
+          {playingId &&
+            (() => {
+              const sp = speakers.find((s) => s.id === playingId);
+              if (!sp?.enrollmentAudioUrl) return null;
+              return (
+                <div className="rounded-xl border border-border bg-card p-3">
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Enrollment sample for {sp.name}
+                  </p>
+                  <audio src={sp.enrollmentAudioUrl} controls autoPlay className="w-full" />
+                </div>
+              );
+            })()}
         </div>
       )}
 
@@ -200,7 +206,8 @@ export default function Speakers() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {deleteTarget?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the voiceprint. Phase 2 will use voiceprints to name speakers automatically. This can't be undone.
+              This removes the voiceprint. Phase 2 will use voiceprints to name speakers
+              automatically. This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

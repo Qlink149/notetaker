@@ -14,7 +14,9 @@ function snippet(text: string, words: string[]): string {
       .filter((i) => i >= 0)
       .slice(0, 1),
   );
-  const start = Math.max(0, at - 50);
+  let start = Math.max(0, at - 50);
+  // begin at a word, not halfway through one
+  if (start > 0) start = Math.min(at, text.indexOf(' ', start) + 1 || at);
   return (
     (start > 0 ? '…' : '') +
     text.slice(start, start + 160).trim() +

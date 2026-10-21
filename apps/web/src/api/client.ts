@@ -6,7 +6,11 @@ import type {
   Language,
   Meeting,
   MeetingDataView,
+  CreateTaskBody,
+  PatchTaskBody,
   RetryableStage,
+  Task,
+  TaskSuggestion,
   UploadSignResponse,
   Workspace,
   WorkspaceSettings,
@@ -73,9 +77,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return json as T;
 }
 
+export interface SearchResult {
+  meetingId: string;
+  title: string;
+  date: string;
+  snippet: string;
+  /** Seconds into the recording when the match is something said. */
+  at: number | null;
+}
+
 export interface Speaker {
   id: string;
   name: string;
+  /** A voice nobody has named yet ("Speaker B (Meeting AOM)"). */
+  anonymous?: boolean;
   hasVoiceprint: boolean;
   enrollmentAudioUrl: string | null;
   createdAt: string;
@@ -298,6 +313,27 @@ export const api = {
     rotateAccessCode: (code: string) =>
       request<{ token: string }>('POST', '/workspace/access-code', { code }),
   },
+  tasks: {
+    list: () => request<{ tasks: Task[] }>('GET', '/tasks').then((r) => r.tasks),
+    create: (input: CreateTaskBody) =>
+      request<{ task: Task }>('POST', '/tasks', input).then((r) => r.task),
+    update: (id: string, patch: PatchTaskBody) =>
+      request<{ task: Task }>('PATCH', `/tasks/${id}`, patch).then((r) => r.task),
+    remove: (id: string) => request<void>('DELETE', `/tasks/${id}`),
+    suggestions: (meetingId?: string) =>
+      request<{ suggestions: TaskSuggestion[] }>(
+        'GET',
+        meetingId ? `/meetings/${meetingId}/task-suggestions` : '/task-suggestions',
+      ).then((r) => r.suggestions),
+    skip: (meetingId: string, index: number) =>
+      request<void>('POST', `/meetings/${meetingId}/task-suggestions/${index}/skip`),
+    setMe: (personId: string | null) =>
+      request<{ mePersonId: string | null }>('PUT', '/workspace/me', { personId }),
+  },
+  search: (q: string) =>
+    request<{ results: SearchResult[] }>('GET', `/search?q=${encodeURIComponent(q)}`).then(
+      (r) => r.results,
+    ),
   speakers: {
     list: () => request<{ speakers: Speaker[] }>('GET', '/speakers').then((r) => r.speakers),
     enrol: (name: string, audio: File) => {

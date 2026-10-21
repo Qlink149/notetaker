@@ -6,6 +6,9 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import ScrollToTop from '@/components/ScrollToTop';
 import Layout from '@/components/Layout';
 import Meetings from '@/pages/Meetings';
+import Today from '@/pages/Today';
+import Team from '@/pages/Team';
+import Search from '@/pages/Search';
 import Speakers from '@/pages/Speakers';
 import Record from '@/pages/Record';
 import MeetingDetail from '@/pages/MeetingDetail';
@@ -41,7 +44,10 @@ function AuthenticatedApp() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Meetings />} />
+        <Route path="/" element={<Today />} />
+        <Route path="/meetings" element={<Meetings />} />
+        <Route path="/team" element={<Team />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/speakers" element={<Speakers />} />
         <Route path="/record" element={<Record />} />
         <Route path="/meetings/:id" element={<MeetingDetail />} />

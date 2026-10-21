@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
   Loader2,
@@ -20,6 +20,7 @@ import { fmtDuration, fmtTime, waitEstimate } from '@/lib/format';
 import TranscriptView from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
+import MeetingTasks from '@/components/kept/MeetingTasks';
 import AddContinuation from '@/components/AddContinuation';
 import MeetingExport from '@/components/MeetingExport';
 import { Button } from '@/components/ui/button';
@@ -80,6 +81,9 @@ const SCRIPT_MODES = [
 export default function MeetingDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // opened from a search hit in the transcript: start the recording there (?t=seconds)
+  const [params] = useSearchParams();
+  const startAt = useRef(Number(params.get('t')) > 0 ? Number(params.get('t')) : null);
   const { workspace } = useAuth();
   const [meeting, setMeeting] = useState(null);
   const [notFound, setNotFound] = useState(false);
@@ -194,7 +198,7 @@ export default function MeetingDetail() {
     setBusy(true);
     try {
       await api.meetings.remove(id);
-      navigate('/');
+      navigate('/meetings');
     } catch {
       setActionError('Could not delete meeting. Try again.');
       setBusy(false);
@@ -233,7 +237,7 @@ export default function MeetingDetail() {
     return (
       <div className="py-20 text-center text-muted-foreground">
         <p className="mb-2">This meeting does not exist.</p>
-        <Link to="/" className="text-sm underline">
+        <Link to="/meetings" className="text-sm underline">
           Back to meetings
         </Link>
       </div>
@@ -255,7 +259,7 @@ export default function MeetingDetail() {
 
   return (
     <div>
-      <Link to="/" className="inline-flex items-center text-sm text-muted-foreground mb-3">
+      <Link to="/meetings" className="inline-flex items-center text-sm text-muted-foreground mb-3">
         <ArrowLeft className="w-4 h-4 mr-1" /> Meetings
       </Link>
       <div className="flex items-center gap-1.5">
@@ -274,7 +278,7 @@ export default function MeetingDetail() {
           </>
         ) : (
           <>
-            <h1 className="text-2xl font-bold tracking-tight">{meeting.title}</h1>
+            <h1 className="k-serif text-[34px] leading-tight">{meeting.title}</h1>
             <Button
               size="icon"
               variant="ghost"
@@ -300,6 +304,12 @@ export default function MeetingDetail() {
           <audio
             ref={audioRef}
             src={meeting.audio.playbackUrl}
+            onLoadedMetadata={(e) => {
+              if (startAt.current === null) return;
+              e.target.currentTime = startAt.current;
+              setCurrentTime(startAt.current);
+              startAt.current = null;
+            }}
             controls
             className="flex-1 min-w-0"
             onTimeUpdate={(e) => {
@@ -580,6 +590,7 @@ export default function MeetingDetail() {
       )}
 
       <ActionItems actionItems={meeting.actionItems} />
+      {!processing && <MeetingTasks meetingId={id} summaryKey={meeting.summaryStatus} />}
 
       {speakers?.source === 'text-fallback' && hasTranscript && !processing && (
         <TextSpeakersNotice busy={busy} onRerun={() => retryStage('diarize')} />

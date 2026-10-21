@@ -162,7 +162,7 @@ export default function Record() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold tracking-tight mb-6">New meeting</h1>
+      <h1 className="k-serif text-[40px] leading-tight mb-6">New meeting</h1>
       <div className="space-y-5">
         <div>
           <label className="text-sm font-medium mb-1.5 block">Title (optional)</label>

@@ -8,7 +8,12 @@ vi.mock('@/api/client', () => ({
   api: {
     workspace: { settings: vi.fn().mockResolvedValue({ languages: ['hi'], engine: 'gemini' }) },
     meetings: { create: (...a) => h.create(...a) },
+    tasks: { list: vi.fn().mockResolvedValue([]), suggestions: vi.fn().mockResolvedValue([]) },
+    speakers: { list: vi.fn().mockResolvedValue([]) },
   },
+}));
+vi.mock('@/lib/AuthContext', () => ({
+  useAuth: () => ({ workspace: { mePersonId: null }, updateWorkspace: vi.fn(), logout: vi.fn() }),
 }));
 vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
   ...(await orig()),
@@ -19,6 +24,7 @@ vi.mock('@/lib/cloudinaryUpload', async (orig) => ({
 
 import Layout from '@/components/Layout';
 import Record from '@/pages/Record';
+import Today from '@/pages/Today';
 
 beforeEach(() => {
   h.create.mockResolvedValue({ id: 'm1' });
@@ -122,18 +128,25 @@ describe('new meeting page while live recording is not offered', () => {
 });
 
 describe('navigation while those parts are off', () => {
-  it('shows Meetings, Upload, Speakers and Settings, and not Record, Insights or Benchmark', async () => {
+  it('shows the Kept tab bar, and Speakers and Settings (not Insights or Benchmark) under the profile', async () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<p>home</p>} />
+            <Route path="/" element={<Today />} />
           </Route>
         </Routes>
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByText('home')).toBeTruthy());
-    const labels = screen.getAllByRole('link').map((a) => a.textContent);
-    expect(labels).toEqual(['Meetings', 'Upload', 'Speakers', 'Settings']);
+    const nav = await screen.findByRole('navigation', { name: 'Main' });
+    expect(
+      [...nav.querySelectorAll('a')].map((a) => a.textContent || a.getAttribute('aria-label')),
+    ).toEqual(['Today', 'Meetings', 'New meeting', 'Team', 'Search']);
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    const sheet = await screen.findByRole('dialog');
+    expect([...sheet.querySelectorAll('a')].map((a) => a.textContent)).toEqual([
+      'Speakers (voice directory)',
+      'Settings',
+    ]);
   });
 });
