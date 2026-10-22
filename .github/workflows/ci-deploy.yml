@@ -1,5 +1,9 @@
-# On every push to the Phase 2 branch: lint, typecheck and run all tests; if they pass, ask Render to deploy
-# the API (workspace 1) and the worker (workspace 2). Pull requests only run the tests.
+# On every push to the Phase 2 branch: lint, typecheck and run all tests; if they pass, deploy the worker to the
+# DigitalOcean droplet (through the Vultr registry), then ask Render to deploy the API. Pull requests only run
+# the tests.
+#
+# The worker goes first: a new API can queue work only a new worker knows (e.g. joining several files), while a
+# new worker handles everything an old API queues.
 #
 # Two Node versions on purpose: the server (API, worker, pipeline) runs on Render with Node 20, so it is tested
 # on Node 20; the website's test tooling (jsdom 30) needs Node 22.22 or newer, so the website is tested on 24.
@@ -21,7 +25,8 @@ on:
 
 concurrency:
   group: ci-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  # a newer push replaces a pull request's run, but never stops a deploy half-way
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-server:
@@ -72,7 +77,7 @@ jobs:
           exit $status
 
   deploy:
-    needs: [test-server, test-web]
+    needs: [test-server, test-web, deploy-worker]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/phase-2-speaker-identity'
     runs-on: ubuntu-latest
     timeout-minutes: 5

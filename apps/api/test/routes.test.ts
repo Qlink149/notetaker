@@ -49,7 +49,7 @@ async function createMeeting(title = 'Weekly review') {
       meetingId,
       title,
       publicId: `${folder}/rec`,
-      url: 'https://res.cloudinary.com/x/rec.webm',
+      url: `https://res.cloudinary.com/x/video/upload/v1/${folder}/rec.webm`,
     })
     .expect(201);
   return res.body.meeting as {
@@ -140,7 +140,7 @@ describe('meetings', () => {
     expect(second.body).toMatchObject({ meetingId, folder });
     const parts = [1, 2, 3].map((n) => ({
       publicId: `${folder}/part-${n}`,
-      url: `https://res.cloudinary.com/x/part-${n}.m4a`,
+      url: `https://res.cloudinary.com/x/video/upload/v1/${folder}/part-${n}.m4a`,
       fileName: `Recording ${n}.m4a`,
     }));
     const res = await auth(request(app).post('/api/v1/meetings'))
@@ -171,14 +171,14 @@ describe('meetings', () => {
     const { meetingId, folder } = sign.body as { meetingId: string; folder: string };
     const part = (n: number, f = folder) => ({
       publicId: `${f}/p${n}`,
-      url: `https://x.example/${n}`,
+      url: `b2://${f}/p${n}`,
     });
     const send = (parts: unknown[], publicId = `${folder}/p1`) =>
       auth(request(app).post('/api/v1/meetings')).send({
         meetingId,
         title: 't',
         publicId,
-        url: 'https://x.example/1',
+        url: `b2://${publicId}`,
         parts,
       });
     await send([part(1), part(2, 'workspaces/other/meetings/x')]).expect(400);
@@ -207,7 +207,7 @@ describe('meetings', () => {
     const { meetingId, folder } = sign.body as { meetingId: string; folder: string };
     const parts = [1, 2].map((n) => ({
       publicId: `${folder}/p${n}`,
-      url: `https://x.example/${n}`,
+      url: `b2://${folder}/p${n}`,
     }));
     await auth(request(app).post('/api/v1/meetings'))
       .send({ meetingId, title: 't', publicId: parts[0]!.publicId, url: parts[0]!.url, parts })

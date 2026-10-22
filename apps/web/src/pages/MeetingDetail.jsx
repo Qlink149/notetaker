@@ -181,7 +181,11 @@ export default function MeetingDetail() {
   };
 
   const retryStage = (stage) => run(() => api.meetings.retry(id, stage));
-  const summariseAnyway = () => run(() => api.meetings.summarise(id, true));
+  const summariseAnyway = () => {
+    // a new summary replaces the one the note was about
+    setSummaryNote('');
+    return run(() => api.meetings.summarise(id, true));
+  };
 
   const saveTitle = async () => {
     const value = titleDraft.trim();

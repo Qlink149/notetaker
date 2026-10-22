@@ -20,7 +20,26 @@ import { addContinuation } from '../services/continuation.js';
 import { deleteMeetingEverywhere } from '../services/meetingDelete.js';
 import { PENDING_CONCAT } from '../pipeline/stages/07-concat.js';
 import { meetingFolder } from '../services/storage/cloudinary.js';
+import { B2_SCHEME } from '../services/storage/b2.js';
 import type { ApiDeps } from './deps.js';
+
+/**
+ * The address the browser reports for an upload must be that upload: its own B2 object, or the Cloudinary file
+ * of that public id. The worker downloads it, so any other address would make the server fetch it.
+ */
+function fileUrlOk(url: string, publicId: string): boolean {
+  if (url.startsWith(B2_SCHEME)) return url === `${B2_SCHEME}${publicId}`;
+  try {
+    const u = new URL(url);
+    return (
+      u.protocol === 'https:' &&
+      u.hostname === 'res.cloudinary.com' &&
+      u.pathname.includes(`/${publicId}`)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function meetingsRouter(deps: ApiDeps): Router {
   const r = Router();
@@ -56,9 +75,11 @@ export function meetingsRouter(deps: ApiDeps): Router {
     await assertEngineEnabled([input.engine ?? workspace.settings.engine]);
     const folder = meetingFolder(workspace.slug, input.meetingId);
     const files = input.parts ?? [{ publicId: input.publicId, url: input.url }];
-    for (const f of [{ publicId: input.publicId }, ...files])
+    for (const f of [{ publicId: input.publicId, url: input.url }, ...files]) {
       if (!f.publicId.startsWith(`${folder}/`))
         throw new HttpError(400, "publicId is not in this meeting's upload folder");
+      if (!fileUrlOk(f.url, f.publicId)) throw new HttpError(400, 'url is not the uploaded file');
+    }
     if (input.parts && input.parts[0]!.publicId !== input.publicId)
       throw new HttpError(400, 'the first part must be the meeting file');
     if (await MeetingModel.exists({ _id: input.meetingId }))
@@ -146,21 +167,39 @@ export function meetingsRouter(deps: ApiDeps): Router {
     )
       throw new HttpError(409, 'meeting_is_processing');
     const folder = meetingFolder(ws(req).slug, String(m._id));
-    for (const f of parts)
+    for (const f of parts) {
       if (!f.publicId.startsWith(`${folder}/`))
         throw new HttpError(400, "publicId is not in this meeting's upload folder");
+      if (!fileUrlOk(f.url, f.publicId)) throw new HttpError(400, 'url is not the uploaded file');
+    }
     if ((m.audio.parts?.length || 1) + parts.length > MAX_MEETING_PARTS)
       throw new HttpError(400, `a meeting can hold at most ${MAX_MEETING_PARTS} files`);
-    await addContinuation(
-      m,
-      parts.map((f) => ({
-        publicId: f.publicId,
-        url: f.url,
-        fileName: f.fileName ?? null,
-        durationSec: null,
-        offsetSec: null,
-      })),
-    );
+    // Claim the meeting first: a second request at the same moment (another tab, a retry) must not run the
+    // continuation again over the first one's state, which would lose the speaker names it set aside.
+    const claimed = await MeetingModel.findOneAndUpdate(
+      {
+        _id: m._id,
+        status: { $ne: 'processing' },
+        'audio.originalUrl': { $ne: PENDING_CONCAT },
+      },
+      { $set: { status: 'processing' } },
+    ).lean();
+    if (!claimed) throw new HttpError(409, 'meeting_is_processing');
+    try {
+      await addContinuation(
+        m,
+        parts.map((f) => ({
+          publicId: f.publicId,
+          url: f.url,
+          fileName: f.fileName ?? null,
+          durationSec: null,
+          offsetSec: null,
+        })),
+      );
+    } catch (err) {
+      await MeetingModel.updateOne({ _id: m._id }, { $set: { status: m.status } });
+      throw err;
+    }
     await JobModel.deleteMany({ meetingId: m._id, stage: 'concat', status: 'failed' });
     await enqueue({ meetingId: m._id, stage: 'concat' });
     const updated = await MeetingModel.findById(m._id).lean<MeetingDoc>();
