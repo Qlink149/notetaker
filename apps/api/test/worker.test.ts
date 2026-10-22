@@ -1,4 +1,5 @@
-import { mkdtemp } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Types } from 'mongoose';
@@ -151,6 +152,50 @@ describe('a meeting uploaded in several files (client request, 20 Oct)', () => {
     const m = await MeetingModel.findById(id).lean();
     expect(m?.status).toBe('failed');
     expect(m?.error?.message).toMatch(/two\.m4a/);
+  });
+});
+
+describe('a file in a multi-file meeting that is not audio (real test, 22 Oct)', () => {
+  it('fails at once, naming the file, without retrying it', async () => {
+    const runner = new Runner(
+      testDeps({ storage: await fakeStorage(), engine: () => fakeEngine(() => okResult([])) }),
+      stages,
+    );
+    const broken = join(await mkdtemp(join(tmpdir(), 'broken-')), 'C_broken.m4a');
+    await writeFile(broken, randomBytes(50_000));
+    const id = new Types.ObjectId();
+    await MeetingModel.create({
+      _id: id,
+      workspaceId: workspace._id,
+      title: 'Broken part',
+      status: 'processing',
+      stage: 'ingest',
+      engine: 'gemini',
+      languages: ['hi'],
+      audio: {
+        originalUrl: 'pending:concat',
+        originalPublicId: `workspaces/kisna/meetings/${String(id)}/combined`,
+        parts: [
+          { publicId: 'a', url: fixture, fileName: 'one.m4a', durationSec: null, offsetSec: null },
+          {
+            publicId: 'b',
+            url: broken,
+            fileName: 'C_broken.m4a',
+            durationSec: null,
+            offsetSec: null,
+          },
+        ],
+      },
+    });
+    await enqueue({ meetingId: id, stage: 'concat' }); // the normal retry allowance
+    await runner.drain();
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.status).toBe('failed');
+    expect(m?.error?.message).toBe(
+      'C_broken.m4a: The audio format is not supported. Try uploading a different file.',
+    );
+    const job = await JobModel.findOne({ meetingId: id, stage: 'concat' }).lean();
+    expect(job?.attempts).toBe(1);
   });
 });
 
