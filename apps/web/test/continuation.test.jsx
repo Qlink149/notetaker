@@ -56,6 +56,23 @@ describe('adding a continuation recording (client request, 20 Oct)', () => {
     ]);
   });
 
+  it('lets the order be corrected before uploading', async () => {
+    h.sign.mockResolvedValue({ meetingId: 'm1' });
+    h.upload.mockImplementation(async (f) => ({
+      publicId: `p/${f.name}`,
+      url: `b2://p/${f.name}`,
+    }));
+    h.addParts.mockResolvedValue({ id: 'm1' });
+    const { container } = render(<AddContinuation meeting={meeting} />);
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [at('a.m4a', 1), at('b.m4a', 2)] },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Move b.m4a up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add and process' }));
+    await waitFor(() => expect(h.addParts).toHaveBeenCalled());
+    expect(h.addParts.mock.calls[0][1].map((p) => p.fileName)).toEqual(['b.m4a', 'a.m4a']);
+  });
+
   it('cancelling uploads nothing', async () => {
     const { container } = render(<AddContinuation meeting={meeting} />);
     fireEvent.change(container.querySelector('input[type="file"]'), {

@@ -7,16 +7,22 @@ On every push to `phase-2-speaker-identity` that passes the tests, GitHub Action
 2. connects to the droplet with the CI deploy key and runs `deploy <git sha> <registry user>`, with the registry
    password on stdin.
 
-On the droplet, `deploy-worker.sh`:
+The API (Render) deploys only after the worker: a new API can queue work only a new worker knows. A newer push
+never cancels a deploy in progress.
 
-- pulls the image;
+On the droplet, `deploy-worker.sh` (one at a time: a lock; it keeps going if CI disconnects; log in
+`/var/log/meetingid-deploy.log`):
+
+- pulls the image, then logs out of the registry (the key is not kept on the droplet);
 - waits until no meeting is processing (`node apps/api/dist/scripts/busy.js` from the new image: running jobs, or
-  queued ones due within 2 minutes; benchmarks don't count), up to 30 minutes, and gives up (exit 4) rather than
-  cut a meeting short;
+  queued ones due within 2 minutes; benchmarks don't count; no answer within 90 s counts as busy), up to 30
+  minutes, and gives up (exit 4) rather than cut a meeting short: the CI run then fails (GitHub emails) and the
+  deploy is run again later (re-run the job);
 - stops the worker with 40 s grace (it finishes or hands back its jobs within 25 s), starts the new image with the
   same limits (850 MB memory, 2.8 GB with swap, port 10000, `/etc/meetingid/worker.env`);
-- checks `http://127.0.0.1:10000/health` for a minute; if the new worker is not healthy, starts the previous image
-  again (exit 5).
+- checks `http://127.0.0.1:10000/health` for a minute; if the new worker does not start or is not healthy, starts
+  the previous image again (exit 5);
+- keeps the three newest worker images for a manual roll-back and removes older ones.
 
 ## One-time set-up
 
@@ -42,4 +48,5 @@ The deploy key is `~/.ssh/meetingid-ci-deploy` on the PC that set this up (not t
 ## By hand
 
 Deploy a given build: `ssh -i ~/.ssh/meetingid-ci-deploy root@139.59.39.155 "deploy <sha> <registry user>"` with
-the registry API key typed on stdin. Roll back: the same with an older sha (images are kept for a week).
+the registry API key typed on stdin. Roll back: the same with an older sha (the three newest images stay on the
+droplet; older ones are pulled again from the registry).

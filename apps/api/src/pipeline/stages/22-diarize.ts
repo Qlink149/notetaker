@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { releaseCarryOver } from '../../services/continuation.js';
 import { env } from '../../config/env.js';
 import { EngineResponseModel, MeetingDataModel, type MeetingDoc } from '../../models/index.js';
 import { P2MediaModel, P2PyannoteResponseModel } from '../../models/phase2.js';
@@ -39,6 +40,8 @@ async function setState(
   reason: string | null = null,
 ): Promise<void> {
   await MeetingDataModel.updateOne({ meetingId }, { $set: { diarize: { state, jobId, reason } } });
+  // no voices to map after a continuation: put the meeting's people back as they were
+  if (state === 'fallback' || state === 'off') await releaseCarryOver(meetingId);
 }
 
 /** Queue the speaker stage next to transcription; `off` when the pipeline is text-only. */

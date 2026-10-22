@@ -4,7 +4,8 @@
 # this command (the key can do nothing else). CI connects with:
 #   ssh root@droplet "deploy <git sha> <registry user>"   and the registry password on stdin.
 # A meeting being processed is never cut short: the deploy waits until the worker is idle (up to 30 minutes)
-# and gives up otherwise. If the new worker is not healthy within a minute, the previous image runs again.
+# and gives up otherwise. If the new worker does not start or is not healthy within a minute, the previous image
+# runs again. One deploy at a time; a dropped SSH connection (a cancelled CI run) does not stop it half-way.
 set -euo pipefail
 
 REGISTRY=blr.vultrcr.com
@@ -12,8 +13,17 @@ REPO=blr.vultrcr.com/qlink01/meetingid-worker
 NAME=meetingid-worker
 ENV_FILE=/etc/meetingid/worker.env
 WAIT_TRIES=60 # x 30 s = 30 min
+KEEP_IMAGES=3 # newest builds kept on the droplet for a manual roll-back
+LOG=/var/log/meetingid-deploy.log
 
-log() { echo "[deploy $(date -u +%H:%M:%S)] $*"; }
+# Keep going if CI disconnects: ignore hang-ups and broken pipes, and never fail on a log line.
+trap '' HUP PIPE
+log() {
+  local line
+  line="[deploy $(date -u +%F' '%H:%M:%S)] $*"
+  echo "$line" >>"$LOG" 2>/dev/null || true
+  echo "$line" 2>/dev/null || true
+}
 
 read -r cmd tag user _ <<<"${SSH_ORIGINAL_COMMAND:-${*:-}}"
 if [[ "${cmd:-}" != deploy || ! "${tag:-}" =~ ^[a-f0-9]{7,40}$ || ! "${user:-}" =~ ^[A-Za-z0-9-]{8,64}$ ]]; then
@@ -25,17 +35,32 @@ if [[ -z "${password:-}" ]]; then
   echo "registry password missing on stdin" >&2
   exit 2
 fi
-printf '%s' "$password" | docker login "$REGISTRY" -u "$user" --password-stdin >/dev/null
-unset password
+
+# one deploy at a time (a second one waits for the first, up to 40 minutes)
+exec 9>/run/meetingid-deploy.lock
+if ! flock -w 2400 9; then
+  log "another deploy is still running; giving up"
+  exit 6
+fi
 
 image="$REPO:$tag"
 log "pulling $image"
-docker pull -q "$image" >/dev/null
+printf '%s' "$password" | docker login "$REGISTRY" -u "$user" --password-stdin >/dev/null
+unset password
+pulled=0
+docker pull -q "$image" >/dev/null && pulled=1
+# the registry key is not kept on the droplet
+docker logout "$REGISTRY" >/dev/null 2>&1 || true
+if [[ "$pulled" != 1 ]]; then
+  log "could not pull $image"
+  exit 3
+fi
 
 # The busy check runs from the new image (same database query), so it works even when the running worker is
-# an older build without it. Exit 0 = idle, 3 = busy; anything else counts as busy too.
+# an older build without it. Exit 0 = idle, 3 = busy; anything else (or no answer within 90 s) counts as busy.
 for i in $(seq 1 "$WAIT_TRIES"); do
-  if docker run --rm --memory 300m --env-file "$ENV_FILE" "$image" node apps/api/dist/scripts/busy.js; then
+  if timeout 90 docker run --rm --memory 300m --env-file "$ENV_FILE" "$image" \
+    node apps/api/dist/scripts/busy.js >>"$LOG" 2>&1; then
     break
   fi
   if [[ "$i" == "$WAIT_TRIES" ]]; then
@@ -65,20 +90,24 @@ log "replacing ${previous:-nothing} with $image"
 # the worker finishes or hands back its jobs within 25 s of SIGTERM; give it 40
 docker stop -t 40 "$NAME" >/dev/null 2>&1 || true
 docker rm "$NAME" >/dev/null 2>&1 || true
-run "$image"
-
-if healthy; then
+# a failed start is handled below like an unhealthy one (never left with no worker)
+if run "$image" && healthy; then
   log "worker $tag is up"
-  # drop images nothing uses that are older than a week (the previous one stays for a manual roll-back)
-  docker image prune -af --filter "until=168h" >/dev/null 2>&1 || true
+  # keep the newest builds (the previous one included) for a manual roll-back; remove older ones
+  docker images "$REPO" --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | tail -n +$((KEEP_IMAGES + 1)) |
+    xargs -r docker rmi >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null 2>&1 || true
   exit 0
 fi
 
-log "new worker not healthy; last log lines:"
+log "new worker did not start or is not healthy; last log lines:"
 docker logs --tail 40 "$NAME" 2>&1 || true
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 if [[ -n "$previous" ]]; then
-  run "$previous"
-  if healthy; then log "rolled back to $previous"; else log "roll-back to $previous is not healthy either"; fi
+  if run "$previous" && healthy; then
+    log "rolled back to $previous"
+  else
+    log "roll-back to $previous is not healthy either: look at the droplet now"
+  fi
 fi
 exit 5

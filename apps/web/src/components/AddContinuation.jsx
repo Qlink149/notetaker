@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Loader2, Plus } from 'lucide-react';
 import { api } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +29,15 @@ export default function AddContinuation({ meeting, onAdded }) {
     setError('');
     setFiles([...picked].sort((a, b) => (a.lastModified ?? 0) - (b.lastModified ?? 0)));
   };
+
+  // files are put in recording order by their dates; iPhone "Save to Files" can change those, so the order can be
+  // corrected before anything is uploaded
+  const move = (i, by) =>
+    setFiles((prev) => {
+      const next = [...prev];
+      [next[i], next[i + by]] = [next[i + by], next[i]];
+      return next;
+    });
 
   const add = async () => {
     setBusy(true);
@@ -78,9 +87,33 @@ export default function AddContinuation({ meeting, onAdded }) {
         of “{meeting.title}”?
       </p>
       <ol className="text-sm list-decimal pl-5 space-y-0.5">
-        {files.map((f) => (
-          <li key={`${f.name}-${f.size}`} className="truncate">
-            {f.name}
+        {files.map((f, i) => (
+          <li key={`${f.name}-${f.size}`}>
+            <span className="flex items-center gap-1">
+              <span className="truncate flex-1 min-w-0">{f.name}</span>
+              {files.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    aria-label={`Move ${f.name} up`}
+                    disabled={busy || i === 0}
+                    onClick={() => move(i, -1)}
+                    className="p-1 disabled:opacity-30"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${f.name} down`}
+                    disabled={busy || i === files.length - 1}
+                    onClick={() => move(i, 1)}
+                    className="p-1 disabled:opacity-30"
+                  >
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </span>
           </li>
         ))}
       </ol>

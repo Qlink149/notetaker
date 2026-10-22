@@ -149,7 +149,13 @@ describe('adding a continuation to a meeting (client request, 20 Oct)', () => {
     const { id, folder, unnamed } = await seedFinished();
     const res = await auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`))
       .send({
-        parts: [{ publicId: `${folder}/later.m4a`, url: 'b2://later', fileName: 'later.m4a' }],
+        parts: [
+          {
+            publicId: `${folder}/later.m4a`,
+            url: `b2://${folder}/later.m4a`,
+            fileName: 'later.m4a',
+          },
+        ],
       })
       .expect(202);
     expect(res.body.meeting.status).toBe('processing');
@@ -159,7 +165,7 @@ describe('adding a continuation to a meeting (client request, 20 Oct)', () => {
     // the earlier recording becomes part 1
     expect(m?.audio.parts?.map((p) => [p.url, p.fileName, p.offsetSec])).toEqual([
       ['b2://first', null, 0],
-      ['b2://later', 'later.m4a', null],
+      [`b2://${folder}/later.m4a`, 'later.m4a', null],
     ]);
     expect(
       await JobModel.countDocuments({ meetingId: id, stage: 'concat', status: 'queued' }),
@@ -191,17 +197,56 @@ describe('adding a continuation to a meeting (client request, 20 Oct)', () => {
       .expect(400);
     await MeetingModel.updateOne({ _id: id }, { $set: { status: 'processing' } });
     await auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`))
-      .send({ parts: [{ publicId: `${folder}/later.m4a`, url: 'b2://later' }] })
+      .send({ parts: [{ publicId: `${folder}/later.m4a`, url: `b2://${folder}/later.m4a` }] })
       .expect(409);
     // nothing was touched
     const old = await P2PyannoteResponseModel.findOne({ meetingId: id, jobId: 'old' }).lean();
     expect(old?.tag).toBe('pipeline');
   });
 
+  it('refuses an address that is not the uploaded file (the server would fetch it)', async () => {
+    const { id, folder } = await seedFinished();
+    for (const url of [
+      'http://169.254.169.254/latest',
+      `b2://${folder}/other.m4a`,
+      'https://evil.example/x',
+    ])
+      await auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`))
+        .send({ parts: [{ publicId: `${folder}/later.m4a`, url }] })
+        .expect(400);
+    expect((await MeetingModel.findById(id).lean())?.status).toBe('completed');
+  });
+
+  it('two requests at the same moment add the audio once and keep the speaker names', async () => {
+    const { id, folder } = await seedFinished();
+    const send = () =>
+      auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`)).send({
+        parts: [{ publicId: `${folder}/later.m4a`, url: `b2://${folder}/later.m4a` }],
+      });
+    const codes = (await Promise.all([send(), send()])).map((r) => r.status).sort();
+    expect(codes).toEqual([202, 409]);
+    const m = await MeetingModel.findById(id).lean();
+    expect(m?.audio.parts).toHaveLength(2);
+    const data = await MeetingDataModel.findOne({ meetingId: id }).lean();
+    expect(data?.carryOver?.cards.map((c) => c.diar)).toEqual(['S0', 'S1']);
+  });
+
+  it('puts things back when the new speaker analysis falls back to text speakers', async () => {
+    const { id, folder, unnamed } = await seedFinished();
+    await auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`))
+      .send({ parts: [{ publicId: `${folder}/later.m4a`, url: `b2://${folder}/later.m4a` }] })
+      .expect(202);
+    expect((await SpeakerModel.findById(unnamed._id).lean())?.origin?.diar).toBe('pre:S1');
+    const { releaseCarryOver } = await import('../src/services/continuation.js');
+    await releaseCarryOver(id);
+    expect((await SpeakerModel.findById(unnamed._id).lean())?.origin?.diar).toBe('S1');
+    expect((await MeetingDataModel.findOne({ meetingId: id }).lean())?.carryOver).toBeNull();
+  });
+
   it('keeps who each voice is when the new analysis labels the voices differently', async () => {
     const { id, folder, heet, unnamed } = await seedFinished();
     await auth(request(app).post(`/api/v1/meetings/${String(id)}/parts`))
-      .send({ parts: [{ publicId: `${folder}/later.m4a`, url: 'b2://later' }] })
+      .send({ parts: [{ publicId: `${folder}/later.m4a`, url: `b2://${folder}/later.m4a` }] })
       .expect(202);
     // the join and the new speaker analysis ran on 200 s: Heet is now X1, the unnamed voice X0, and a third
     // voice speaks only in the new audio

@@ -1,3 +1,4 @@
+import type { Types } from 'mongoose';
 import type { AudioPart } from '@meetingid/shared';
 import {
   EngineResponseModel,
@@ -103,4 +104,20 @@ export async function addContinuation(meeting: MeetingDoc, added: AudioPart[]): 
       },
     },
   );
+}
+
+/**
+ * The speaker analysis after a continuation ended without pyannote (fallback to text speakers, or turned off):
+ * nothing will map the earlier voices to new ones, so the people made from this meeting get their earlier
+ * labels back and the set-aside decisions are dropped.
+ */
+export async function releaseCarryOver(meetingId: Types.ObjectId): Promise<void> {
+  const data = await MeetingDataModel.findOne({ meetingId }, { carryOver: 1 }).lean();
+  if (!data?.carryOver) return;
+  await SpeakerModel.updateMany(
+    { 'origin.meetingId': meetingId, 'origin.diar': { $regex: `^${FORMER}` } },
+    [{ $set: { 'origin.diar': { $substrCP: ['$origin.diar', FORMER.length, 200] } } }],
+    { updatePipeline: true },
+  );
+  await MeetingDataModel.updateOne({ meetingId }, { $set: { carryOver: null } });
 }
