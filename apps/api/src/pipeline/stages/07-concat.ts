@@ -5,6 +5,9 @@ import { FatalError, humanizeError } from '../errors.js';
 import { loadMeeting } from '../meetings.js';
 import { enqueue } from '../queue.js';
 
+/** ffmpeg's ways of saying a file is not audio it can read (same as `humanizeError`'s "not supported"). */
+const UNREADABLE = /unsupported|invalid data found|decode|moov atom/i;
+
 /** Stored address of a meeting whose files are still being joined. */
 export const PENDING_CONCAT = 'pending:concat';
 
@@ -32,9 +35,11 @@ export const concatStage: StageHandler = {
         lengths.push((await deps.audio.probe(flac)).durationSec);
       } catch (err) {
         const name = part.fileName ?? `part ${i + 1}`;
-        throw Object.assign(err as Error, {
-          message: `${name}: ${(err as Error).message}`,
-        });
+        // a file that cannot be read does not get better on a retry: say which one, at once
+        if (UNREADABLE.test((err as Error).message))
+          throw new FatalError(`${name}: ${humanizeError(err)}`, { cause: err });
+        // anything else (a download that failed) is retried; the file is named when it gives up
+        throw Object.assign(err as Error, { partName: name });
       }
       flacs.push(flac);
     }
@@ -75,12 +80,21 @@ export const concatStage: StageHandler = {
   },
 
   async onGiveUp({ job }: StageContext, error: Error) {
+    // the worker wraps the error it caught; the file it was about is on the original
+    type Tagged = Error & { partName?: string; cause?: unknown };
+    const part =
+      (error as Tagged).partName ?? ((error as Tagged).cause as Tagged | undefined)?.partName;
+    const message = error instanceof FatalError ? error.message : humanizeError(error);
     await MeetingModel.updateOne(
       { _id: job.meetingId },
       {
         $set: {
           status: 'failed',
-          error: { stage: 'ingest', message: humanizeError(error), retryable: true },
+          error: {
+            stage: 'ingest',
+            message: part && !message.startsWith(`${part}:`) ? `${part}: ${message}` : message,
+            retryable: true,
+          },
         },
       },
     );
