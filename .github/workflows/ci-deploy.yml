@@ -5,8 +5,11 @@
 # on Node 20; the website's test tooling (jsdom 30) needs Node 22.22 or newer, so the website is tested on 24.
 #
 # One-time set-up (GitHub: repository, Settings, Secrets and variables, Actions, New repository secret):
-#   RENDER_API_KEY    the Render API key of the workspace that holds meetingid-phase2 (the API)
-#   RENDER_API_KEY2   the Render API key of the workspace that holds meetingid-worker
+#   RENDER_API_KEY      the Render API key of the workspace that holds meetingid-phase2 (the API)
+#   VULTR_CR_USERNAME   the Vultr Container Registry user (qlink01's "Username")
+#   VULTR_CR_PASSWORD   the Vultr Container Registry API key (qlink01's "API Key")
+#   DROPLET_SSH_KEY     the private half of the CI deploy key; on the droplet it can only run
+#                       /opt/meetingid/deploy-worker.sh (see deploy/worker/README.md)
 # The service ids below are not secret. Vercel needs nothing here: it deploys the website on every push.
 name: CI and deploy
 
@@ -75,7 +78,6 @@ jobs:
     timeout-minutes: 5
     env:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      RENDER_API_KEY2: ${{ secrets.RENDER_API_KEY2 }}
     steps:
       - name: Deploy the API
         run: |
@@ -95,3 +97,46 @@ jobs:
           # The worker moved to a DigitalOcean droplet on 20 Oct (Dockerfile.worker); the Render worker is
           # suspended and is no longer deployed from here.
           exit $failed
+
+  # The worker runs on the DigitalOcean droplet: build its image here, push it to the Vultr registry, and ask the
+  # droplet to switch to it. The droplet waits until no meeting is processing, and rolls back if the new worker
+  # is not healthy (deploy/worker/deploy-worker.sh).
+  deploy-worker:
+    needs: [test-server, test-web]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/phase-2-speaker-identity'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      IMAGE: blr.vultrcr.com/qlink01/meetingid-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: blr.vultrcr.com
+          username: ${{ secrets.VULTR_CR_USERNAME }}
+          password: ${{ secrets.VULTR_CR_PASSWORD }}
+      - name: Build and push the worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.worker
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Switch the droplet to the new image
+        env:
+          SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+          CR_USER: ${{ secrets.VULTR_CR_USERNAME }}
+          CR_PASSWORD: ${{ secrets.VULTR_CR_PASSWORD }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          # the droplet's host key, pinned (not fetched at deploy time)
+          echo '139.59.39.155 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPUspV1Q+vp+lxbnsli2cRuhuBJo1GOct4VDCU3CUq5V' > ~/.ssh/known_hosts
+          # the registry password goes on stdin, never on a command line
+          printf '%s\n' "$CR_PASSWORD" | ssh -i ~/.ssh/deploy -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            root@139.59.39.155 "deploy ${{ github.sha }} $CR_USER"
