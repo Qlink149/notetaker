@@ -55,14 +55,10 @@ export function searchRouter(): Router {
     // transcripts that contain every word somewhere
     const inLines = await MeetingDataModel.find(
       { meetingId: { $in: ids }, $and: res_.map((re) => ({ 'lines.textRoman': re })) },
-      { meetingId: 1, lines: 1 },
+      // only the first line with the first word, not whole transcripts (a short common word matches many)
+      { meetingId: 1, lines: { $elemMatch: { textRoman: { $regex: res_[0]! } } } },
     ).lean();
-    const lineHit = new Map(
-      inLines.map((d) => {
-        const line = d.lines.find((l) => res_[0]!.test(l.textRoman ?? ''));
-        return [String(d.meetingId), line ?? null];
-      }),
-    );
+    const lineHit = new Map(inLines.map((d) => [String(d.meetingId), d.lines?.[0] ?? null]));
     const results = [];
     for (const m of meetings) {
       const head = [

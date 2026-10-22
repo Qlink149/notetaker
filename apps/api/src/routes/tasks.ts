@@ -98,10 +98,19 @@ function ownerFor(name: string, cards: SpeakerCardDoc[], pp: People): string | n
 
 async function suggestionsFor(meetings: MeetingDoc[], pp: People): Promise<TaskSuggestion[]> {
   const out: TaskSuggestion[] = [];
+  // An action item already made a task from this meeting is not offered again, even under a new summary (a
+  // continuation rewrites the summary and keeps most of its action items).
+  const made = await TaskModel.find(
+    { meetingId: { $in: meetings.map((m) => m._id) }, source: { $ne: null } },
+    { meetingId: 1, source: 1 },
+  ).lean<TaskDoc[]>();
+  const taken = new Set(made.map((t) => `${String(t.meetingId)}|${norm(t.source!.text)}`));
   for (const m of meetings) {
     if (!m.actionItems?.length) continue;
     const handled = handledOf(m);
-    const pending = m.actionItems.map((a, i) => ({ a, i })).filter(({ i }) => !handled.has(i));
+    const pending = m.actionItems
+      .map((a, i) => ({ a, i }))
+      .filter(({ a, i }) => !handled.has(i) && !taken.has(`${String(m._id)}|${norm(a.text)}`));
     if (!pending.length) continue;
     const data = await MeetingDataModel.findOne({ meetingId: m._id }, { speakerCards: 1 }).lean();
     const cards = (data?.speakerCards ?? []) as SpeakerCardDoc[];

@@ -151,13 +151,14 @@ describe('suggested tasks from a meeting’s action items', () => {
     let left = (await api.get(`/meetings/${id}/task-suggestions`)).body.suggestions;
     expect(left.map((s: { index: number }) => s.index)).toEqual([1]);
 
-    // the summary is written again (new content): its action items are suggested afresh
+    // the summary is written again (new content, e.g. after a continuation): its action items are suggested
+    // afresh, except one already made a task from this meeting
     await MeetingModel.updateOne(
       { _id: m._id },
       { $set: { summaryAt: new Date(Date.now() + 1000) } },
     );
     left = (await api.get(`/meetings/${id}/task-suggestions`)).body.suggestions;
-    expect(left).toHaveLength(3);
+    expect(left.map((s: { index: number }) => s.index)).toEqual([1, 2]);
   });
 });
 

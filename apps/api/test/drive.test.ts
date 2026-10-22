@@ -272,6 +272,24 @@ describe('Save to Drive', () => {
     expect(made).toBeTruthy();
   });
 
+  it('asks to connect again when the stored sign-in can no longer be read (server secret changed)', async () => {
+    const id = await seedMeeting();
+    await connect();
+    await WorkspaceModel.updateOne(
+      { _id: workspace._id },
+      { $set: { 'google.refreshTokenEnc': 'AAAA.BBBB.CCCC' } },
+    );
+    const res = await auth(request(app).post(`/api/v1/meetings/${id}/drive`)).expect(409);
+    expect(res.body.error).toBe('drive_reconnect');
+    // disconnecting works too
+    await connect();
+    await WorkspaceModel.updateOne(
+      { _id: workspace._id },
+      { $set: { 'google.refreshTokenEnc': 'AAAA.BBBB.CCCC' } },
+    );
+    await auth(request(app).delete('/api/v1/integrations/google')).expect(204);
+  });
+
   it('asks to connect again when Google access was removed', async () => {
     const id = await seedMeeting();
     await connect();

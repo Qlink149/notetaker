@@ -151,8 +151,15 @@ export async function exchangeCode(
 }
 
 export async function accessToken(sealedRefresh: string): Promise<string> {
+  let refresh: string;
+  try {
+    refresh = openToken(sealedRefresh);
+  } catch {
+    // sealed with an earlier server secret: the person connects again
+    throw new GoogleError(401, 'the stored Google sign-in can no longer be read');
+  }
   const t = await tokenCall({
-    refresh_token: openToken(sealedRefresh),
+    refresh_token: refresh,
     grant_type: 'refresh_token',
   });
   return t.access_token;
@@ -160,6 +167,11 @@ export async function accessToken(sealedRefresh: string): Promise<string> {
 
 /** Disconnecting: tell Google to forget the grant (best effort). */
 export async function revoke(sealedRefresh: string): Promise<void> {
+  try {
+    openToken(sealedRefresh);
+  } catch {
+    return; // unreadable: nothing to revoke from here
+  }
   await fetcher(
     `https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(openToken(sealedRefresh))}`,
     {
