@@ -467,6 +467,18 @@ export async function identifyMeeting(
   // dropped the client's links. Only voices nobody touched are identified afresh.
   // After audio was added, the earlier decisions are carried onto the new voice labels.
   const carried = await carriedCards(meetingId, pya.segments);
+  // people made from this meeting follow their voice to its new label (named ones included; voices with no
+  // clear match keep the parked "pre:" label, so a new voice never takes over their profile)
+  if (carried && !previewOnly)
+    for (const [to, from] of carried.formerLabel)
+      await SpeakerModel.updateMany(
+        {
+          workspaceId: new Types.ObjectId(workspaceId),
+          'origin.meetingId': new Types.ObjectId(meetingId),
+          'origin.diar': `${FORMER}${from}`,
+        },
+        { $set: { 'origin.diar': to } },
+      );
   const decided = carried?.decided ?? (await decidedCards(meetingId));
   for (const [diar, sec] of seconds) {
     const res = resolutions[diar];

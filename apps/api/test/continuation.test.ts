@@ -82,6 +82,8 @@ async function seedFinished() {
     workspaceId: workspace._id,
     name: 'Heet Dholakia',
     anonymous: false,
+    // first heard (and later named) in this meeting
+    origin: { meetingId: id, diar: 'S0' },
   });
   const unnamed = await SpeakerModel.create({
     workspaceId: workspace._id,
@@ -275,6 +277,8 @@ describe('adding a continuation to a meeting (client request, 20 Oct)', () => {
     // the person made from the unnamed voice stays that voice's person, under its new label
     expect(by.get('X0')?.personId).toBe(String(unnamed._id));
     expect((await SpeakerModel.findById(unnamed._id).lean())?.origin?.diar).toBe('X0');
+    // the named person's voice label moves too (no "pre:" left behind)
+    expect((await SpeakerModel.findById(heet._id).lean())?.origin?.diar).toBe('X1');
     // the new voice gets its own new person, not anyone's earlier one
     const third = by.get('X2')?.personId;
     expect(third).toBeTruthy();
