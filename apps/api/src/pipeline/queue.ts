@@ -162,3 +162,23 @@ export async function release(jobId: Types.ObjectId, workerId: string): Promise<
     },
   );
 }
+
+/** Queued jobs due within this long count as work about to start. */
+const SOON_MS = 2 * 60_000;
+
+/**
+ * Meeting work in progress or about to start (benchmark runs do not count): what a deploy waits for before
+ * replacing the worker (scripts/busy.ts).
+ */
+export async function activeWork(now = new Date()): Promise<{ running: number; due: number }> {
+  const work = { stage: { $ne: 'benchmark' as const } };
+  const [running, due] = await Promise.all([
+    JobModel.countDocuments({ ...work, status: 'running' }),
+    JobModel.countDocuments({
+      ...work,
+      status: 'queued',
+      runAfter: { $lte: new Date(now.getTime() + SOON_MS) },
+    }),
+  ]);
+  return { running, due };
+}
