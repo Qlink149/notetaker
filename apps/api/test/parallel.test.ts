@@ -181,19 +181,22 @@ describe('runner lanes', () => {
       return runOnce(lane);
     };
     const done = runner.start();
-    await sleep(4500);
-    // 4 loops checking at 0 s, 2 s and 6 s (the wait doubles): at most 8 checks, not 12 at a fixed 2 s
-    expect(checks).toBeLessThanOrEqual(8);
+    // Each of the 4 loops checks at 0 s, 2 s and 6 s, then waits until 14 s (the wait doubles). Looking at 8.5 s,
+    // just after the third check, leaves the next normal check 5.5 s away: far enough that a loop which starts
+    // the job within 3 s must have been woken, and slow timers on a busy machine cannot make it look woken.
+    await sleep(8500);
+    // 3 checks per loop = 12 (a fixed 2 s poll would be 5 per loop = 20); late timers can only make it fewer
+    expect(checks).toBeLessThanOrEqual(12);
     const queuedAt = Date.now();
     await enqueue({ meetingId: new Types.ObjectId(), stage: 'ingest' });
-    for (let i = 0; i < 100 && ran === 0; i++) await sleep(20);
+    for (let i = 0; i < 200 && ran === 0; i++) await sleep(20);
     expect(ran).toBe(1);
-    expect(Date.now() - queuedAt).toBeLessThan(1500);
+    expect(Date.now() - queuedAt).toBeLessThan(3000);
     const stopAt = Date.now();
     await runner.stop(1000);
     await done;
-    // stopping wakes the sleeping loops instead of waiting out their pause
-    expect(Date.now() - stopAt).toBeLessThan(1500);
+    // stopping wakes the sleeping loops instead of waiting out their pause (about 5.5 s away)
+    expect(Date.now() - stopAt).toBeLessThan(3000);
   });
 
   it('with no transcription lane keeps the old one-lane behaviour', async () => {
