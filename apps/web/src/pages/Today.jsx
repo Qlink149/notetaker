@@ -1,33 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ChevronRight, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { ChevronRight, Loader2, Plus, RefreshCw, Sparkles } from 'lucide-react';
 import { api } from '@/api/client';
 import { useKept } from '@/lib/keptStore';
 import { SkyArt } from '@/components/kept/bits';
 import TaskRow from '@/components/kept/TaskRow';
-import {
-  daysUntil,
-  firstName,
-  greeting,
-  initialsOf,
-  isoDay,
-  phaseNow,
-  textOn,
-  today,
-} from '@/lib/kept';
+import { firstName, greeting, initialsOf, phaseNow, textOn, today } from '@/lib/kept';
 
 const ORDER = { high: 0, med: 1, low: 2 };
-const byPriority = (a, b) => ORDER[a.priority] - ORDER[b.priority];
-const byDue = (a, b) => (a.due ?? '9999').localeCompare(b.due ?? '9999');
-
-const groupOf = (t) =>
-  !t.due
-    ? 'No date'
-    : daysUntil(t.due) === 1
-      ? 'Tomorrow'
-      : daysUntil(t.due) < 7
-        ? 'This week'
-        : 'Later';
+// soonest deadline first, so overdue tasks lead and tasks with no date come last; the more urgent priority first
+// within a day
+const byUrgency = (a, b) =>
+  (a.due ?? '9999').localeCompare(b.due ?? '9999') || ORDER[a.priority] - ORDER[b.priority];
+const byFinishedNewest = (a, b) => String(b.doneAt ?? '').localeCompare(String(a.doneAt ?? ''));
 
 function Section({ title, count, hint, children, onAdd, sectionRef, first }) {
   return (
@@ -48,14 +33,14 @@ function Section({ title, count, hint, children, onAdd, sectionRef, first }) {
 }
 
 /**
- * My tasks: due today, past their date, and coming up; suggested tasks from meetings to review. On a desktop the
- * lists take the left column and the suggestions and today's finished tasks sit on the right.
+ * My tasks in two plain lists: Current (everything open, soonest deadline first) and Completed (finished, newest
+ * first; ticking a task again brings it back to Current). Suggested tasks from meetings wait to be reviewed.
+ * On a desktop the lists take the left column and the suggestions and recent meetings sit on the right.
  */
 export default function Today() {
   const { me, tasks, suggestions, people, refresh, openForm, openReview, openProfile } = useKept();
-  const [showDone, setShowDone] = useState(false);
   const [spinning, setSpinning] = useState(false);
-  const refs = { today: useRef(null), late: useRef(null), up: useRef(null) };
+  const refs = { current: useRef(null), completed: useRef(null) };
   const phase = phaseNow();
   const mePerson = people.find((p) => p.id === me);
 
@@ -79,13 +64,8 @@ export default function Today() {
   const all = tasks ?? [];
   // without a "me", every open task is shown as mine (one person uses the workspace)
   const isMine = (t) => !me || t.ownerId === me || t.buddyId === me;
-  const open = all.filter((t) => t.status === 'open' && isMine(t));
-  const dueToday = open.filter((t) => daysUntil(t.due) === 0).sort(byPriority);
-  const late = open.filter((t) => t.due && daysUntil(t.due) < 0).sort(byDue);
-  const upcoming = open.filter((t) => !t.due || daysUntil(t.due) > 0).sort(byDue);
-  const doneToday = all.filter(
-    (t) => t.status === 'done' && isMine(t) && t.doneAt && isoDay(t.doneAt) === today(),
-  );
+  const current = all.filter((t) => t.status === 'open' && isMine(t)).sort(byUrgency);
+  const completed = all.filter((t) => t.status === 'done' && isMine(t)).sort(byFinishedNewest);
 
   const reload = async () => {
     setSpinning(true);
@@ -130,22 +110,14 @@ export default function Today() {
         </div>
       </div>
 
-      <div className="k-summary lg:max-w-[560px]" data-testid="today-summary">
-        <button type="button" onClick={() => jump(refs.today)}>
-          <b>{dueToday.length}</b>
-          <span>Today</span>
+      <div className="k-summary grid-cols-2 lg:max-w-[400px]" data-testid="today-summary">
+        <button type="button" onClick={() => jump(refs.current)}>
+          <b>{current.length}</b>
+          <span>Current</span>
         </button>
-        <button
-          type="button"
-          className={late.length ? 'k-late' : ''}
-          onClick={() => jump(refs.late)}
-        >
-          <b>{late.length}</b>
-          <span>Pending</span>
-        </button>
-        <button type="button" onClick={() => jump(refs.up)}>
-          <b>{upcoming.length}</b>
-          <span>Upcoming</span>
+        <button type="button" onClick={() => jump(refs.completed)}>
+          <b>{completed.length}</b>
+          <span>Completed</span>
         </button>
       </div>
 
@@ -201,48 +173,27 @@ export default function Today() {
             <>
               <Section
                 first
-                title="Today"
-                count={dueToday.length}
-                sectionRef={refs.today}
+                title="Current"
+                count={current.length}
+                sectionRef={refs.current}
                 onAdd={() => openForm({ ownerId: me, due: today() })}
               >
-                <div className="k-list">
-                  {dueToday.length ? (
-                    dueToday.map((t) => <TaskRow key={t.id} task={t} />)
+                <div className="k-list" data-testid="current-list">
+                  {current.length ? (
+                    current.map((t) => <TaskRow key={t.id} task={t} />)
                   ) : (
-                    <div className="k-empty">Nothing due today. Enjoy the calm ✦</div>
+                    <div className="k-empty">All caught up. Enjoy the calm ✦</div>
                   )}
                 </div>
               </Section>
-              {late.length > 0 && (
-                <Section
-                  title="Pending"
-                  count={late.length}
-                  hint="past their date"
-                  sectionRef={refs.late}
-                >
-                  <div className="k-list">
-                    {late.map((t) => (
-                      <TaskRow key={t.id} task={t} />
-                    ))}
-                  </div>
-                </Section>
-              )}
-              <Section title="Upcoming" count={upcoming.length} sectionRef={refs.up}>
-                <div className="k-list">
-                  {upcoming.length ? (
-                    upcoming.map((t, i) => {
-                      const g = groupOf(t);
-                      const head = i === 0 || groupOf(upcoming[i - 1]) !== g;
-                      return (
-                        <div key={t.id}>
-                          {head && <div className="k-group">{g}</div>}
-                          <TaskRow task={t} />
-                        </div>
-                      );
-                    })
+              <Section title="Completed" count={completed.length} sectionRef={refs.completed}>
+                <div className="k-list" data-testid="completed-list">
+                  {completed.length ? (
+                    completed.map((t) => <TaskRow key={t.id} task={t} />)
                   ) : (
-                    <div className="k-empty">Nothing coming up yet.</div>
+                    <div className="k-empty">
+                      Nothing completed yet. Tick a task off and it lands here.
+                    </div>
                   )}
                 </div>
               </Section>
@@ -279,27 +230,6 @@ export default function Today() {
                 </Link>
               ))}
             </div>
-          </div>
-        )}
-
-        {doneToday.length > 0 && (
-          <div className="mt-4 lg:mt-6 lg:col-start-2 lg:row-start-2">
-            <button
-              type="button"
-              className="k-donefold"
-              onClick={() => setShowDone((x) => !x)}
-              aria-expanded={showDone}
-            >
-              <Check className="w-4 h-4" strokeWidth={2.2} /> {doneToday.length} completed today
-              <span className="text-[var(--k-faint)]">· {showDone ? 'hide' : 'show'}</span>
-            </button>
-            {showDone && (
-              <div className="k-list mt-2.5">
-                {doneToday.map((t) => (
-                  <TaskRow key={t.id} task={t} />
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>

@@ -92,7 +92,12 @@ afterEach(() => {
 });
 
 describe('Today', () => {
-  it('splits my open tasks into today, pending and upcoming, and counts them', async () => {
+  it('lists my open tasks as Current (overdue first) and my finished ones as Completed', async () => {
+    const finished = (id, daysAgo) =>
+      task(id, {
+        status: 'done',
+        doneAt: new Date(Date.now() - daysAgo * 86_400_000).toISOString(),
+      });
     api.tasks.list.mockResolvedValue([
       task('a', { priority: 'low' }),
       task('b', { priority: 'high' }),
@@ -107,24 +112,86 @@ describe('Today', () => {
         buddyId: 'heet',
         buddyName: 'Heet Dholakia',
       }),
-      task('done', { status: 'done', doneAt: new Date().toISOString() }),
+      finished('old', 5),
+      finished('new', 0),
+      finished('mid', 2),
+      task('theirs-done', {
+        ownerId: 'paresh',
+        ownerName: 'Paresh Shah',
+        status: 'done',
+        doneAt: new Date().toISOString(),
+      }),
     ]);
     show('/', <Today />);
     const summary = await screen.findByTestId('today-summary');
-    await waitFor(() => expect(summary.textContent).toBe('3Today1Pending3Upcoming'));
-    // high priority first in Today; a task where I am the buddy is mine too
-    const rows = screen
-      .getAllByTestId('task-row')
-      .map((r) => r.querySelector('.k-ttl').textContent);
-    expect(rows.slice(0, 3)).toEqual(['Task b', 'Task buddy', 'Task a']);
-    expect(rows).not.toContain('Task others');
+    // 7 open (a task where I am the buddy is mine too), 3 finished
+    await waitFor(() => expect(summary.textContent).toBe('7Current3Completed'));
+    const names = (id) =>
+      [...screen.getByTestId(id).querySelectorAll('[data-testid=task-row] .k-ttl')].map(
+        (n) => n.textContent,
+      );
+    // soonest deadline first (overdue leading, no date last); the urgent priority first within a day
+    expect(names('current-list')).toEqual([
+      'Task late',
+      'Task b',
+      'Task buddy',
+      'Task a',
+      'Task soon',
+      'Task later',
+      'Task nodate',
+    ]);
+    // two plain lists: no headings or extra notes inside them
+    expect(screen.getByTestId('current-list').querySelectorAll('.k-group')).toHaveLength(0);
+    expect(screen.queryByText(/past 60 days|Show all/)).toBeNull();
     expect(screen.getByText('3 days late')).toBeTruthy();
-    expect(screen.getByText('1 completed today')).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /Heet\./ })).toBeTruthy();
-
-    // tasks given to others are not on Today (Team shows everyone's work)
-    expect(screen.queryByRole('button', { name: 'Delegated' })).toBeNull();
+    // finished ones: newest first, with the day they were finished; not other people's
+    expect(names('completed-list')).toEqual(['Task new', 'Task mid', 'Task old']);
     expect(screen.queryByText('Task others')).toBeNull();
+    expect(screen.queryByText('Task theirs-done')).toBeNull();
+    // the old buckets are gone
+    for (const gone of ['Pending', 'Upcoming', 'Delegated'])
+      expect(screen.queryByText(gone)).toBeNull();
+    expect(screen.getByRole('heading', { name: /Heet\./ })).toBeTruthy();
+  });
+
+  it('shows every finished task in Completed, newest first, and a calm Current when none are open', async () => {
+    api.tasks.list.mockResolvedValue(
+      Array.from({ length: 8 }, (_, i) =>
+        task(`d${i}`, {
+          status: 'done',
+          doneAt: new Date(Date.now() - i * 3_600_000).toISOString(),
+        }),
+      ),
+    );
+    show('/', <Today />);
+    const list = await screen.findByTestId('completed-list');
+    await waitFor(() => expect(list.querySelectorAll('[data-testid=task-row]')).toHaveLength(8));
+    expect(screen.getByText('All caught up. Enjoy the calm ✦')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Show all|Show fewer/ })).toBeNull();
+  });
+
+  it('moves a task to Completed when ticked off, and back to Current when unticked', async () => {
+    let status = 'open';
+    api.tasks.list.mockImplementation(async () => [task('a', { status })]);
+    api.tasks.update.mockImplementation(async (id, patch) => {
+      status = patch.status;
+      return task(id, { status, doneAt: status === 'done' ? new Date().toISOString() : null });
+    });
+    show('/', <Today />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark done: Task a' }));
+    const done = await screen.findByRole(
+      'button',
+      { name: 'Mark not done: Task a' },
+      { timeout: 3000 },
+    );
+    expect(screen.getByTestId('completed-list').contains(done)).toBe(true);
+    expect(screen.getByTestId('today-summary').textContent).toBe('0Current1Completed');
+    fireEvent.click(done);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('current-list').querySelector('[aria-label="Mark done: Task a"]'),
+      ).toBeTruthy(),
+    );
   });
 
   it('asks who you are when nobody is set as me', async () => {

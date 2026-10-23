@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useKept } from '@/lib/keptStore';
 import { Avatar } from '@/components/kept/bits';
-import { daysUntil, dueLabel, firstName } from '@/lib/kept';
+import { daysUntil, dueLabel, firstName, isoDay, niceDay } from '@/lib/kept';
 
 const BURST = ['var(--pc)', '#c5b8ff', '#ffd0b8', '#a9dcc3'];
 
@@ -77,7 +77,7 @@ export default function TaskRow({ task: t }) {
         <div className="k-meta">
           <span className="k-dot" />
           <span className={!done && n < 0 ? 'k-late' : !done && n === 0 ? 'k-soon' : ''}>
-            {done ? 'Done' : dueLabel(t.due)}
+            {done ? (t.doneAt ? `Done ${niceDay(isoDay(t.doneAt))}` : 'Done') : dueLabel(t.due)}
           </span>
           {from && (
             <>
