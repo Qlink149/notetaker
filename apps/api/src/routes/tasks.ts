@@ -88,13 +88,7 @@ const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
  */
 function ownerFor(name: string, cards: SpeakerCardDoc[], pp: People): string | null {
   const n = norm(name);
-  for (const c of cards) {
-    if (!c.personId) continue;
-    const person = pp.get(c.personId);
-    // "Speaker C" is not an assignment; only a named person is.
-    if (!person || person.anonymous) continue;
-    if (norm(displayName(c, pp)) === n) return c.personId;
-  }
+  for (const c of cards) if (c.personId && norm(displayName(c, pp)) === n) return c.personId;
   const named = [...pp.values()].filter((p) => !p.anonymous);
   const exact = named.find((p) => norm(p.name) === n);
   if (exact) return String(exact._id);
@@ -137,47 +131,6 @@ async function suggestionsFor(meetings: MeetingDoc[], pp: People): Promise<TaskS
     }
   }
   return out;
-}
-
-/**
- * A suggestion whose speaker is a real person is the same as ticking it: it becomes a task. A voice that is
- * still only "Speaker …" stays in the list, because nobody has said who that is.
- */
-async function acceptAssigned(
-  workspaceId: Types.ObjectId,
-  createdById: Types.ObjectId | null,
-  suggestions: TaskSuggestion[],
-): Promise<TaskSuggestion[]> {
-  const open: TaskSuggestion[] = [];
-  for (const s of suggestions) {
-    if (!s.ownerId) {
-      open.push(s);
-      continue;
-    }
-    const meetingId = new Types.ObjectId(s.meetingId);
-    const meeting = await MeetingModel.findById(meetingId, { actionItems: 1 }).lean<MeetingDoc>();
-    const item = meeting?.actionItems?.[s.index];
-    if (!item) continue;
-    const made = await TaskModel.find(
-      { meetingId, source: { $ne: null } },
-      { source: 1 },
-    ).lean<TaskDoc[]>();
-    if (!made.some((t) => t.source && norm(t.source.text) === norm(item.text))) {
-      await TaskModel.create({
-        workspaceId,
-        title: s.title,
-        ownerId: new Types.ObjectId(s.ownerId),
-        buddyId: null,
-        priority: s.priority,
-        due: s.due,
-        createdById,
-        meetingId,
-        source: { meetingId, index: s.index, text: item.text },
-      });
-    }
-    await markHandled(meetingId, s.index);
-  }
-  return open;
 }
 
 async function markHandled(meetingId: Types.ObjectId, index: number): Promise<void> {
@@ -305,14 +258,8 @@ export function tasksRouter(): Router {
     })
       .sort({ date: -1 })
       .lean<MeetingDoc[]>();
-    const workspace = ws(req);
-    const pp = await people(workspace._id);
-    const suggestions = await acceptAssigned(
-      workspace._id,
-      workspace.mePersonId ?? null,
-      await suggestionsFor(meetings, pp),
-    );
-    res.set('Cache-Control', 'no-store').json({ suggestions });
+    const pp = await people(ws(req)._id);
+    res.set('Cache-Control', 'no-store').json({ suggestions: await suggestionsFor(meetings, pp) });
   });
 
   r.get('/meetings/:id/task-suggestions', async (req, res) => {
@@ -321,14 +268,8 @@ export function tasksRouter(): Router {
       workspaceId: ws(req)._id,
     }).lean<MeetingDoc>();
     if (!m) throw notFound('meeting_not_found');
-    const workspace = ws(req);
-    const pp = await people(workspace._id);
-    const suggestions = await acceptAssigned(
-      workspace._id,
-      workspace.mePersonId ?? null,
-      await suggestionsFor([m], pp),
-    );
-    res.set('Cache-Control', 'no-store').json({ suggestions });
+    const pp = await people(ws(req)._id);
+    res.set('Cache-Control', 'no-store').json({ suggestions: await suggestionsFor([m], pp) });
   });
 
   /** "Skip" on a suggested task: it is not offered again for this summary. */

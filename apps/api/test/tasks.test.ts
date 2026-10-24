@@ -101,34 +101,24 @@ async function seed() {
 }
 
 describe('suggested tasks from a meeting’s action items', () => {
-  it('files an action item whose speaker is a person, and leaves a bare speaker to review', async () => {
+  it('offers each action item with its owner and a deadline counted from the meeting day', async () => {
     const { heet, paresh, m } = await seed();
     const res = await api.get(`/meetings/${String(m._id)}/task-suggestions`).expect(200);
     expect(res.body.suggestions).toEqual([
+      expect.objectContaining({
+        index: 0,
+        title: 'Approve the offer pricing',
+        due: '2026-10-21',
+        priority: 'high',
+        ownerId: String(heet._id),
+        meetingTitle: 'Diwali planning',
+      }),
+      // a first name that only one person has
+      expect.objectContaining({ index: 1, due: '2026-10-23', ownerId: String(paresh._id) }),
+      // a voice nobody named: the person picks the owner
       expect.objectContaining({ index: 2, due: null, ownerId: null, speakerName: 'Speaker C' }),
     ]);
-    const tasks = (await api.get('/tasks').expect(200)).body.tasks;
-    expect(tasks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          title: 'Approve the offer pricing',
-          due: '2026-10-21',
-          priority: 'high',
-          ownerId: String(heet._id),
-          meetingTitle: 'Diwali planning',
-        }),
-        expect.objectContaining({
-          title: 'Share the top stores report',
-          due: '2026-10-23',
-          ownerId: String(paresh._id),
-        }),
-      ]),
-    );
-    expect(tasks).toHaveLength(2);
-    // asking again does not file the same action item twice
-    await api.get('/task-suggestions').expect(200);
-    expect((await api.get('/tasks')).body.tasks).toHaveLength(2);
-    expect((await api.get('/task-suggestions')).body.suggestions).toHaveLength(1);
+    expect((await api.get('/task-suggestions').expect(200)).body.suggestions).toHaveLength(3);
   });
 
   it('approving makes a task once; skipping hides it; a new summary offers its items again', async () => {
@@ -158,21 +148,17 @@ describe('suggested tasks from a meeting’s action items', () => {
       })
       .expect(409);
     await api.post(`/meetings/${id}/task-suggestions/2/skip`).expect(204);
-    // Paresh is a real person, so opening the list files that item instead of offering it
     let left = (await api.get(`/meetings/${id}/task-suggestions`)).body.suggestions;
-    expect(left).toEqual([]);
-    expect((await api.get('/tasks')).body.tasks.map((t: { title: string }) => t.title)).toEqual(
-      expect.arrayContaining(['Approve the offer pricing', 'Share the top stores report']),
-    );
+    expect(left.map((s: { index: number }) => s.index)).toEqual([1]);
 
     // the summary is written again (new content, e.g. after a continuation): its action items are suggested
-    // afresh, except ones already made a task from this meeting
+    // afresh, except one already made a task from this meeting
     await MeetingModel.updateOne(
       { _id: m._id },
       { $set: { summaryAt: new Date(Date.now() + 1000) } },
     );
     left = (await api.get(`/meetings/${id}/task-suggestions`)).body.suggestions;
-    expect(left.map((s: { index: number }) => s.index)).toEqual([2]);
+    expect(left.map((s: { index: number }) => s.index)).toEqual([1, 2]);
   });
 });
 
