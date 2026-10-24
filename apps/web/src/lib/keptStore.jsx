@@ -38,11 +38,12 @@ export function KeptProvider({ children }) {
       Promise.resolve()
         .then(f)
         .catch(() => null);
-    const [t, s, p] = await Promise.all([
-      safe(() => api.tasks.list()),
+    // Suggestions that already name a person are filed as tasks by that request, so the task list is read after it.
+    const [s, p] = await Promise.all([
       safe(() => api.tasks.suggestions()),
       safe(() => api.speakers.list()),
     ]);
+    const t = await safe(() => api.tasks.list());
     if (t) setTasks(t);
     else setTasks((x) => x ?? []);
     if (s) setSuggestions(s);

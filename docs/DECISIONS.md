@@ -499,6 +499,8 @@ Both on stored data only (no engine calls, no database writes).
 - **WhatsApp:** reminders, nudges and the standup open WhatsApp with the text written (wa.me); nothing is sent automatically yet.
 - **Not built:** Microsoft login, automatic WhatsApp/email, live recording and notes, folders.
 
+**Addendum (24 Oct): a named person is filed, a bare speaker stays suggested.** Opening the suggestions files each action item whose speaker is a real person in the directory (the same as ticking it). An item still given to "Speaker …", or to a name that matches nobody, stays in the review list.
+
 **Addendum (21 Oct): no "Delegated"; a desktop layout.** The user asked to drop Delegated from Today: Today is only "my tasks" now (Team still shows everyone's work). From 1024 px the app has a desktop layout instead of a stretched phone: a sidebar (New meeting, Today with a count of tasks due or late, Meetings, Team, Search, Speakers, Settings, the profile) replaces the tab bar; Today is two columns (lists left; suggested tasks, New task, done today and recent meetings right); Meetings and Team are card grids; a meeting shows the transcript on the left and the summary, action items, tasks and speakers in a panel on the right that stays in view; sheets open as centred dialogs. Below 1024 px nothing changed. `kept.css` now loads before Tailwind so responsive utility classes can override the Kept components.
 
 ## 42. Folders, and "Save to Drive" (21 Oct)
