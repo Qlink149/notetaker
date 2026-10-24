@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Mic2, Plus } from 'lucide-react';
 import { useKept } from '@/lib/keptStore';
 import { Avatar, SkyArt, WhatsAppIcon } from '@/components/kept/bits';
+import CopyMessage from '@/components/kept/CopyMessage';
 import {
   daysUntil,
   dueLabel,
@@ -66,6 +67,8 @@ export default function Team() {
       (a, b) => (b.id === me) - (a.id === me) || b.late - a.late || b.open.length - a.open.length,
     );
 
+  const standup = standupText(rows);
+
   return (
     <div className="-mx-4 -mt-6 lg:mx-0 lg:mt-0">
       <div className={`k-hero ${textOn(phase) === 'dark' ? 'k-dark' : ''} h-[190px]`}>
@@ -86,20 +89,26 @@ export default function Team() {
         <div className="flex gap-2.5 lg:max-w-md">
           <button
             type="button"
-            className="k-btn k-primary lg:!h-11 lg:!text-sm"
+            className="k-btn k-primary lg:!h-11 lg:!text-sm flex-1"
             onClick={() => openForm({ due: today() })}
           >
             <Plus className="w-[18px] h-[18px]" /> New task
           </button>
-          <a
-            className="k-btn k-wa lg:!h-11 lg:!text-sm"
-            href={waLink(standupText(rows))}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <WhatsAppIcon /> Share standup
-          </a>
+          <div className="flex flex-1 min-w-0 gap-2">
+            <a
+              className="k-btn k-wa lg:!h-11 lg:!text-sm min-w-0"
+              href={waLink(standup)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <WhatsAppIcon /> Share standup
+            </a>
+            <CopyMessage text={standup} className="k-icon self-center" />
+          </div>
         </div>
+        <p className="mt-2 text-xs text-[var(--k-faint)] lg:max-w-md">
+          Copy the message if WhatsApp Web asks you to log in.
+        </p>
 
         <div className="mt-6 lg:grid lg:grid-cols-2 lg:gap-4 lg:items-start">
           {rows.length === 0 && (
@@ -147,15 +156,18 @@ export default function Team() {
                   <Plus className="w-[18px] h-[18px]" strokeWidth={2} />
                 </button>
                 {r.open.length > 0 && r.id !== me && (
-                  <a
-                    className="k-icon k-wa"
-                    href={waLink(nudgeText(r.name, r.open))}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Nudge ${firstName(r.name)} on WhatsApp`}
-                  >
-                    <WhatsAppIcon size={17} />
-                  </a>
+                  <>
+                    <a
+                      className="k-icon k-wa"
+                      href={waLink(nudgeText(r.name, r.open))}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Nudge ${firstName(r.name)} on WhatsApp`}
+                    >
+                      <WhatsAppIcon size={17} />
+                    </a>
+                    <CopyMessage text={nudgeText(r.name, r.open)} />
+                  </>
                 )}
               </div>
               {expanded[r.id] &&

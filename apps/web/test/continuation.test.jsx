@@ -169,3 +169,107 @@ describe('Share… where the browser refuses the Word file (Chrome on a computer
     alert.mockRestore();
   });
 });
+
+describe('what a copy or export includes', () => {
+  const lines = [
+    { start: 0, speakerName: 'Heet', textRoman: 'hello roman', textNative: 'hello native' },
+  ];
+  const rich = {
+    ...meeting,
+    summary: 'Festival overview',
+    actionItems: [{ speakerName: 'A', text: 'Send the plan' }],
+  };
+
+  beforeEach(() => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+  });
+  afterEach(() => {
+    delete navigator.share;
+    delete navigator.canShare;
+    vi.restoreAllMocks();
+  });
+
+  const copiedText = () => navigator.clipboard.writeText.mock.calls.at(-1)[0];
+  // The button reads "Copied" for two seconds after a copy, so match either label.
+  const clickCopy = () =>
+    fireEvent.click(
+      screen.getByRole('button', { name: (name) => name === 'Copy' || name === 'Copied' }),
+    );
+
+  it('copies notes and the transcript, then follows a script change until one is picked here', async () => {
+    const view = render(<MeetingExport meeting={rich} lines={lines} scriptMode="roman" />);
+    clickCopy();
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
+    expect(copiedText()).toContain('Festival overview');
+    expect(copiedText()).toContain('Send the plan');
+    expect(copiedText()).toContain('hello roman');
+    expect(copiedText()).not.toContain('hello native');
+
+    view.rerender(<MeetingExport meeting={rich} lines={lines} scriptMode="native" />);
+    clickCopy();
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(2));
+    expect(copiedText()).toContain('hello native');
+    expect(copiedText()).not.toContain('hello roman');
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Roman' }));
+    view.rerender(<MeetingExport meeting={rich} lines={lines} scriptMode="both" />);
+    clickCopy();
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(3));
+    expect(copiedText()).toContain('hello roman');
+    expect(copiedText()).not.toContain('hello native');
+  });
+
+  it('keeps at least one of Notes and Transcript, and leaves the unticked part out', async () => {
+    render(<MeetingExport meeting={rich} lines={lines} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Notes/ }));
+    const transcript = screen.getByRole('checkbox', { name: 'Transcript' });
+    expect(transcript.getAttribute('aria-checked')).toBe('true');
+    expect(transcript.disabled).toBe(true);
+    fireEvent.click(transcript);
+    expect(transcript.getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Copy/ }));
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
+    expect(copiedText()).toContain('hello roman');
+    expect(copiedText()).not.toContain('Festival overview');
+    expect(copiedText()).not.toContain('Send the plan');
+  });
+
+  it('sends the ticked parts to Word and prints only those', async () => {
+    h.docx.mockResolvedValue(new Blob(['docx']));
+    const write = vi.fn();
+    vi.spyOn(window, 'open').mockReturnValue({ document: { write, close: vi.fn() } });
+    render(<MeetingExport meeting={rich} lines={lines} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Transcript' }));
+    fireEvent.click(screen.getByRole('button', { name: /Word/ }));
+    await waitFor(() =>
+      expect(h.docx).toHaveBeenCalledWith('m1', 'roman', { notes: true, transcript: false }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /PDF/ }));
+    expect(write.mock.calls[0][0]).toContain('Festival overview');
+    expect(write.mock.calls[0][0]).toContain('Send the plan');
+    expect(write.mock.calls[0][0]).not.toContain('hello roman');
+    window.open.mockRestore();
+  });
+
+  it('fetches a new Word file for Share after a tick changes', async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    h.docx.mockResolvedValue(new Blob(['docx']));
+    render(<MeetingExport meeting={meeting} lines={lines} />);
+    const button = screen.getByRole('button', { name: /Share/ });
+    fireEvent.pointerEnter(button);
+    await waitFor(() => expect(h.docx).toHaveBeenCalledTimes(1));
+    expect(h.docx).toHaveBeenLastCalledWith('m1', 'roman', { notes: true, transcript: true });
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Notes/ }));
+    fireEvent.pointerEnter(button);
+    await waitFor(() => expect(h.docx).toHaveBeenCalledTimes(2));
+    expect(h.docx).toHaveBeenLastCalledWith('m1', 'roman', {
+      notes: false,
+      transcript: true,
+    });
+    delete navigator.share;
+    delete navigator.canShare;
+  });
+});

@@ -25,6 +25,10 @@ export interface ExportInput {
   actionItems: { speakerName: string; text: string }[];
   lines: { speakerName: string; start: number; textRoman: string; textNative: string }[];
   scriptMode: ScriptMode;
+  /** Summary and action items. Omitted only when set to false; Drive leaves this unset. */
+  notes?: boolean;
+  /** Transcript lines. Omitted only when set to false; Drive leaves this unset. */
+  transcript?: boolean;
 }
 
 const DEVANAGARI = /[ऀ-ॿ]/;
@@ -111,6 +115,8 @@ function summaryParagraphs(md: string): Paragraph[] {
 
 /** The meeting as a .docx: summary, action items and the transcript in the chosen script(s). */
 export async function buildMeetingDocx(input: ExportInput): Promise<Buffer> {
+  const notes = input.notes !== false;
+  const transcript = input.transcript !== false;
   const body: Paragraph[] = [
     new Paragraph({ heading: HeadingLevel.TITLE, children: runs(input.title) }),
     new Paragraph({
@@ -121,11 +127,11 @@ export async function buildMeetingDocx(input: ExportInput): Promise<Buffer> {
       spacing: { after: 200 },
     }),
   ];
-  if (input.summary) {
+  if (notes && input.summary) {
     body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: runs('Summary') }));
     body.push(...summaryParagraphs(input.summary));
   }
-  if (input.actionItems.length) {
+  if (notes && input.actionItems.length) {
     body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: runs('Action items') }));
     for (const a of input.actionItems)
       body.push(
@@ -135,7 +141,7 @@ export async function buildMeetingDocx(input: ExportInput): Promise<Buffer> {
         }),
       );
   }
-  if (input.lines.length) {
+  if (transcript && input.lines.length) {
     body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: runs('Transcript') }));
     for (const l of input.lines) {
       const head = [

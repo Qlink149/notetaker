@@ -153,6 +153,41 @@ describe('Word export', () => {
     expect(doc).toContain('hello');
   });
 
+  it('parts=transcript leaves the summary and action items out', async () => {
+    const id = await seed();
+    const res = await get(`/api/v1/meetings/${id}/export?parts=transcript`).expect(200);
+    const doc = await (
+      await JSZip.loadAsync(res.body as Buffer)
+    )
+      .file('word/document.xml')!
+      .async('string');
+    expect(doc).toContain('aaj hum discuss karenge');
+    expect(doc).not.toContain('festival');
+    expect(doc).not.toContain('Send the plan');
+  });
+
+  it('parts=notes leaves the transcript out, and omitting parts keeps both', async () => {
+    const id = await seed();
+    const notes = await get(`/api/v1/meetings/${id}/export?script=roman&parts=notes`).expect(200);
+    const notesDoc = await (
+      await JSZip.loadAsync(notes.body as Buffer)
+    )
+      .file('word/document.xml')!
+      .async('string');
+    expect(notesDoc).toContain('festival');
+    expect(notesDoc).toContain('Send the plan');
+    expect(notesDoc).not.toContain('aaj hum discuss karenge');
+
+    const both = await get(`/api/v1/meetings/${id}/export?script=roman`).expect(200);
+    const bothDoc = await (
+      await JSZip.loadAsync(both.body as Buffer)
+    )
+      .file('word/document.xml')!
+      .async('string');
+    expect(bothDoc).toContain('festival');
+    expect(bothDoc).toContain('aaj hum discuss karenge');
+  });
+
   it('refuses a meeting with no transcript yet, another workspace’s meeting, and a bad script', async () => {
     const empty = await MeetingModel.create({
       workspaceId: workspace._id,
@@ -163,6 +198,8 @@ describe('Word export', () => {
     await get(`/api/v1/meetings/${String(empty._id)}/export`).expect(409);
     const id = await seed();
     await get(`/api/v1/meetings/${id}/export?script=klingon`).expect(400);
+    await get(`/api/v1/meetings/${id}/export?parts=klingon`).expect(400);
+    await get(`/api/v1/meetings/${id}/export?parts=`).expect(400);
     await request(app).get(`/api/v1/meetings/${id}/export`).expect(401);
   });
 });
