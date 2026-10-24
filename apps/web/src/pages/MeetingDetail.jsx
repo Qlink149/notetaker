@@ -141,7 +141,7 @@ export default function MeetingDetail() {
     api.meetings
       .data(id)
       .then(setData)
-      .catch(() => {});
+      .catch(() => setData({ lines: [] }));
     api.meetings
       .speakers(id)
       .then(setSpeakers)
@@ -261,6 +261,10 @@ export default function MeetingDetail() {
   const coveragePct = meeting.coverage ? Math.round(meeting.coverage.ratio * 100) : null;
   const processing = meeting.status === 'processing';
   const hasTranscript = data?.lines?.length > 0;
+  // The transcript is a second request. Reserve the desktop columns as soon as one should exist,
+  // so the summary does not paint full width and then jump to the side.
+  const transcriptPending = data == null && cur >= stageIdx('summarise');
+  const splitLayout = hasTranscript || transcriptPending;
 
   return (
     <div>
@@ -509,14 +513,14 @@ export default function MeetingDetail() {
       {/* desktop: transcript on the left, the summary panel on the right staying in view */}
       <div
         className={
-          hasTranscript
+          splitLayout
             ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] lg:gap-8 lg:items-start'
             : ''
         }
       >
         <div
           className={
-            hasTranscript
+            splitLayout
               ? 'lg:col-start-2 lg:row-start-1 lg:sticky lg:top-[76px] lg:max-h-[calc(100vh-92px)] lg:overflow-y-auto lg:pr-1'
               : ''
           }
@@ -636,8 +640,18 @@ export default function MeetingDetail() {
           )}
         </div>
 
-        {(hasTranscript || !processing) && (
-          <div className="lg:col-start-1 lg:row-start-1">
+        {(splitLayout || !processing) && (
+          <div className={splitLayout ? 'lg:col-start-1 lg:row-start-1' : ''}>
+            {transcriptPending ? (
+              <p
+                className="flex items-center gap-2 text-sm text-muted-foreground py-6"
+                role="status"
+              >
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading transcript
+              </p>
+            ) : (
+              <>
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h2 className="font-semibold">Transcript</h2>
               <div className="flex items-center gap-2 flex-wrap">
@@ -690,6 +704,8 @@ export default function MeetingDetail() {
                   }
                 : {})}
             />
+              </>
+            )}
           </div>
         )}
       </div>

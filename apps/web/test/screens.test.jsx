@@ -528,6 +528,29 @@ describe('meeting page with a partly readable recording', () => {
     expect(warning.textContent).toContain('18:48 long but only 9:07');
   });
 
+  it('holds the summary in the side column while the transcript is loading', async () => {
+    api.meetings.get.mockResolvedValue(base);
+    let release;
+    api.meetings.data.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    api.meetings.speakers.mockResolvedValue({ source: 'pyannote', cards: [] });
+    open();
+    await screen.findByText('Overview text');
+    expect(screen.getByTestId('meeting-side').className).toContain('lg:col-start-2');
+    expect(screen.getByText('Loading transcript')).toBeTruthy();
+    await act(async () => {
+      release({
+        lines: [{ speakerName: 'Heet', start: 1, end: 4, textRoman: 'the film', textNative: '' }],
+      });
+    });
+    await screen.findByText('the film');
+    expect(screen.queryByText('Loading transcript')).toBeNull();
+    expect(screen.getByTestId('meeting-side').className).toContain('lg:col-start-2');
+  });
+
   it('shows no warning for a normal recording', async () => {
     api.meetings.get.mockResolvedValue({ ...base, audioWarning: null });
     api.meetings.data.mockResolvedValue({ lines: [] });
