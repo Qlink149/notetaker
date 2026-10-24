@@ -1,15 +1,23 @@
+import { createHmac, hkdfSync } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
-import { resetEnvCache } from '../src/config/env.js';
+import { env, resetEnvCache } from '../src/config/env.js';
 import {
   MeetingDataModel,
   MeetingModel,
   WorkspaceModel,
   type WorkspaceDoc,
 } from '../src/models/index.js';
-import { openToken, setGoogleFetch, signState } from '../src/services/google/drive.js';
+import {
+  meetingReturnPath,
+  openToken,
+  parseReturnTo,
+  readState,
+  setGoogleFetch,
+  signState,
+} from '../src/services/google/drive.js';
 import { ACCESS_CODE, clearDb, fakeStorage, seedWorkspace, startDb, stopDb } from './helpers.js';
 
 let app: Express;
@@ -225,6 +233,146 @@ describe('Google Drive connection', () => {
     const s = await auth(request(app).get('/api/v1/integrations/google')).expect(200);
     expect(s.body.available).toBe(false);
     await auth(request(app).post('/api/v1/integrations/google/start')).expect(503);
+  });
+});
+
+const MEETING = '507f1f77bcf86cd799439011';
+
+/** Re-sign a payload with the server's state key, so a test can prove the key matches and then change the payload. */
+function resign(payload: string): string {
+  const key = Buffer.from(
+    hkdfSync('sha256', env().JWT_SECRET, 'meetingid', 'google-oauth-state', 32),
+  );
+  const mac = createHmac('sha256', key).update(payload).digest('base64url');
+  return `${payload}.${mac}`;
+}
+
+describe('Save to Drive comes back to the meeting', () => {
+  it('refuses a return that leaves the site, including mutated ones', () => {
+    const path = `/meetings/${MEETING}`;
+    const bad: unknown[] = [
+      `https://evil.example/meetings/${MEETING}`,
+      `http://evil.example${path}`,
+      `//evil.example${path}`,
+      '//evil.example',
+      '/\\evil.example',
+      'javascript:alert(1)',
+      `${path}/../settings`,
+      `/meetings/../meetings/${MEETING}`,
+      `${path}/extra`,
+      '/settings',
+      `${MEETING}.evil.com`,
+      `${path}?folder=https://evil.example`,
+      `${path}?folder=../evil`,
+      `${path}?folder=Jolto/../../x`,
+      `${path}?folder=Jolto&next=https://evil.example`,
+      `${path}?redirect=https://evil.example`,
+      `https://app.meetingid.example${path}`,
+      `${path}#https://evil.example`,
+      `\\meetings\\${MEETING}`,
+      ` ${path}`,
+      '',
+      { meetingId: `https://evil.example/meetings/${MEETING}`, folder: 'Jolto' },
+      { meetingId: MEETING, folder: 'https://evil.example/x' },
+      { meetingId: MEETING, folder: '//evil.example' },
+      { meetingId: MEETING, folder: '../evil' },
+      { meetingId: MEETING, folder: 'javascript:alert(1)' },
+      { meetingId: path, folder: null },
+      { meetingId: MEETING, folder: 'Jolto', url: 'https://evil.example' },
+      { meetingId: MEETING, folder: 'a'.repeat(61) },
+    ];
+    for (const input of bad) expect(parseReturnTo(input), JSON.stringify(input)).toBeNull();
+
+    expect(parseReturnTo(MEETING)).toEqual({ meetingId: MEETING, folder: null });
+    expect(parseReturnTo(MEETING.toUpperCase())).toEqual({ meetingId: MEETING, folder: null });
+    expect(parseReturnTo(path)).toEqual({ meetingId: MEETING, folder: null });
+    expect(parseReturnTo(`${path}?folder=Jolto`)).toEqual({ meetingId: MEETING, folder: 'Jolto' });
+    expect(parseReturnTo({ meetingId: MEETING, folder: 'Jolto' })).toEqual({
+      meetingId: MEETING,
+      folder: 'Jolto',
+    });
+    expect(parseReturnTo({ meetingId: MEETING })).toEqual({ meetingId: MEETING, folder: null });
+    expect(meetingReturnPath(MEETING, 'save')).toBe(`${path}?drive=save`);
+    expect(() => meetingReturnPath(MEETING, 'https://evil.example')).toThrow(/invalid return/);
+    expect(() =>
+      signState(String(workspace._id), Date.now(), { meetingId: 'not-an-id', folder: null }),
+    ).toThrow(/invalid return/);
+  });
+
+  it('rejects a signed return that is not a meeting, and an extra field', () => {
+    const exp = Date.now() + 60_000;
+    const nonce = 'ab'.repeat(8);
+    const good = Buffer.from(
+      JSON.stringify({ meetingId: MEETING, folder: 'Jolto' }),
+      'utf8',
+    ).toString('base64url');
+    const prefix = `${workspace._id}.${exp}.${nonce}`;
+    expect(readState(resign(`${prefix}.${good}`))).toEqual({
+      workspaceId: String(workspace._id),
+      returnTo: { meetingId: MEETING, folder: 'Jolto' },
+    });
+    const evil = Buffer.from(
+      JSON.stringify({ meetingId: 'https://evil.example', folder: null }),
+      'utf8',
+    ).toString('base64url');
+    expect(readState(resign(`${prefix}.${evil}`))).toBeNull();
+    expect(readState(resign(`${prefix}.${good}.extra`))).toBeNull();
+  });
+
+  it('signs the meeting and folder, and the callback opens that meeting ready to save', async () => {
+    const id = await seedMeeting('Jolto');
+    const offSite = await auth(request(app).post('/api/v1/integrations/google/start'))
+      .send({ returnTo: `https://evil.example/meetings/${id}` })
+      .expect(400);
+    expect(offSite.body.error).toBe('invalid_request');
+    expect(JSON.stringify(offSite.body)).not.toContain('accounts.google.com');
+    await auth(request(app).post('/api/v1/integrations/google/start'))
+      .send({ returnTo: { meetingId: id, folder: 'https://evil.example/x' } })
+      .expect(400);
+
+    const started = await auth(request(app).post('/api/v1/integrations/google/start'))
+      .send({ returnTo: { meetingId: id, folder: 'Jolto' } })
+      .expect(200);
+    const state = new URL(started.body.url as string).searchParams.get('state')!;
+    expect(readState(state)).toEqual({
+      workspaceId: String(workspace._id),
+      returnTo: { meetingId: id, folder: 'Jolto' },
+    });
+
+    const old = signState(String(workspace._id), Date.now() - 60 * 60_000, {
+      meetingId: id,
+      folder: 'Jolto',
+    });
+    const expired = await request(app).get(
+      `/api/v1/integrations/google/callback?code=abc&state=${encodeURIComponent(old)}`,
+    );
+    expect(expired.headers.location).toBe('https://app.meetingid.example/settings?drive=failed');
+
+    const at = state.lastIndexOf('.');
+    const mac = state.slice(at + 1);
+    const flipped = `${mac[0] === 'a' ? 'b' : 'a'}${mac.slice(1)}`;
+    const tampered = await request(app).get(
+      `/api/v1/integrations/google/callback?code=abc&state=${encodeURIComponent(`${state.slice(0, at + 1)}${flipped}`)}`,
+    );
+    expect(tampered.headers.location).toBe('https://app.meetingid.example/settings?drive=failed');
+    expect((await WorkspaceModel.findById(workspace._id).lean())?.google).toBeNull();
+
+    const cancelled = await request(app).get(
+      `/api/v1/integrations/google/callback?error=access_denied&state=${encodeURIComponent(state)}`,
+    );
+    expect(cancelled.status).toBe(302);
+    expect(cancelled.headers.location).toBe(
+      `https://app.meetingid.example/meetings/${id}?drive=cancelled`,
+    );
+    expect((await WorkspaceModel.findById(workspace._id).lean())?.google).toBeNull();
+
+    const cb = await request(app).get(
+      `/api/v1/integrations/google/callback?code=abc&state=${encodeURIComponent(state)}`,
+    );
+    expect(cb.status).toBe(302);
+    expect(cb.headers.location).toBe(`https://app.meetingid.example/meetings/${id}?drive=save`);
+    expect(cb.headers.location).not.toContain('Jolto');
+    expect(cb.headers.location).not.toContain('evil');
   });
 });
 

@@ -312,8 +312,16 @@ export const api = {
   },
   drive: {
     status: () => request<DriveStatus>('GET', '/integrations/google'),
-    /** The Google consent page to send the browser to. */
-    start: () => request<{ url: string }>('POST', '/integrations/google/start').then((r) => r.url),
+    /**
+     * The Google consent page to send the browser to.
+     * With a meeting, Google returns there and the page saves once.
+     */
+    start: (returnTo?: { meetingId: string; folder: string | null }) =>
+      request<{ url: string }>(
+        'POST',
+        '/integrations/google/start',
+        returnTo ? { returnTo } : undefined,
+      ).then((r) => r.url),
     disconnect: () => request<void>('DELETE', '/integrations/google'),
   },
   workspace: {

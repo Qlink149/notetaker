@@ -44,9 +44,76 @@ export function driveAvailable(): boolean {
 export const redirectUri = (): string =>
   `${env().PUBLIC_API_URL!.replace(/\/$/, '')}/api/v1/integrations/google/callback`;
 
-/** Where the browser goes back to after connecting (the web app's Settings). */
+/** Where the browser goes back to after connecting (the web app). */
 export const webAppUrl = (): string =>
   (env().WEB_APP_URL ?? env().CORS_ORIGINS[0] ?? 'http://localhost:5173').replace(/\/$/, '');
+
+/**
+ * Where "Save to Drive" should return: this meeting, and the folder chosen on it.
+ * The folder is remembered in the signed state; the address we send the browser to is built only from the id.
+ */
+export type DriveReturn = { meetingId: string; folder: string | null };
+
+const MEETING_ID = /^[a-f0-9]{24}$/i;
+const RETURN_FLAGS = new Set(['save', 'cancelled', 'failed', 'no-permission']);
+
+/** A folder name, not a URL or a path. */
+function folderOk(folder: string): boolean {
+  if (folder.length < 1 || folder.length > 60) return false;
+  if (/[\\/?#]/.test(folder)) return false;
+  for (let i = 0; i < folder.length; i++) {
+    if (folder.charCodeAt(i) <= 31) return false;
+  }
+  if (folder.includes('..') || folder.includes('://') || folder.startsWith('//')) return false;
+  if (/^\s*javascript:/i.test(folder) || /^\s*data:/i.test(folder)) return false;
+  return true;
+}
+
+/**
+ * A meeting to come back to: `{ meetingId, folder }`, a 24-hex id, or exactly `/meetings/<id>`
+ * (optional `?folder=`). Anything that could leave the app is refused.
+ */
+export function parseReturnTo(input: unknown): DriveReturn | null {
+  if (typeof input === 'string') return parseReturnString(input);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const obj = input as Record<string, unknown>;
+  for (const k of Object.keys(obj)) {
+    if (k !== 'meetingId' && k !== 'folder') return null;
+  }
+  if (typeof obj.meetingId !== 'string' || !MEETING_ID.test(obj.meetingId)) return null;
+  if (obj.folder === undefined || obj.folder === null) {
+    return { meetingId: obj.meetingId.toLowerCase(), folder: null };
+  }
+  if (typeof obj.folder !== 'string' || !folderOk(obj.folder)) return null;
+  return { meetingId: obj.meetingId.toLowerCase(), folder: obj.folder };
+}
+
+function parseReturnString(raw: string): DriveReturn | null {
+  if (raw.length < 24 || raw.length > 200) return null;
+  // scheme, protocol-relative, backslash, and ".." never get a regex pass
+  if (/[\s\\]/.test(raw) || raw.includes('://') || raw.startsWith('//') || raw.includes('..')) {
+    return null;
+  }
+  if (MEETING_ID.test(raw)) return { meetingId: raw.toLowerCase(), folder: null };
+  const m = /^\/meetings\/([a-f0-9]{24})(?:\?folder=([^&#]*))?$/i.exec(raw);
+  if (!m) return null;
+  const meetingId = m[1]!.toLowerCase();
+  if (m[2] === undefined) return { meetingId, folder: null };
+  let folder: string;
+  try {
+    folder = decodeURIComponent(m[2]);
+  } catch {
+    return null;
+  }
+  if (!folderOk(folder)) return null;
+  return { meetingId, folder };
+}
+
+/** Our own meeting page plus one fixed flag. Never a URL the request supplied. */
+export function meetingReturnPath(meetingId: string, flag: string): string {
+  if (!MEETING_ID.test(meetingId) || !RETURN_FLAGS.has(flag)) throw new Error('invalid return');
+  return `/meetings/${meetingId.toLowerCase()}?drive=${flag}`;
+}
 
 // ---------- the refresh token at rest, and the OAuth state ----------
 
@@ -69,15 +136,30 @@ export function openToken(sealed: string): string {
 
 const STATE_TTL_MS = 15 * 60_000;
 
-/** Ties Google's redirect back to the workspace that started it (the redirect carries no login). */
-export function signState(workspaceId: string, now = Date.now()): string {
-  const payload = `${workspaceId}.${now + STATE_TTL_MS}.${randomBytes(8).toString('hex')}`;
+/**
+ * Ties Google's redirect back to the workspace that started it (the redirect carries no login).
+ * `returnTo`, when present, is a fourth field: base64url JSON, so the signature stays the last field.
+ */
+export function signState(
+  workspaceId: string,
+  now = Date.now(),
+  returnTo: DriveReturn | null = null,
+): string {
+  let extra = '';
+  if (returnTo) {
+    const checked = parseReturnTo(returnTo);
+    if (!checked) throw new Error('invalid return');
+    extra = `.${Buffer.from(JSON.stringify(checked), 'utf8').toString('base64url')}`;
+  }
+  const payload = `${workspaceId}.${now + STATE_TTL_MS}.${randomBytes(8).toString('hex')}${extra}`;
   const mac = createHmac('sha256', key('google-oauth-state')).update(payload).digest('base64url');
   return `${payload}.${mac}`;
 }
 
-/** The workspace id in a state this server signed, or null when forged or expired. */
-export function readState(state: string, now = Date.now()): string | null {
+export type SignedState = { workspaceId: string; returnTo: DriveReturn | null };
+
+/** The workspace in a state this server signed, or null when forged, expired, or the return target is not a meeting. */
+export function readState(state: string, now = Date.now()): SignedState | null {
   const i = state.lastIndexOf('.');
   if (i < 0) return null;
   const payload = state.slice(0, i);
@@ -86,9 +168,20 @@ export function readState(state: string, now = Date.now()): string | null {
     createHmac('sha256', key('google-oauth-state')).update(payload).digest('base64url'),
   );
   if (mac.length !== want.length || !timingSafeEqual(mac, want)) return null;
-  const [workspaceId, exp] = payload.split('.');
-  if (!workspaceId || !(Number(exp) > now)) return null;
-  return workspaceId;
+  const parts = payload.split('.');
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const [workspaceId, exp, nonce] = parts;
+  if (!workspaceId || !nonce || !(Number(exp) > now)) return null;
+  if (parts.length === 3) return { workspaceId, returnTo: null };
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(parts[3]!, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+  const returnTo = parseReturnTo(decoded);
+  if (!returnTo) return null;
+  return { workspaceId, returnTo };
 }
 
 // ---------- OAuth ----------

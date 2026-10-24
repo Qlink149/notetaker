@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
+import { z } from 'zod';
 import { FoldersBody, type DriveStatus } from '@meetingid/shared';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
@@ -20,12 +21,15 @@ import {
   driveAvailable,
   ensureFolder,
   exchangeCode,
+  meetingReturnPath,
+  parseReturnTo,
   readState,
   revoke,
   saveDoc,
   sealToken,
   signState,
   webAppUrl,
+  type DriveReturn,
 } from '../services/google/drive.js';
 import { driveDocument } from '../services/google/driveDocument.js';
 
@@ -35,18 +39,29 @@ const status = (w: WorkspaceDoc): DriveStatus => ({
   email: w.google?.email ?? null,
 });
 
+type ConnectResult = 'connected' | 'cancelled' | 'failed' | 'no-permission';
+
+/** Settings when nothing asked to come back; otherwise this meeting, with a flag we choose. */
+function redirectAfter(result: ConnectResult, returnTo: DriveReturn | null): string {
+  const base = webAppUrl();
+  if (!returnTo) return `${base}/settings?drive=${result}`;
+  const flag = result === 'connected' ? 'save' : result;
+  return `${base}${meetingReturnPath(returnTo.meetingId, flag)}`;
+}
+
 /** Google sends the browser back here after consent; it carries no login, only the state we signed. */
 export function googleCallbackRouter(): Router {
   const r = Router();
   r.get('/integrations/google/callback', async (req, res) => {
-    const back = (result: string) => res.redirect(`${webAppUrl()}/settings?drive=${result}`);
-    const workspaceId = readState(String(req.query.state ?? ''));
-    if (!workspaceId || !driveAvailable()) return back('failed');
+    const parsed = readState(String(req.query.state ?? ''));
+    const back = (result: ConnectResult) =>
+      res.redirect(redirectAfter(result, parsed?.returnTo ?? null));
+    if (!parsed || !driveAvailable()) return back('failed');
     if (req.query.error || !req.query.code) return back('cancelled');
     try {
       const { refreshToken, email } = await exchangeCode(String(req.query.code));
       await WorkspaceModel.updateOne(
-        { _id: new Types.ObjectId(workspaceId) },
+        { _id: new Types.ObjectId(parsed.workspaceId) },
         {
           $set: {
             google: {
@@ -83,9 +98,28 @@ export function driveRouter(): Router {
     res.set('Cache-Control', 'no-store').json(status(ws(req)));
   });
 
+  const GoogleStartBody = z.object({
+    returnTo: z
+      .union([
+        z.string().max(200),
+        z.object({
+          meetingId: z.string().max(200),
+          folder: z.string().max(200).nullable().optional(),
+        }),
+      ])
+      .optional(),
+  });
+
   r.post('/integrations/google/start', (req, res) => {
     if (!driveAvailable()) throw new HttpError(503, 'drive_not_configured');
-    res.json({ url: authUrl(signState(String(ws(req)._id))) });
+    const { returnTo } = body(GoogleStartBody, req);
+    let dest: DriveReturn | null = null;
+    if (returnTo !== undefined) {
+      const parsed = parseReturnTo(returnTo);
+      if (!parsed) throw new HttpError(400, 'invalid_request');
+      dest = parsed;
+    }
+    res.json({ url: authUrl(signState(String(ws(req)._id), Date.now(), dest)) });
   });
 
   r.delete('/integrations/google', async (req, res) => {
@@ -116,7 +150,7 @@ export function driveRouter(): Router {
     try {
       token = await accessToken(g.refreshTokenEnc);
     } catch (err) {
-      // the person removed the app's access in their Google account: ask them to connect again
+      // the stored sign-in can no longer be used: the meeting's Save button connects again in the same tap
       if (err instanceof GoogleError && (err.status === 400 || err.status === 401)) {
         await WorkspaceModel.updateOne({ _id: w._id }, { $set: { google: null } });
         throw new HttpError(409, 'drive_reconnect');

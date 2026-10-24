@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Folder, Loader2, UploadCloud } from 'lucide-react';
 import { api } from '@/api/client';
 import { useKeptOptional } from '@/lib/keptStore';
@@ -13,15 +12,36 @@ const when = (iso) =>
     minute: '2-digit',
   });
 
+/** Same lines as Settings, shown on the meeting when Google sends the person back without connecting. */
+const CONNECT_ERROR = {
+  cancelled: 'Connecting was cancelled.',
+  'no-permission': 'Drive access was not allowed. Connect again and tick the Drive box.',
+  failed: 'Could not connect Google Drive. Try again.',
+};
+
+function driveFlag() {
+  return new URLSearchParams(window.location.search).get('drive');
+}
+
+/** Drop `drive` from the address so a refresh does not save again. */
+function stripDriveFlag() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('drive')) return;
+  url.searchParams.delete('drive');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 /**
  * The meeting's folder (Jolto, Internal…) and "Save to Drive": a Google Doc in MeetingID/<folder> in the
  * connected Drive. Pressing it again updates the same Doc, and moves it when the folder changed.
+ * When Drive is not connected, the same button starts Google sign-in and this page saves on the way back.
  */
 export default function MeetingDrive({ meeting, hasTranscript, onChange }) {
   const folders = useKeptOptional()?.folders ?? [];
   const [drive, setDrive] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const started = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -34,12 +54,18 @@ export default function MeetingDrive({ meeting, hasTranscript, onChange }) {
     };
   }, []);
 
-  const setFolder = async (value) => {
+  const startSignIn = async () => {
+    setBusy(true);
     setError('');
     try {
-      onChange(await api.meetings.setFolder(meeting.id, value || null));
+      const url = await api.drive.start({
+        meetingId: meeting.id,
+        folder: meeting.folder ?? null,
+      });
+      window.location.assign(url);
     } catch (e) {
-      setError(e?.message || 'Could not change the folder.');
+      setBusy(false);
+      setError(e?.message || 'Could not connect Google Drive.');
     }
   };
 
@@ -48,13 +74,48 @@ export default function MeetingDrive({ meeting, hasTranscript, onChange }) {
     setError('');
     try {
       onChange(await api.meetings.saveToDrive(meeting.id));
-    } catch (e) {
-      if (e?.message === 'drive_reconnect') {
-        setDrive((d) => ({ ...d, connected: false }));
-        setError('Google Drive access was removed. Connect it again in Settings.');
-      } else setError(e?.message || 'Could not save to Drive.');
-    } finally {
       setBusy(false);
+    } catch (e) {
+      if (e?.message === 'drive_reconnect' || e?.message === 'drive_not_connected') {
+        setDrive((d) => (d ? { ...d, connected: false } : d));
+        await startSignIn();
+        return;
+      }
+      setBusy(false);
+      setError(e?.message || 'Could not save to Drive.');
+    }
+  };
+
+  const saveRef = useRef(save);
+  saveRef.current = save;
+
+  useEffect(() => {
+    if (!drive) return;
+    const flag = driveFlag();
+    if (flag === 'save') {
+      if (!drive.connected) {
+        stripDriveFlag();
+        return;
+      }
+      if (!hasTranscript) return;
+      if (started.current) return;
+      started.current = true;
+      stripDriveFlag();
+      void saveRef.current();
+      return;
+    }
+    if (flag && CONNECT_ERROR[flag]) {
+      setError(CONNECT_ERROR[flag]);
+      stripDriveFlag();
+    }
+  }, [drive, hasTranscript]);
+
+  const setFolder = async (value) => {
+    setError('');
+    try {
+      onChange(await api.meetings.setFolder(meeting.id, value || null));
+    } catch (e) {
+      setError(e?.message || 'Could not change the folder.');
     }
   };
 
@@ -86,28 +147,23 @@ export default function MeetingDrive({ meeting, hasTranscript, onChange }) {
           </select>
         </label>
       )}
-      {drive?.available &&
-        (drive.connected ? (
-          <Button
-            size="sm"
-            variant={saved && !moved ? 'outline' : 'default'}
-            className="rounded-full h-9"
-            disabled={busy || !hasTranscript}
-            onClick={save}
-            title={hasTranscript ? undefined : 'Available once the transcript is ready'}
-          >
-            {busy ? (
-              <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-            ) : (
-              <UploadCloud className="w-4 h-4 mr-1.5" />
-            )}
-            {busy ? 'Saving…' : saved ? 'Save to Drive again' : 'Save to Drive'}
-          </Button>
-        ) : (
-          <Link to="/settings" className="text-sm text-muted-foreground underline">
-            Connect Google Drive to save meetings there
-          </Link>
-        ))}
+      {drive?.available && (
+        <Button
+          size="sm"
+          variant={drive.connected && saved && !moved ? 'outline' : 'default'}
+          className="rounded-full h-9"
+          disabled={busy || !hasTranscript}
+          onClick={drive.connected ? save : startSignIn}
+          title={hasTranscript ? undefined : 'Available once the transcript is ready'}
+        >
+          {busy ? (
+            <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+          ) : (
+            <UploadCloud className="w-4 h-4 mr-1.5" />
+          )}
+          {busy ? 'Saving…' : drive.connected && saved ? 'Save to Drive again' : 'Save to Drive'}
+        </Button>
+      )}
       {saved && (
         <a
           href={saved.url}
