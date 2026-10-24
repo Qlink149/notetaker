@@ -254,9 +254,17 @@ export const api = {
       ),
     remove: (id: string) => request<void>('DELETE', `/meetings/${id}`),
     /** The meeting as a Word file (Gujarati and Devanagari fonts embedded). */
-    exportDocx: async (id: string, script: 'roman' | 'native' | 'both'): Promise<Blob> => {
+    exportDocx: async (
+      id: string,
+      script: 'roman' | 'native' | 'both',
+      parts: { notes: boolean; transcript: boolean } = { notes: true, transcript: true },
+    ): Promise<Blob> => {
       const token = getToken();
-      const res = await fetch(`${BASE}/meetings/${id}/export?format=docx&script=${script}`, {
+      const chosen: string[] = [];
+      if (parts.notes) chosen.push('notes');
+      if (parts.transcript) chosen.push('transcript');
+      const q = new URLSearchParams({ format: 'docx', script, parts: chosen.join(',') });
+      const res = await fetch(`${BASE}/meetings/${id}/export?${q}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: 'include',
       });

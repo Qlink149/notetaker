@@ -336,6 +336,40 @@ describe('Team', () => {
       /Standup/,
     );
   });
+
+  it('copies the same message the WhatsApp buttons would open', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    api.tasks.list.mockResolvedValue([
+      task('p1', { ownerId: 'paresh', ownerName: 'Paresh Shah', due: addDays(-2) }),
+    ]);
+    show('/team', <Team />);
+    const standup = await screen.findByRole('link', { name: /Share standup/ });
+    expect(screen.getByText(/Copy the message if WhatsApp Web asks you to log in/)).toBeTruthy();
+    const copies = screen.getAllByRole('button', { name: 'Copy message' });
+    fireEvent.click(copies[0]);
+    await waitFor(() => expect(writeText).toHaveBeenCalled());
+    const standupText = decodeURIComponent(standup.getAttribute('href').split('text=')[1]);
+    expect(writeText.mock.calls.at(-1)[0]).toBe(standupText);
+    expect(await screen.findByText('Copied')).toBeTruthy();
+
+    const nudge = screen.getByRole('link', { name: /Nudge Paresh/ });
+    fireEvent.click(copies[1]);
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(writeText.mock.calls.at(-1)[0]).toBe(
+      decodeURIComponent(nudge.getAttribute('href').split('text=')[1]),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { expanded: false })[1]);
+    fireEvent.click(await screen.findByRole('button', { name: /Task p1/ }));
+    const sheet = await screen.findByRole('dialog', { name: 'Task p1' });
+    const remind = within(sheet).getByRole('link', { name: /Remind Paresh/ });
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Copy message' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(3));
+    expect(writeText.mock.calls.at(-1)[0]).toBe(
+      decodeURIComponent(remind.getAttribute('href').split('text=')[1]),
+    );
+  });
 });
 
 describe('Search', () => {

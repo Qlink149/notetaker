@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Check, ChevronRight, Pencil, RotateCcw, Trash2 } from 'lucide-react';
 import { useKept } from '@/lib/keptStore';
 import { Avatar, Sheet, WhatsAppIcon } from '@/components/kept/bits';
+import CopyMessage from '@/components/kept/CopyMessage';
 import {
   PRIORITY_LABEL,
   daysUntil,
@@ -21,6 +22,7 @@ export default function TaskSheet({ id }) {
   const t = (tasks ?? []).find((x) => x.id === id);
   if (!t) return null;
   const late = t.status === 'open' && daysUntil(t.due) < 0;
+  const reminder = reminderText(t);
 
   const toggle = async () => {
     const status = t.status === 'done' ? 'open' : 'done';
@@ -107,17 +109,20 @@ export default function TaskSheet({ id }) {
             {t.status === 'done' ? 'Mark as not done' : 'Mark as done'}
           </button>
           {t.ownerId !== me && t.status === 'open' && (
-            <a
-              className="k-act k-wa"
-              href={waLink(reminderText(t))}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span className="k-ic">
-                <WhatsAppIcon />
-              </span>
-              Remind {firstName(t.ownerName)} on WhatsApp
-            </a>
+            <div className="k-wa-row">
+              <a
+                className="k-act k-wa"
+                href={waLink(reminder)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span className="k-ic">
+                  <WhatsAppIcon />
+                </span>
+                Remind {firstName(t.ownerName)} on WhatsApp
+              </a>
+              <CopyMessage text={reminder} className="k-icon mr-3" />
+            </div>
           )}
           <button
             type="button"
