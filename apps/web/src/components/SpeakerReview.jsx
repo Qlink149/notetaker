@@ -54,6 +54,7 @@ function fmtSec(s) {
 
 function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
   const [name, setName] = useState('');
+  const [everywhere, setEverywhere] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState(null);
@@ -75,7 +76,11 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
     setError('');
     setNote('');
     try {
-      const r = await api.meetings.nameSpeaker(meetingId, card.diar, { name: value, ...extra });
+      const payload = { name: value, ...extra };
+      // The checkbox is for Save. Linking this recording to someone, or keeping the typed name as a
+      // different person, must not rename the previous profile in other meetings.
+      if (everywhere && !extra.usePersonId && !extra.createNew) payload.renameEverywhere = true;
+      const r = await api.meetings.nameSpeaker(meetingId, card.diar, payload);
       if (r.similar) {
         setSimilar({ typed: value, options: r.similar });
         return;
@@ -235,6 +240,17 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
           <span className="ml-1">Save</span>
         </Button>
       </div>
+      {card.appearsIn.length > 0 && (
+        <label className="flex items-start gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={everywhere}
+            onChange={(e) => setEverywhere(e.target.checked)}
+          />
+          <span>Rename in every meeting this voice is in</span>
+        </label>
+      )}
 
       {similar && (
         <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs space-y-2">
@@ -402,10 +418,11 @@ export default function SpeakerReview({
             />
           ))}
           <p className="text-[11px] text-muted-foreground">
-            Naming an unnamed voice names it everywhere it was heard. Typing a different name on a
-            matched voice corrects this meeting only. Voices you name or confirm are learned for
-            future meetings. Click a speaker's name on a transcript line to move that line or split
-            the speaker from there.
+            A name saved here applies to this recording. Earlier meetings and their tasks stay with
+            the person they already belong to. Rename in every meeting when this voice is that
+            person everywhere. Merge combines two identities. Voices you name or confirm are learned
+            for future meetings. Click a speaker's name on a transcript line to move that line or
+            split the speaker from there.
           </p>
         </div>
       )}

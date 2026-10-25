@@ -35,6 +35,7 @@
     "migrate:copy": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/migrate/copyToProd.ts",
     "migrate:audio": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/migrate/audioToB2.ts",
     "migrate:summary-model": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/migrate/summaryModel.ts",
+    "restore:identity": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/restoreIdentity.ts",
     "p2:holdout":"tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/holdout.ts",
     "p2:identity": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/identity.ts",
     "p2:audit-seed": "tsx --conditions=source --env-file-if-exists=../../.env src/scripts/phase2/auditSeed.ts",

@@ -12,11 +12,14 @@ import {
   DEFAULT_THRESHOLDS,
   POSSIBLE_MIN_SCORE,
 } from '../src/services/identity/enroll.js';
+import { restoreIdentity } from '../src/services/identity/edits.js';
 import {
   JobModel,
   MeetingDataModel,
   MeetingModel,
   SpeakerModel,
+  TaskModel,
+  WorkspaceModel,
   type SpeakerCardDoc,
   type WorkspaceDoc,
 } from '../src/models/index.js';
@@ -112,7 +115,7 @@ const lineNames = async (id: string): Promise<string[]> =>
   );
 
 describe('naming a voice', () => {
-  it('shows the new name in every meeting where that voice was recognised', async () => {
+  it('shows a new name in this meeting and leaves the same voice’s other meetings alone', async () => {
     const person = await SpeakerModel.create({
       workspaceId: workspace._id,
       name: 'Speaker B (Meeting 21/9)',
@@ -140,23 +143,26 @@ describe('naming a voice', () => {
       .send({ name: 'Ghanshyam Dholakia' })
       .expect(200)
       .then((r) => {
-        expect((r.body as { updatedMeetings: string[] }).updatedMeetings.sort()).toEqual(
-          [a, b].sort(),
-        );
+        expect((r.body as { updatedMeetings: string[] }).updatedMeetings).toEqual([a]);
       });
 
     expect(await lineNames(a)).toEqual(['Speaker A', 'Ghanshyam Dholakia']);
-    expect(await lineNames(b)).toEqual(['Speaker A', 'Ghanshyam Dholakia']);
+    // the other meeting keeps the unnamed voice; naming here did not rewrite that profile
+    expect(await lineNames(b)).toEqual(['Speaker A', 'Speaker C']);
+    const still = await SpeakerModel.findById(pid).lean();
+    expect(still).toMatchObject({ anonymous: true, name: 'Speaker B (Meeting 21/9)' });
     const view = await speakers(a);
     const ghan = view.cards.find((c) => c.diar === 'S1')!;
     expect(ghan.displayName).toBe('Ghanshyam Dholakia');
-    expect(ghan.appearsIn[0]).toMatchObject({ title: 'AOM', label: 'Speaker C' });
-    // the other meeting's card says who it matched by the person's new name
+    expect(ghan.personId).not.toBe(pid);
+    expect(ghan.appearsIn).toEqual([]);
     const aomView = (await auth(request(app).get(`/api/v1/meetings/${b}/speakers`)).expect(200))
       .body as {
-      cards: { diar: string; match: { name: string } | null }[];
+      cards: { diar: string; personId: string; match: { name: string } | null }[];
     };
-    expect(aomView.cards.find((c) => c.diar === 'S5')!.match!.name).toBe('Ghanshyam Dholakia');
+    const other = aomView.cards.find((c) => c.diar === 'S5')!;
+    expect(other.personId).toBe(pid);
+    expect(other.match!.name).toBe('Speaker B (Meeting 21/9)');
   });
 
   it('puts a new name into the existing summaries instead of asking for new ones', async () => {
@@ -213,8 +219,8 @@ describe('naming a voice', () => {
     expect(ma.actionItems.map((x) => ({ speakerName: x.speakerName, text: x.text }))).toEqual([
       { speakerName: 'Ghanshyam Dholakia', text: 'Send Speaker A the plan.' },
     ]);
-    // the other meeting where the voice was recognised follows too
-    expect(mb.summary).toBe('Ghanshyam Dholakia proposed three cities.');
+    // the other meeting where that unnamed voice was heard is not rewritten
+    expect(mb.summary).toBe('Speaker C proposed three cities.');
     // nothing is out of date, no new summary was written, and an unrelated meeting is untouched
     expect([ma.summaryOutdated, mb.summaryOutdated, mo.summaryOutdated]).toEqual([
       false,
@@ -518,6 +524,254 @@ describe('correcting a wrong voice match (16 Oct: Paresh matched as Yogansh at 6
       personId: yogansh,
       confirmed: true,
     });
+  });
+});
+
+describe('correcting a speaker stays in that recording', () => {
+  /** X is an unnamed voice from an earlier meeting. Vikram is a different, named person. */
+  async function scene() {
+    const x = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker X (Meeting Monday)',
+      anonymous: true,
+    });
+    const vikram = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Vikram',
+      anonymous: false,
+      voiceprints: [{ id: 'vv', source: 'meeting', audioUrl: '', voiceprint: 'vp-v' }],
+    });
+    const oldId = await seedMeeting(
+      'Monday sync',
+      [turn('S0', 0, 5, 'send the pricing')],
+      [card('S0', 'Speaker X', String(x._id))],
+    );
+    const neu = await seedMeeting(
+      'Thursday sync',
+      [turn('S0', 0, 5, 'new voice'), turn('S1', 5, 10, 'vikram speaks')],
+      [
+        card('S0', 'Speaker X', String(x._id), {
+          status: 'solid',
+          match: {
+            personId: String(x._id),
+            name: 'Speaker X (Meeting Monday)',
+            score: 81,
+            margin: 20,
+          },
+        }),
+        card('S1', 'Speaker A', String(vikram._id), { status: 'solid', confirmed: true }),
+      ],
+    );
+    await SpeakerModel.updateOne(
+      { _id: x._id },
+      {
+        $set: {
+          voiceprints: [
+            {
+              id: 'from-monday',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-x',
+              meetingId: new Types.ObjectId(oldId),
+              clip: { start: 0, end: 10 },
+            },
+            {
+              id: 'from-thursday',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-new',
+              meetingId: new Types.ObjectId(neu),
+              clip: { start: 0, end: 10 },
+            },
+          ],
+        },
+      },
+    );
+    await MeetingModel.updateOne(
+      { _id: oldId },
+      {
+        $set: {
+          summary: 'Speaker X will send the pricing.',
+          actionItems: [{ speakerName: 'Speaker X', text: 'Send the pricing.' }],
+          summaryStatus: 'completed',
+          summaryNames: { unknown: 'Unknown', S0: 'Speaker X' },
+        },
+      },
+    );
+    await WorkspaceModel.updateOne({ _id: workspace._id }, { $set: { mePersonId: x._id } });
+    await TaskModel.create({
+      workspaceId: workspace._id,
+      title: 'Send the pricing',
+      ownerId: x._id,
+      meetingId: new Types.ObjectId(oldId),
+      source: { meetingId: new Types.ObjectId(oldId), index: 0, text: 'Send the pricing.' },
+    });
+    await TaskModel.create({
+      workspaceId: workspace._id,
+      title: 'Book the room',
+      ownerId: x._id,
+      buddyId: vikram._id,
+      meetingId: new Types.ObjectId(neu),
+    });
+    return { x: String(x._id), vikram: String(vikram._id), oldId, neu };
+  }
+
+  const ownerOf = async (title: string) =>
+    String((await TaskModel.findOne({ title }).lean())!.ownerId);
+
+  it('names a placeholder that exists only in this meeting', async () => {
+    const x = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Speaker X (Meeting M)',
+      anonymous: true,
+    });
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'x')],
+      [card('S0', 'Speaker X', String(x._id))],
+    );
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Vikram' })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Vikram']);
+    expect(await SpeakerModel.findById(x._id).lean()).toMatchObject({
+      name: 'Vikram',
+      anonymous: false,
+    });
+    expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
+  });
+
+  it('linking the voice to Vikram does not take X’s earlier meetings or tasks', async () => {
+    const { x, vikram, oldId, neu } = await scene();
+    await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/S0/name`))
+      .send({ name: 'Vikram', usePersonId: vikram })
+      .expect(200);
+
+    expect(await lineNames(neu)).toEqual(['Vikram', 'Vikram']);
+    expect(await lineNames(oldId)).toEqual(['Speaker X']);
+    const monday = (await MeetingModel.findById(oldId).lean())!;
+    expect(monday.summary).toBe('Speaker X will send the pricing.');
+    expect(monday.actionItems[0]).toMatchObject({ speakerName: 'Speaker X' });
+    expect(await ownerOf('Send the pricing')).toBe(x);
+    expect(await ownerOf('Book the room')).toBe(x);
+    const kept = await SpeakerModel.findById(x).lean();
+    expect(kept).toMatchObject({ anonymous: true, name: 'Speaker X (Meeting Monday)' });
+    expect(kept!.voiceprints.map((v) => v.id)).toEqual(['from-monday']);
+    expect((await SpeakerModel.findById(vikram).lean())!.voiceprints.map((v) => v.id)).toEqual([
+      'vv',
+    ]);
+    const oldCard = (await MeetingDataModel.findOne({ meetingId: oldId }).lean())!
+      .speakerCards![0]!;
+    expect(oldCard.personId).toBe(x);
+    expect((await WorkspaceModel.findById(workspace._id).lean())!.mePersonId?.toString()).toBe(x);
+  });
+
+  it('typing Vikram’s name on X creates a profile for this recording only', async () => {
+    const { x, vikram, oldId, neu } = await scene();
+    await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/S0/name`))
+      .send({ name: 'Vikram Shah', createNew: true })
+      .expect(200);
+
+    expect(await lineNames(neu)).toEqual(['Vikram Shah', 'Vikram']);
+    expect(await lineNames(oldId)).toEqual(['Speaker X']);
+    expect(await ownerOf('Send the pricing')).toBe(x);
+    expect(await ownerOf('Book the room')).toBe(x);
+    expect(await SpeakerModel.findById(x).lean()).toMatchObject({
+      anonymous: true,
+      name: 'Speaker X (Meeting Monday)',
+    });
+    const created = await SpeakerModel.findOne({ name: 'Vikram Shah' }).lean();
+    expect(String(created!._id)).not.toBe(vikram);
+    expect(String(created!._id)).not.toBe(x);
+    const thursday = (await MeetingDataModel.findOne({ meetingId: neu }).lean())!.speakerCards!;
+    expect(thursday.find((c) => c.diar === 'S0')!.personId).toBe(String(created!._id));
+    expect(thursday.find((c) => c.diar === 'S1')!.personId).toBe(vikram);
+  });
+
+  it('renames the shared profile in every meeting only when asked', async () => {
+    const { x, oldId, neu } = await scene();
+    await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/S0/name`))
+      .send({ name: 'Vikram Shah', renameEverywhere: true })
+      .expect(200);
+
+    expect(await lineNames(neu)).toEqual(['Vikram Shah', 'Vikram']);
+    expect(await lineNames(oldId)).toEqual(['Vikram Shah']);
+    expect(await SpeakerModel.findById(x).lean()).toMatchObject({
+      name: 'Vikram Shah',
+      anonymous: false,
+    });
+    // tasks stay on that profile, so they now read under the new name
+    expect(await ownerOf('Send the pricing')).toBe(x);
+    expect((await MeetingModel.findById(oldId).lean())!.summary).toBe(
+      'Vikram Shah will send the pricing.',
+    );
+  });
+
+  it('an explicit merge still combines the two identities, including tasks', async () => {
+    const { x, vikram, oldId, neu } = await scene();
+    await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/merge`))
+      .send({ from: 'S0', into: 'S1' })
+      .expect(200);
+
+    expect(await SpeakerModel.exists({ _id: x })).toBeNull();
+    expect(await lineNames(oldId)).toEqual(['Vikram']);
+    // the two voices of Thursday are one person now, and the adjacent turns join into one line
+    expect(await lineNames(neu)).toEqual(['Vikram']);
+    expect(await ownerOf('Send the pricing')).toBe(vikram);
+    expect(await ownerOf('Book the room')).toBe(vikram);
+    expect((await WorkspaceModel.findById(workspace._id).lean())!.mePersonId?.toString()).toBe(
+      vikram,
+    );
+    const prints = (await SpeakerModel.findById(vikram).lean())!.voiceprints.map((v) => v.id);
+    expect(prints).toEqual(expect.arrayContaining(['vv', 'from-monday', 'from-thursday']));
+    expect((await MeetingModel.findById(oldId).lean())!.summary).toBe(
+      'Vikram will send the pricing.',
+    );
+  });
+
+  it('can give the earlier meetings back, and a dry run changes nothing', async () => {
+    const { x, oldId, neu } = await scene();
+    await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/S0/name`))
+      .send({ name: 'Vikram Shah', renameEverywhere: true })
+      .expect(200);
+    const orphan = await TaskModel.create({
+      workspaceId: workspace._id,
+      title: 'Orphan from a deleted profile',
+      ownerId: new Types.ObjectId(),
+      meetingId: new Types.ObjectId(oldId),
+    });
+    const input = {
+      fromPersonId: x,
+      meetingIds: [oldId],
+      name: 'Speaker X',
+      moveTasks: true,
+      adoptOrphanTasks: true,
+    };
+
+    const dry = await restoreIdentity(String(workspace._id), input, { apply: false });
+    expect(dry.applied).toBe(false);
+    expect(dry.meetings).toEqual([oldId]);
+    expect(dry.tasks).toBe(1);
+    expect(dry.orphanTasks).toBe(1);
+    expect(dry.voiceprints).toBe(1);
+    expect(await lineNames(oldId)).toEqual(['Vikram Shah']);
+    expect(await SpeakerModel.exists({ name: 'Speaker X' })).toBeNull();
+
+    const applied = await restoreIdentity(String(workspace._id), input, { apply: true });
+    expect(applied.applied).toBe(true);
+    expect(await lineNames(oldId)).toEqual(['Speaker X']);
+    expect(await lineNames(neu)).toEqual(['Vikram Shah', 'Vikram']);
+    expect((await MeetingModel.findById(oldId).lean())!.summary).toBe(
+      'Speaker X will send the pricing.',
+    );
+    expect(await ownerOf('Send the pricing')).toBe(applied.personId);
+    expect(await ownerOf('Book the room')).toBe(x);
+    expect(String((await TaskModel.findById(orphan._id).lean())!.ownerId)).toBe(applied.personId);
+    const restored = await SpeakerModel.findById(applied.personId).lean();
+    expect(restored!.voiceprints.map((v) => v.id)).toEqual(['from-monday']);
+    expect((await SpeakerModel.findById(x).lean())!.voiceprints.map((v) => v.id)).toEqual([
+      'from-thursday',
+    ]);
   });
 });
 

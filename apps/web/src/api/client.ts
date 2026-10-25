@@ -284,7 +284,13 @@ export const api = {
     nameSpeaker: async (
       id: string,
       diar: string,
-      input: { name: string; usePersonId?: string; createNew?: boolean },
+      input: {
+        name: string;
+        usePersonId?: string;
+        createNew?: boolean;
+        /** Rename this same person in every meeting. A correction without this stays in one recording. */
+        renameEverywhere?: boolean;
+      },
     ): Promise<{
       similar?: SimilarName[];
       updatedMeetings?: string[];

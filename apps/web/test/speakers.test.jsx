@@ -212,6 +212,36 @@ describe('speaker cards', () => {
     );
   });
 
+  it('renames every meeting only when that box is ticked', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1', 'm2'] });
+    renderReview([card({ match: null })]);
+    expect(screen.getByText(/applies to this recording/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Rename in every meeting/ }));
+    fireEvent.change(screen.getByLabelText(/Name for Speaker B/), {
+      target: { value: 'Ghanshyam Dholakia' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        name: 'Ghanshyam Dholakia',
+        renameEverywhere: true,
+      }),
+    );
+  });
+
+  it('confirming a match does not rename the person in other meetings', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
+    renderReview([card({ personId: 'p9' })]);
+    fireEvent.click(screen.getByRole('checkbox', { name: /Rename in every meeting/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        name: 'Speaker D (Meeting 21/9)',
+        usePersonId: 'p9',
+      }),
+    );
+  });
+
   it('lets a person confirm an automatic match', async () => {
     api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
     renderReview([card({ personId: 'p9' })]);

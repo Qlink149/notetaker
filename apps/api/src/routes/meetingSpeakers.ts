@@ -44,8 +44,8 @@ const MergeBody = z.object({ from: z.string(), into: z.string() });
 const SplitBody = z.object({ lineIndex: z.number().int().min(0) });
 const ReassignBody = z.object({ lineIndex: z.number().int().min(0), toDiar: z.string() });
 
-// Speaker review (Phase 2): cards with clips and confidence, name (a correction stays in this meeting; naming an
-// unnamed voice names it wherever it was heard), merge, split, reassign one line, re-identify.
+// Speaker review (Phase 2): cards with clips and confidence, name (a correction stays in this meeting;
+// renaming that person in every meeting is explicit), merge, split, reassign one line, re-identify.
 export function meetingSpeakersRouter(_deps: ApiDeps): Router {
   const r = Router();
 
