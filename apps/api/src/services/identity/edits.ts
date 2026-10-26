@@ -300,9 +300,9 @@ async function learnLater(meetingId: string): Promise<void> {
  * Name a voice in this meeting.
  *
  * Linking (`usePersonId`) or typing a different name points this recording at that profile and leaves
- * every other meeting on the previous one. An unnamed placeholder is renamed in place only when this
- * meeting is the only place it appears — there is no other history to protect. `renameEverywhere`
- * renames that same profile in every meeting. Combining two profiles is `mergePeople`, reached from
+ * every other meeting on the previous one. A person who appears only in this meeting is renamed in
+ * place, so tasks that point at them follow the new name. `renameEverywhere` renames a shared profile
+ * in every meeting. Combining two profiles is `mergePeople`, reached from
  * an explicit speaker merge, not from a correction. The confirmed voice is learned afterwards.
  * Returns the meetings whose lines changed.
  */
@@ -355,13 +355,9 @@ export async function nameSpeaker(
     return finishHere(usePersonId);
   }
 
-  // Renaming the shared profile rewrites every meeting it is in, and every task owned by it follows
-  // the new name. Do that only for a placeholder that has nowhere else to live, or when asked.
-  const rewriteProfile =
-    renameEverywhere ||
-    !current ||
-    (current.anonymous && !heardElsewhere) ||
-    (sameName(current.name, name) && !heardElsewhere);
+  // A person who is only in this meeting has no other history, so a new name is the same profile and
+  // the tasks that point at it follow. Someone heard in another meeting stays there unless asked.
+  const rewriteProfile = renameEverywhere || !current || !heardElsewhere;
 
   if (!rewriteProfile && current && !sameName(current.name, name)) {
     const createdId = await createNamedPerson(workspaceId, meetingId, diar, name);

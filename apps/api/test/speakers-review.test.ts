@@ -641,6 +641,35 @@ describe('correcting a speaker stays in that recording', () => {
     expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
   });
 
+  it('renames a named person who is only in this meeting, and their tasks stay with them', async () => {
+    const person = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Former teammate',
+      anonymous: false,
+    });
+    const id = await seedMeeting(
+      'Jolto',
+      [turn('S0', 0, 5, 'x')],
+      [card('S0', 'Speaker A', String(person._id), { status: 'manual', confirmed: true })],
+    );
+    await TaskModel.create({
+      workspaceId: workspace._id,
+      title: 'Enable focus stacking',
+      ownerId: person._id,
+      meetingId: new Types.ObjectId(id),
+    });
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Rishabh' })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Rishabh']);
+    expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
+    const renamed = await SpeakerModel.findById(person._id).lean();
+    expect(renamed).toMatchObject({ name: 'Rishabh', anonymous: false });
+    expect(String((await TaskModel.findOne({ title: 'Enable focus stacking' }).lean())!.ownerId)).toBe(
+      String(person._id),
+    );
+  });
+
   it('linking the voice to Vikram does not take X’s earlier meetings or tasks', async () => {
     const { x, vikram, oldId, neu } = await scene();
     await auth(request(app).post(`/api/v1/meetings/${neu}/speakers/S0/name`))
