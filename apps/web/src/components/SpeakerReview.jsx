@@ -67,7 +67,8 @@ function SpeakerCardView({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState(null);
-  const [mergeInto, setMergeInto] = useState('');
+  const [mergeQuery, setMergeQuery] = useState('');
+  const [mergeChoice, setMergeChoice] = useState(null);
   const [note, setNote] = useState('');
   const [movingClip, setMovingClip] = useState(-1);
   const [clipDraft, setClipDraft] = useState('');
@@ -109,12 +110,17 @@ function SpeakerCardView({
   };
 
   const merge = async () => {
-    if (!mergeInto) return;
+    if (!mergeChoice || mergeChoice.type === 'new') return;
     setBusy(true);
     setError('');
     try {
-      await api.meetings.mergeSpeakers(meetingId, card.diar, mergeInto);
-      setMergeInto('');
+      await api.meetings.mergeSpeakers(
+        meetingId,
+        card.diar,
+        mergeChoice.type === 'person' ? { personId: mergeChoice.personId } : mergeChoice.diar,
+      );
+      setMergeQuery('');
+      setMergeChoice(null);
       await onChanged();
     } catch (e) {
       setError(e?.message || 'Could not merge.');
@@ -122,6 +128,8 @@ function SpeakerCardView({
       setBusy(false);
     }
   };
+
+  const canMerge = others.length > 0 || people.some((p) => !p.anonymous && p.id !== card.personId);
 
   return (
     <div className="rounded-xl border border-border bg-card p-3 space-y-2.5">
@@ -295,6 +303,13 @@ function SpeakerCardView({
           <span className="ml-1">Save</span>
         </Button>
       </div>
+      <p className="text-[11px] text-muted-foreground">
+        Save renames this whole voice in this recording. A name that matches someone already saved
+        asks before a second person is created.
+        {card.appearsIn.length > 0
+          ? ' Tick the box to rename that person in every meeting, including tasks that use this name.'
+          : ' Other meetings stay as they are.'}
+      </p>
       {card.appearsIn.length > 0 && (
         <label className="flex items-start gap-2 text-xs text-muted-foreground">
           <input
@@ -303,7 +318,7 @@ function SpeakerCardView({
             checked={everywhere}
             onChange={(e) => setEverywhere(e.target.checked)}
           />
-          <span>Rename in every meeting this voice is in</span>
+          <span>Rename in every meeting this voice is in, including tasks that use this name</span>
         </label>
       )}
 
@@ -336,24 +351,37 @@ function SpeakerCardView({
         </div>
       )}
 
-      {others.length > 0 && (
-        <div className="flex gap-2 items-center">
-          <select
-            value={mergeInto}
-            onChange={(e) => setMergeInto(e.target.value)}
-            className="h-8 text-xs rounded-md border border-input bg-background px-2 flex-1"
-            aria-label={`Merge ${card.displayName} into`}
-          >
-            <option value="">Same person as…</option>
-            {others.map((o) => (
-              <option key={o.diar} value={o.diar}>
-                {o.displayName}
-              </option>
-            ))}
-          </select>
-          <Button size="sm" variant="outline" disabled={busy || !mergeInto} onClick={merge}>
-            <GitMerge className="w-3.5 h-3.5 mr-1" /> Merge
-          </Button>
+      {canMerge && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] text-muted-foreground">
+            Same person as someone else? Search saved people and voices in this meeting. Merge
+            combines the two identities, including their other meetings and tasks. To change only
+            this recording, use Save. Moving one clip does not merge.
+          </p>
+          <div className="flex gap-2 items-start">
+            <PersonPicker
+              allowCreate={false}
+              value={mergeQuery}
+              onChange={(value) => {
+                setMergeQuery(value);
+                setMergeChoice(null);
+              }}
+              onCommit={(choice) => {
+                if (choice.type === 'new') return;
+                setMergeChoice(choice);
+                setMergeQuery(choice.name);
+              }}
+              people={people}
+              speakers={[card, ...others]}
+              excludeName={card.displayName}
+              disabled={busy}
+              ariaLabel={`Merge ${card.displayName} with`}
+              placeholder="Search people to merge with"
+            />
+            <Button size="sm" variant="outline" disabled={busy || !mergeChoice} onClick={merge}>
+              <GitMerge className="w-3.5 h-3.5 mr-1" /> Merge
+            </Button>
+          </div>
         </div>
       )}
 
@@ -479,12 +507,11 @@ export default function SpeakerReview({
             />
           ))}
           <p className="text-[11px] text-muted-foreground">
-            A name saved here applies to this recording. Earlier meetings and their tasks stay with
-            the person they already belong to. Rename in every meeting when this voice is that
-            person everywhere. Merge combines two identities. Voices you name or confirm are learned
-            for future meetings. Move on a clip, or “Move this line to” on a transcript line, sends
-            that clip to someone in this meeting or any saved person and leaves the rest of the
-            group where it is. Search the list, or type a name to create someone new.
+            A name saved here applies to this recording. Rename in every meeting when this voice is
+            that person everywhere. Merge combines two identities, including other meetings and
+            their tasks. Voices you name or confirm are learned for future meetings. Move on a clip,
+            or “Move this line to” on a transcript line, sends only that clip to someone in this
+            meeting or any saved person.
           </p>
         </div>
       )}

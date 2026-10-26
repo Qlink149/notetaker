@@ -5,6 +5,7 @@ import { assertBudget, estimateClaudeUsd, recordSpend, usdFor } from '../budget.
 import { humanizeError } from '../errors.js';
 import { addCost, loadMeeting, loadWorkspaceContext } from '../meetings.js';
 import { enqueue } from '../queue.js';
+import { applyMeetingTaskFollow } from '../../services/tasks/reconcile.js';
 
 /** Below this share of detected speech, no summary is written unless the user forces one (D1). */
 export const MIN_COVERAGE = 0.6;
@@ -68,6 +69,10 @@ export const summariseStage: StageHandler = {
     }
     const { result, usage, error } = outcome;
     await record(usage);
+    const previousItems = (meeting.actionItems ?? []).map((a) => ({
+      speakerName: a.speakerName,
+      text: a.text,
+    }));
 
     await MeetingModel.updateOne(
       { _id: meeting._id },
@@ -89,6 +94,7 @@ export const summariseStage: StageHandler = {
       },
     );
     if (!result) log.warn({ error }, 'summary JSON invalid after retry');
+    else await applyMeetingTaskFollow(String(meeting._id), previousItems, result.actionItems);
     await enqueue({ meetingId: meeting._id, stage: 'finalise' });
   },
 

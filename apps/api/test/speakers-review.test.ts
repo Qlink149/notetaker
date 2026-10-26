@@ -4,8 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
 import type { Turn } from '@meetingid/shared';
 import { createApp } from '../src/app.js';
-import type { NameResolution } from '@meetingid/pipeline';
-import { applyNames, pyannoteSegments } from '../src/services/identity/identity.js';
+import { draftTask, isoDay, type NameResolution } from '@meetingid/pipeline';
+import { applyNames, pyannoteSegments, shortTitle } from '../src/services/identity/identity.js';
 import {
   cardCandidate,
   decidedCards,
@@ -1408,7 +1408,162 @@ describe('closest phone hint (group recordings)', () => {
   });
 });
 
-import { shortTitle } from '../src/services/identity/identity.js';
+describe('tasks follow a corrected speaker', () => {
+  const day = new Date('2026-10-24T05:00:00.000Z');
+  const wording = 'Send the samples by tomorrow';
+
+  it('moves an untouched task when the voice is linked to someone else, and leaves edits, completed work and other meetings', async () => {
+    const harshit = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Harshit Mehta',
+      anonymous: false,
+    });
+    const priya = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Priya Shah',
+      anonymous: false,
+    });
+    const id = await seedMeeting(
+      'NDPF 24 Oct',
+      [turn('S0', 0, 8, 'please send the samples')],
+      [card('S0', 'Speaker A', String(harshit._id))],
+    );
+    const elsewhere = await seedMeeting(
+      'Other meeting',
+      [turn('S0', 0, 4, 'unrelated')],
+      [card('S0', 'Speaker A', null)],
+    );
+    const draft = draftTask(wording, isoDay(day));
+    await MeetingModel.updateOne(
+      { _id: id },
+      {
+        $set: {
+          date: day,
+          summary: 'Harshit Mehta will send the samples.',
+          summaryStatus: 'completed',
+          summaryOutdated: false,
+          actionItems: [{ speakerName: 'Harshit Mehta', text: wording }],
+        },
+      },
+    );
+    const filed = {
+      workspaceId: workspace._id,
+      priority: draft.priority,
+      due: draft.due,
+      status: 'open' as const,
+      source: { meetingId: id, index: 0, text: wording },
+    };
+    const open = await TaskModel.create({
+      ...filed,
+      meetingId: id,
+      ownerId: harshit._id,
+      title: draft.title,
+    });
+    const done = await TaskModel.create({
+      ...filed,
+      meetingId: id,
+      ownerId: harshit._id,
+      title: draft.title,
+      status: 'done',
+      doneAt: day,
+    });
+    const edited = await TaskModel.create({
+      ...filed,
+      meetingId: id,
+      ownerId: harshit._id,
+      title: 'Send the dyed samples',
+    });
+    const other = await TaskModel.create({
+      ...filed,
+      meetingId: elsewhere,
+      ownerId: harshit._id,
+      title: draft.title,
+      source: { meetingId: elsewhere, index: 0, text: wording },
+    });
+
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Priya Shah', usePersonId: String(priya._id) })
+      .expect(200);
+
+    const meeting = (await MeetingModel.findById(id).lean())!;
+    expect(meeting.summary).toBe('Priya Shah will send the samples.');
+    expect(meeting.summaryOutdated).toBe(false);
+    expect(meeting.actionItems.map((a) => a.speakerName)).toEqual(['Priya Shah']);
+    expect(String((await TaskModel.findById(open._id).lean())?.ownerId)).toBe(String(priya._id));
+    expect(String((await TaskModel.findById(done._id).lean())?.ownerId)).toBe(String(harshit._id));
+    expect(String((await TaskModel.findById(edited._id).lean())?.ownerId)).toBe(
+      String(harshit._id),
+    );
+    expect(String((await TaskModel.findById(other._id).lean())?.ownerId)).toBe(String(harshit._id));
+    expect(String((await TaskModel.findById(other._id).lean())?.meetingId)).toBe(elsewhere);
+  });
+});
+
+describe('merging a voice with a saved person', () => {
+  it('combines the two profiles, including another meeting and its tasks', async () => {
+    const harshit = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Harshit Mehta',
+      anonymous: false,
+    });
+    const priya = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Priya Shah',
+      anonymous: false,
+    });
+    const here = await seedMeeting(
+      'NDPF 24 Oct',
+      [turn('S0', 0, 5, 'one')],
+      [card('S0', 'Speaker A', String(harshit._id))],
+    );
+    const there = await seedMeeting(
+      'Earlier',
+      [turn('S0', 0, 5, 'two')],
+      [card('S0', 'Speaker A', String(harshit._id))],
+    );
+    const task = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: there,
+      ownerId: harshit._id,
+      title: 'Send the samples',
+      priority: 'med',
+      status: 'open',
+    });
+
+    await auth(request(app).post(`/api/v1/meetings/${here}/speakers/merge`))
+      .send({ from: 'S0', intoPersonId: String(priya._id) })
+      .expect(200);
+
+    const cards = async (id: string) =>
+      ((await MeetingDataModel.findOne({ meetingId: id }).lean())?.speakerCards ??
+        []) as SpeakerCardDoc[];
+    expect((await cards(here))[0]?.personId).toBe(String(priya._id));
+    expect((await cards(there))[0]?.personId).toBe(String(priya._id));
+    expect(String((await TaskModel.findById(task._id).lean())?.ownerId)).toBe(String(priya._id));
+    expect(await SpeakerModel.findById(harshit._id).lean()).toBeNull();
+  });
+
+  it('links a voice that has no profile yet and leaves other people alone', async () => {
+    const priya = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Priya Shah',
+      anonymous: false,
+    });
+    const here = await seedMeeting(
+      'NDPF 24 Oct',
+      [turn('S0', 0, 5, 'one')],
+      [card('S0', 'Speaker A', null)],
+    );
+    await auth(request(app).post(`/api/v1/meetings/${here}/speakers/merge`))
+      .send({ from: 'S0', intoPersonId: String(priya._id) })
+      .expect(200);
+    const cards = ((await MeetingDataModel.findOne({ meetingId: here }).lean())?.speakerCards ??
+      []) as SpeakerCardDoc[];
+    expect(cards[0]?.personId).toBe(String(priya._id));
+    expect(await SpeakerModel.findById(priya._id).lean()).toBeTruthy();
+  });
+});
+
 describe('shortTitle', () => {
   it('keeps one word, skips a generic first word, and reads dates', () => {
     expect(shortTitle('AOM Meeting part 1 (acceptance)')).toBe('AOM');

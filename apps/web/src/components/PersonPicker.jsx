@@ -39,6 +39,7 @@ export default function PersonPicker({
   disabled = false,
   startOpen = false,
   onDone,
+  allowCreate = true,
 }) {
   const [open, setOpen] = useState(startOpen);
   const [busy, setBusy] = useState(false);
@@ -61,7 +62,7 @@ export default function PersonPicker({
     personOptions.some((p) => fold(p.name) === fold(query)) ||
     speakerOptions.some((s) => fold(s.displayName) === fold(query)) ||
     people.some((p) => fold(p.name) === fold(query));
-  const showCreate = Boolean(query) && !exactTaken;
+  const showCreate = allowCreate && Boolean(query) && !exactTaken;
 
   const commit = async (choice) => {
     setBusy(true);
@@ -117,7 +118,7 @@ export default function PersonPicker({
       return;
     }
     if (speakerOptions.length || personOptions.length) return;
-    if (query) commit({ type: 'new', name: query });
+    if (allowCreate && query) commit({ type: 'new', name: query });
   };
 
   return (

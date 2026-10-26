@@ -10,6 +10,7 @@ export * from './summaryParse.js';
 export * from './summaryRename.js';
 export * from './carryOver.js';
 export * from './tasks.js';
+export * from './taskReconcile.js';
 export * from './summaryInput.js';
 export * from './normalize.js';
 export * from './assemble.js';

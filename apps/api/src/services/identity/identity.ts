@@ -1,4 +1,3 @@
-import { Types } from 'mongoose';
 import {
   computeCoverage,
   labelSpeakersByTime,
@@ -16,10 +15,13 @@ import {
   MeetingModel,
   SpeakerModel,
   type SpeakerCardDoc,
-  type SpeakerDoc,
 } from '../../models/index.js';
 import { P2JoinModel, P2PyannoteResponseModel } from '../../models/phase2.js';
 import { env } from '../../config/env.js';
+import { applyMeetingTaskFollow } from '../tasks/reconcile.js';
+import { displayName, peopleOf } from './display.js';
+
+export { displayName, peopleOf } from './display.js';
 
 /** "Meeting-21-9-2026 (acceptance, ts fix)" → "21/9", "AOM Meeting part 1 (acceptance)" → "AOM". */
 export function shortTitle(title: string): string {
@@ -33,20 +35,6 @@ export function shortTitle(title: string): string {
   const skipped = rest.length < words.length && rest.length > 0;
   const picked = (rest.length ? rest : words).slice(0, skipped ? 2 : 1).join(' ');
   return picked.length > 18 ? picked.slice(0, 18).trim() : picked || t;
-}
-
-/** Name shown for a card: the person's real name once a human has typed it, else the meeting's label. */
-export function displayName(card: SpeakerCardDoc, people: Map<string, SpeakerDoc>): string {
-  const person = card.personId ? people.get(card.personId) : undefined;
-  return person && !person.anonymous ? person.name : card.label;
-}
-
-export async function peopleOf(personIds: (string | null)[]): Promise<Map<string, SpeakerDoc>> {
-  const ids = personIds.filter((x): x is string => !!x).map((x) => new Types.ObjectId(x));
-  const docs = ids.length
-    ? await SpeakerModel.find({ _id: { $in: ids } }).lean<SpeakerDoc[]>()
-    : [];
-  return new Map(docs.map((d) => [String(d._id), d]));
 }
 
 /** Seconds each pyannote speaker talks in the exclusive diarization, largest first. */
@@ -263,15 +251,27 @@ async function followNames(
   const actual = linesAfter.map((l) => key(l, l.speakerName));
   if (JSON.stringify(expected) !== JSON.stringify(actual)) return outdated({ summaryNames: from });
 
+  const previousItems = (m.actionItems ?? []).map((a) => ({
+    speakerName: a.speakerName,
+    text: a.text,
+  }));
   const r = renameInSummary({
     summary: m.summary,
-    actionItems: (m.actionItems ?? []).map((a) => ({ speakerName: a.speakerName, text: a.text })),
+    actionItems: previousItems,
     from,
     to: speakerMap,
     spokenText: linesAfter.map((l) => l.textRoman).join('\n'),
   });
-  if (r.status === 'needs_refresh')
-    return outdated({ summaryNames: from, actionItems: r.actionItems });
+  const itemsMoved = r.actionItems.some(
+    (a, i) => a.speakerName !== previousItems[i]?.speakerName || a.text !== previousItems[i]?.text,
+  );
+  if (r.status === 'needs_refresh') {
+    await outdated({ summaryNames: from, actionItems: r.actionItems });
+    // The summary text waits for a refresh, but the action items already name the corrected speakers,
+    // so filed tasks follow now rather than staying with someone who has left this meeting.
+    if (itemsMoved) await applyMeetingTaskFollow(meetingId, previousItems, r.actionItems);
+    return 'needs_refresh';
+  }
   await MeetingModel.updateOne(
     { _id: meetingId },
     {
@@ -281,6 +281,8 @@ async function followNames(
       },
     },
   );
+  if (r.status === 'updated' && itemsMoved)
+    await applyMeetingTaskFollow(meetingId, previousItems, r.actionItems);
   return r.status;
 }
 

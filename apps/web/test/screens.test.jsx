@@ -636,6 +636,8 @@ describe('meeting page with a partly readable recording', () => {
     });
     await screen.findByText('the film');
     expect(screen.queryByText('Loading transcript')).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Roman' })).toHaveLength(1);
+    expect(screen.queryByRole('radiogroup', { name: 'In the file' })).toBeNull();
     expect(screen.getByTestId('meeting-side').className).toContain('lg:col-start-2');
   });
 

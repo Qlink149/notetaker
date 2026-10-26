@@ -13,6 +13,7 @@ import { identifyMeeting } from '../services/identity/enroll.js';
 import {
   EditError,
   SimilarPersonError,
+  mergeSpeakerIntoPerson,
   mergeSpeakers,
   nameSpeaker,
   peopleSimilarTo,
@@ -39,7 +40,18 @@ const NameBody = z.object({
   /** Rename the matched person in every meeting instead of correcting this meeting's match. */
   renameEverywhere: z.boolean().optional(),
 });
-const MergeBody = z.object({ from: z.string(), into: z.string() });
+const MergeBody = z
+  .object({
+    from: z.string().min(1),
+    into: z.string().min(1).optional(),
+    intoPersonId: z
+      .string()
+      .regex(/^[a-f0-9]{24}$/)
+      .optional(),
+  })
+  .refine((b) => Number(Boolean(b.into)) + Number(Boolean(b.intoPersonId)) === 1, {
+    message: 'Choose one person to merge with.',
+  });
 const SplitBody = z.object({ lineIndex: z.number().int().min(0) });
 const ReassignBody = z
   .object({
@@ -210,8 +222,13 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
 
   r.post('/meetings/:id/speakers/merge', async (req, res) => {
     const m = await own(req);
-    const { from, into } = body(MergeBody, req);
-    const result = await editing(() => mergeSpeakers(String(m._id), from, into));
+    const { from, into, intoPersonId } = body(MergeBody, req);
+    const result = await editing(() => {
+      if (into) return mergeSpeakers(String(m._id), from, into);
+      if (intoPersonId)
+        return mergeSpeakerIntoPerson(String(m._id), String(ws(req)._id), from, intoPersonId);
+      throw new EditError('Choose one person to merge with.');
+    });
     res.json({ lines: result?.lines ?? 0 });
   });
 

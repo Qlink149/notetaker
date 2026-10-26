@@ -173,6 +173,38 @@ export async function mergeSpeakers(
   return save(meetingId, turns, rest, { from: fromDiar, into: intoDiar });
 }
 
+/**
+ * Make this voice the same person as a saved profile. A person not already in the meeting is an
+ * identity merge when this voice already has its own profile (other meetings and tasks move with it).
+ * A voice with no profile is linked, and other meetings stay where they are. A person who already
+ * has a voice here is folded in with `mergeSpeakers`.
+ */
+export async function mergeSpeakerIntoPerson(
+  meetingId: string,
+  workspaceId: string,
+  fromDiar: string,
+  intoPersonId: string,
+): Promise<ApplyResult | null> {
+  if (!Types.ObjectId.isValid(intoPersonId)) throw new EditError('Unknown person.');
+  const target = await SpeakerModel.findOne({ _id: intoPersonId, workspaceId }).lean();
+  if (!target) throw new EditError('Unknown person.');
+  const { turns, cards } = await load(meetingId);
+  const from = cards.find((c) => c.diar === fromDiar);
+  if (!from) throw new EditError('Speaker not found.');
+  if (from.personId === intoPersonId) throw new EditError('That voice is already this person.');
+  const intoCard = cards.find((c) => c.personId === intoPersonId && c.diar !== fromDiar);
+  if (intoCard) return mergeSpeakers(meetingId, fromDiar, intoCard.diar);
+  if (from.personId) {
+    await mergePeople(intoPersonId, from.personId);
+    return applyNames(meetingId);
+  }
+  from.personId = intoPersonId;
+  from.status = 'manual';
+  from.confirmed = true;
+  from.match = null;
+  return save(meetingId, turns, cards);
+}
+
 /** From the chosen line onward, move that speaker's turns to a new speaker (a person wrongly merged). */
 export async function splitSpeaker(
   meetingId: string,

@@ -21,7 +21,7 @@ import {
   type SpeakerDoc,
   type TaskDoc,
 } from '../models/index.js';
-import { displayName } from '../services/identity/identity.js';
+import { speakerOwnerId } from '../services/tasks/reconcile.js';
 
 /** Done tasks drop off the lists after this long. */
 const DONE_KEPT_DAYS = 60;
@@ -82,20 +82,6 @@ const handledOf = (m: Pick<MeetingDoc, 'summaryAt' | 'taskReview'>): Set<number>
 
 const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
-/**
- * The person an action item's speaker name refers to: a voice of this meeting shown under that name, else a
- * named person in the directory with that name (or, when only one person has it, that first name).
- */
-function ownerFor(name: string, cards: SpeakerCardDoc[], pp: People): string | null {
-  const n = norm(name);
-  for (const c of cards) if (c.personId && norm(displayName(c, pp)) === n) return c.personId;
-  const named = [...pp.values()].filter((p) => !p.anonymous);
-  const exact = named.find((p) => norm(p.name) === n);
-  if (exact) return String(exact._id);
-  const byFirst = named.filter((p) => norm(p.name).split(' ')[0] === n);
-  return byFirst.length === 1 ? String(byFirst[0]!._id) : null;
-}
-
 async function suggestionsFor(meetings: MeetingDoc[], pp: People): Promise<TaskSuggestion[]> {
   const out: TaskSuggestion[] = [];
   // An action item already made a task from this meeting is not offered again, even under a new summary (a
@@ -126,7 +112,7 @@ async function suggestionsFor(meetings: MeetingDoc[], pp: People): Promise<TaskS
         priority: d.priority,
         quote: d.quote,
         speakerName: a.speakerName,
-        ownerId: ownerFor(a.speakerName, cards, pp),
+        ownerId: speakerOwnerId(a.speakerName, cards, pp),
       });
     }
   }

@@ -341,8 +341,12 @@ export const api = {
         throw e;
       }
     },
-    mergeSpeakers: (id: string, from: string, into: string) =>
-      request<{ lines: number }>('POST', `/meetings/${id}/speakers/merge`, { from, into }),
+    mergeSpeakers: (id: string, from: string, into: string | { personId: string }) =>
+      request<{ lines: number }>(
+        'POST',
+        `/meetings/${id}/speakers/merge`,
+        typeof into === 'string' ? { from, into } : { from, intoPersonId: into.personId },
+      ),
     splitSpeaker: (id: string, lineIndex: number) =>
       request<{ newSpeaker: string }>('POST', `/meetings/${id}/speakers/split`, { lineIndex }),
     /**

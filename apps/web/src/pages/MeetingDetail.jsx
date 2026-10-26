@@ -100,6 +100,8 @@ export default function MeetingDetail() {
   const [people, setPeople] = useState([]);
   // set when a speaker edit swapped the new names into the existing summary (no new summary was written)
   const [summaryNote, setSummaryNote] = useState('');
+  // Bumped after a speaker edit so this meeting's task list reloads (owners may have moved).
+  const [taskTick, setTaskTick] = useState(0);
   const meetingRef = useRef(null);
   const [follow, setFollow] = useState(() => {
     try {
@@ -180,7 +182,12 @@ export default function MeetingDetail() {
       !m.summaryOutdated &&
       (before.summary !== m.summary ||
         JSON.stringify(before.actionItems) !== JSON.stringify(m.actionItems));
-    setSummaryNote(followed ? 'Summary and action items updated with the new name.' : '');
+    setSummaryNote(
+      followed
+        ? 'Summary and action items updated with the new name. Untouched tasks from this meeting follow it too.'
+        : '',
+    );
+    setTaskTick((n) => n + 1);
   }, [id]);
 
   useEffect(() => {
@@ -631,6 +638,8 @@ export default function MeetingDetail() {
                 This speaker change needs a new summary (speakers were joined or split, a line moved
                 to someone else, or a name is also someone mentioned in the meeting). Until then the
                 summary above may use the earlier names; the action items already show the new ones.
+                Refresh also lines up this meeting’s untouched tasks with those speakers. People no
+                longer in the meeting drop off those tasks. A task you edited or completed stays.
               </span>
               <Button
                 size="sm"
@@ -647,7 +656,12 @@ export default function MeetingDetail() {
           )}
 
           <ActionItems actionItems={meeting.actionItems} />
-          {!processing && <MeetingTasks meetingId={id} summaryKey={meeting.summaryStatus} />}
+          {!processing && (
+            <MeetingTasks
+              meetingId={id}
+              summaryKey={`${meeting.summaryStatus}:${meeting.updatedAt ?? ''}:${taskTick}`}
+            />
+          )}
 
           {speakers?.source === 'text-fallback' && hasTranscript && !processing && (
             <TextSpeakersNotice busy={busy} onRerun={() => retryStage('diarize')} />

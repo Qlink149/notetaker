@@ -2,15 +2,27 @@ import request from 'supertest';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Express } from 'express';
+import { draftTask, isoDay } from '@meetingid/pipeline';
 import { createApp } from '../src/app.js';
+import { logger } from '../src/lib/logger.js';
 import {
   MeetingDataModel,
   MeetingModel,
   SpeakerModel,
   TaskModel,
+  type JobDoc,
   type WorkspaceDoc,
 } from '../src/models/index.js';
-import { ACCESS_CODE, clearDb, fakeStorage, seedWorkspace, startDb, stopDb } from './helpers.js';
+import { summariseStage } from '../src/pipeline/stages/40-summarise.js';
+import {
+  ACCESS_CODE,
+  clearDb,
+  fakeStorage,
+  seedWorkspace,
+  startDb,
+  stopDb,
+  testDeps,
+} from './helpers.js';
 
 let app: Express;
 let workspace: WorkspaceDoc;
@@ -230,6 +242,179 @@ describe('tasks', () => {
     await api.del(`/meetings/${String(m._id)}`).expect((r) => expect(r.status).toBeLessThan(300));
     const left = (await api.get('/tasks')).body.tasks.map((t: { title: string }) => t.title);
     expect(left).toEqual(['Separate']);
+  });
+});
+
+describe('summary refresh follows corrected speakers', () => {
+  it('moves untouched tasks, drops a person who has left, and keeps edits, completed work and other meetings', async () => {
+    const day = new Date('2026-10-24T05:00:00.000Z');
+    const meetingDay = isoDay(day);
+    const harshit = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Harshit Mehta',
+      anonymous: false,
+    });
+    const priya = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Priya Shah',
+      anonymous: false,
+    });
+    const send = 'Send the samples by tomorrow';
+    const book = 'Book the hall';
+    const sendDraft = draftTask(send, meetingDay);
+    const bookDraft = draftTask(book, meetingDay);
+    const m = await MeetingModel.create({
+      workspaceId: workspace._id,
+      title: 'NDPF 24 Oct',
+      date: day,
+      status: 'processing',
+      stage: 'summarise',
+      summaryStatus: 'pending',
+      summary: 'Harshit Mehta will send the samples and book the hall.',
+      actionItems: [
+        { speakerName: 'Harshit Mehta', text: send },
+        { speakerName: 'Harshit Mehta', text: book },
+      ],
+      coverage: { speechSec: 100, coveredSec: 90, ratio: 0.9 },
+      audio: { originalUrl: 'x', originalPublicId: 'x' },
+    });
+    await MeetingDataModel.create({
+      meetingId: m._id,
+      lines: [
+        {
+          speakerName: 'Priya Shah',
+          start: 0,
+          end: 5,
+          textRoman: 'send the samples',
+          textNative: '',
+        },
+      ],
+      speakerCards: [
+        {
+          diar: 'S0',
+          label: 'Speaker A',
+          personId: String(priya._id),
+          speakerSec: 30,
+          match: null,
+          candidate: null,
+          status: 'manual',
+          clips: [],
+        },
+      ],
+    });
+    const other = await MeetingModel.create({
+      workspaceId: workspace._id,
+      title: 'Other meeting',
+      date: day,
+      status: 'completed',
+      stage: 'done',
+      audio: { originalUrl: 'x', originalPublicId: 'x' },
+    });
+    const open = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: m._id,
+      ownerId: harshit._id,
+      title: sendDraft.title,
+      priority: sendDraft.priority,
+      due: sendDraft.due,
+      status: 'open',
+      source: { meetingId: m._id, index: 0, text: send },
+    });
+    const dropped = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: m._id,
+      ownerId: harshit._id,
+      title: bookDraft.title,
+      priority: bookDraft.priority,
+      due: bookDraft.due,
+      status: 'open',
+      source: { meetingId: m._id, index: 1, text: book },
+    });
+    const done = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: m._id,
+      ownerId: harshit._id,
+      title: sendDraft.title,
+      priority: sendDraft.priority,
+      due: sendDraft.due,
+      status: 'done',
+      doneAt: day,
+      source: { meetingId: m._id, index: 0, text: send },
+    });
+    const edited = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: m._id,
+      ownerId: harshit._id,
+      title: 'Send the dyed samples',
+      priority: sendDraft.priority,
+      due: sendDraft.due,
+      status: 'open',
+      source: { meetingId: m._id, index: 0, text: send },
+    });
+    const elsewhere = await TaskModel.create({
+      workspaceId: workspace._id,
+      meetingId: other._id,
+      ownerId: harshit._id,
+      title: sendDraft.title,
+      priority: sendDraft.priority,
+      due: sendDraft.due,
+      status: 'open',
+      source: { meetingId: other._id, index: 0, text: send },
+    });
+
+    const now = new Date();
+    const job = {
+      _id: new Types.ObjectId(),
+      meetingId: m._id,
+      stage: 'summarise',
+      step: null,
+      status: 'running',
+      attempts: 1,
+      maxAttempts: 5,
+      runAfter: now,
+      lockedBy: 'test',
+      lockedAt: now,
+      lastError: null,
+      payload: { force: true },
+      createdAt: now,
+      updatedAt: now,
+    } as JobDoc;
+    await summariseStage.run({
+      job,
+      log: logger,
+      deps: testDeps({
+        storage: await fakeStorage(),
+        engine: () => {
+          throw new Error('unused');
+        },
+        summariser: {
+          async summarise() {
+            return {
+              result: {
+                summaryMarkdown: '## Overview\nPriya Shah will send the samples.',
+                actionItems: [{ speakerName: 'Priya Shah', text: send }],
+              },
+              usage: { inputTokens: 10, outputTokens: 10 },
+            };
+          },
+        },
+      }),
+      tmpDir: '/tmp',
+    });
+
+    const after = (await MeetingModel.findById(m._id).lean())!;
+    expect(after.summary).toBe('## Overview\nPriya Shah will send the samples.');
+    expect(after.summary).not.toContain('Harshit');
+    expect(after.summaryOutdated).toBe(false);
+    expect(String((await TaskModel.findById(open._id).lean())?.ownerId)).toBe(String(priya._id));
+    expect(await TaskModel.findById(dropped._id).lean()).toBeNull();
+    expect(String((await TaskModel.findById(done._id).lean())?.ownerId)).toBe(String(harshit._id));
+    expect((await TaskModel.findById(edited._id).lean())?.ownerId?.toString()).toBe(
+      String(harshit._id),
+    );
+    const kept = (await TaskModel.findById(elsewhere._id).lean())!;
+    expect(String(kept.ownerId)).toBe(String(harshit._id));
+    expect(String(kept.meetingId)).toBe(String(other._id));
   });
 });
 

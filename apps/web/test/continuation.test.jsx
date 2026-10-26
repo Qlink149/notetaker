@@ -197,7 +197,7 @@ describe('what a copy or export includes', () => {
       screen.getByRole('button', { name: (name) => name === 'Copy' || name === 'Copied' }),
     );
 
-  it('copies notes and the transcript, then follows a script change until one is picked here', async () => {
+  it('copies notes and the transcript in the same script as the page', async () => {
     const view = render(<MeetingExport meeting={rich} lines={lines} scriptMode="roman" />);
     clickCopy();
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalled());
@@ -205,6 +205,7 @@ describe('what a copy or export includes', () => {
     expect(copiedText()).toContain('Send the plan');
     expect(copiedText()).toContain('hello roman');
     expect(copiedText()).not.toContain('hello native');
+    expect(screen.queryByRole('radio', { name: 'Roman' })).toBeNull();
 
     view.rerender(<MeetingExport meeting={rich} lines={lines} scriptMode="native" />);
     clickCopy();
@@ -212,12 +213,11 @@ describe('what a copy or export includes', () => {
     expect(copiedText()).toContain('hello native');
     expect(copiedText()).not.toContain('hello roman');
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Roman' }));
     view.rerender(<MeetingExport meeting={rich} lines={lines} scriptMode="both" />);
     clickCopy();
     await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(3));
     expect(copiedText()).toContain('hello roman');
-    expect(copiedText()).not.toContain('hello native');
+    expect(copiedText()).toContain('hello native');
   });
 
   it('keeps at least one of Notes and Transcript, and leaves the unticked part out', async () => {

@@ -223,11 +223,29 @@ describe('speaker cards', () => {
         phone: null,
       }),
     ]);
-    const select = screen.getAllByLabelText(/Merge Speaker B into/)[0];
-    fireEvent.change(select, { target: { value: 'SPEAKER_02' } });
-    fireEvent.click(screen.getAllByRole('button', { name: /Merge/ })[0]);
+    fireEvent.focus(screen.getAllByLabelText(/Merge Speaker B with/)[0]);
+    fireEvent.click(screen.getByRole('option', { name: 'Speaker C' }));
+    fireEvent.click(screen.getAllByRole('button', { name: /^Merge$/ })[0]);
     await waitFor(() =>
       expect(api.meetings.mergeSpeakers).toHaveBeenCalledWith('m1', 'SPEAKER_01', 'SPEAKER_02'),
+    );
+  });
+
+  it('merges with a saved person who is not a voice in this meeting', async () => {
+    api.meetings.mergeSpeakers.mockResolvedValue({ lines: 4 });
+    renderReview([card({ match: null, appearsIn: [], phone: null })], {
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    expect(screen.getByText(/combines the two identities/)).toBeTruthy();
+    expect(screen.getByText(/asks before a second person is created/)).toBeTruthy();
+    fireEvent.focus(screen.getByLabelText(/Merge Speaker B with/));
+    expect(screen.queryByRole('option', { name: /Create/ })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Merge$/ }));
+    await waitFor(() =>
+      expect(api.meetings.mergeSpeakers).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        personId: 'p-parag',
+      }),
     );
   });
 

@@ -5,12 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { fmtDuration, fmtTime, lineText } from '@/lib/format';
 
-const EXPORT_SCRIPTS = [
-  { mode: 'roman', label: 'Roman' },
-  { mode: 'native', label: 'Native' },
-  { mode: 'both', label: 'Both' },
-];
-
 function fmtDate(iso) {
   try {
     return new Date(iso).toLocaleString();
@@ -109,13 +103,8 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   const [shareBusy, setShareBusy] = useState(false);
   const [notes, setNotes] = useState(true);
   const [transcript, setTranscript] = useState(true);
-  // Follows the transcript switch until the person picks a script here.
-  const [exportScript, setExportScript] = useState(scriptMode);
-  const scriptTouched = useRef(false);
+  // The file uses the same Roman / Native / Both switch as the transcript on the page.
   const parts = { notes, transcript };
-  useEffect(() => {
-    if (!scriptTouched.current) setExportScript(scriptMode);
-  }, [scriptMode]);
   // Share is for phones (WhatsApp, Drive). On a computer Chrome refuses Word files in its share menu
   // ("Permission denied") and the Word/PDF buttons beside it do the job, so it is not offered there.
   const canShare =
@@ -138,7 +127,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
     if (preparing.current) return preparing.current;
     const gen = shareGen.current;
     preparing.current = api.meetings
-      .exportDocx(meeting.id, exportScript, parts)
+      .exportDocx(meeting.id, scriptMode, parts)
       .then((blob) => {
         if (shareGen.current !== gen) return null;
         const file = new File([blob], `${meeting.title.replace(/[^a-z0-9]+/gi, '_')}.docx`, {
@@ -159,10 +148,10 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
     preparing.current = null;
     setShareFile(null);
     setAskAgain(false);
-  }, [exportScript, meeting.id, notes, transcript]);
+  }, [scriptMode, meeting.id, notes, transcript]);
 
   const share = () => {
-    const text = { title: meeting.title, text: buildText(meeting, lines, exportScript, parts) };
+    const text = { title: meeting.title, text: buildText(meeting, lines, scriptMode, parts) };
     const done = (p, withFile) =>
       p.catch((e) => {
         if (e?.name === 'AbortError') return; // the person closed the share menu
@@ -212,7 +201,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(buildText(meeting, lines, exportScript, parts));
+      await navigator.clipboard.writeText(buildText(meeting, lines, scriptMode, parts));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -221,7 +210,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   };
 
   const downloadTxt = () => {
-    const blob = new Blob([buildText(meeting, lines, exportScript, parts)], {
+    const blob = new Blob([buildText(meeting, lines, scriptMode, parts)], {
       type: 'text/plain;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
@@ -235,7 +224,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   const downloadWord = async () => {
     setWordBusy(true);
     try {
-      const blob = await api.meetings.exportDocx(meeting.id, exportScript, parts);
+      const blob = await api.meetings.exportDocx(meeting.id, scriptMode, parts);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -252,7 +241,7 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
   const printPdf = () => {
     const w = window.open('', '_blank');
     if (!w) return alert('Please allow pop-ups to export as PDF.');
-    w.document.write(buildPrintHtml(meeting, lines, exportScript, parts));
+    w.document.write(buildPrintHtml(meeting, lines, scriptMode, parts));
     w.document.close();
   };
 
@@ -284,31 +273,6 @@ export default function MeetingExport({ meeting, lines, scriptMode = 'roman' }) 
           <label htmlFor="export-transcript" className="font-medium">
             Transcript
           </label>
-        </div>
-        <div
-          className="flex gap-1 bg-secondary rounded-full p-0.5"
-          role="radiogroup"
-          aria-label="In the file"
-        >
-          {EXPORT_SCRIPTS.map((s) => (
-            <button
-              key={s.mode}
-              type="button"
-              role="radio"
-              aria-checked={exportScript === s.mode}
-              onClick={() => {
-                scriptTouched.current = true;
-                setExportScript(s.mode);
-              }}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                exportScript === s.mode
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground'
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
         </div>
       </div>
       <div className="flex gap-2 flex-wrap">
