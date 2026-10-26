@@ -111,10 +111,49 @@ describe('speaker cards', () => {
     expect(onPlay).toHaveBeenCalledWith(300, 312);
   });
 
+  it('jumps to a clip and can move that clip to a saved person without the rest of the group', async () => {
+    const onPlay = vi.fn();
+    const onLocate = vi.fn();
+    const onAssignClip = vi.fn().mockResolvedValue(undefined);
+    renderReview([card()], {
+      onPlay,
+      onLocate,
+      onAssignClip,
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: /Play sample/ })[0]);
+    expect(onPlay).toHaveBeenCalledWith(12, 24);
+    expect(onLocate).toHaveBeenCalledWith(12);
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    await waitFor(() =>
+      expect(onAssignClip).toHaveBeenCalledWith(expect.objectContaining({ start: 12, end: 24 }), {
+        type: 'person',
+        personId: 'p-parag',
+        name: 'Parag',
+      }),
+    );
+  });
+
   it('warns plainly when the speaker labels are not voice-based', () => {
     renderReview([card({ match: null, appearsIn: [], phone: null })], { source: 'text-fallback' });
     expect(screen.getByText(/matching text between recording chunks/)).toBeTruthy();
     expect(screen.queryByText('Re-identify speakers')).toBeNull();
+  });
+
+  it('names a voice from a saved person instead of typing a second profile', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
+    renderReview([card({ match: null })], {
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    fireEvent.focus(screen.getByLabelText(/Name for Speaker B/));
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        name: 'Parag',
+        usePersonId: 'p-parag',
+      }),
+    );
   });
 
   it('names a voice, reports where else it changed, and refreshes', async () => {
@@ -269,7 +308,7 @@ describe('speaker cards', () => {
     expect(screen.queryByText(/not confident enough to link/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
     expect(screen.getByLabelText(/Name for Paresh Ecom/).getAttribute('placeholder')).toBe(
-      'Not Paresh Ecom? Type the right name',
+      'Search saved people, or type a new name',
     );
   });
 
@@ -299,20 +338,42 @@ describe('transcript editing', () => {
     expect(screen.getByText('aaj hum')).toBeTruthy();
   });
 
-  it('moves one line to another speaker, and splits a speaker from a line', async () => {
+  it('moves one line to a meeting speaker, a saved person, or a new name', async () => {
     const onReassign = vi.fn().mockResolvedValue(undefined);
     const onSplit = vi.fn().mockResolvedValue(undefined);
     render(
       <TranscriptView
         lines={lines}
         speakers={speakers}
+        people={[{ id: 'p-parag', name: 'Parag', anonymous: false }]}
         onReassign={onReassign}
         onSplit={onSplit}
       />,
     );
     fireEvent.click(screen.getByRole('button', { name: /Speaker B: change who said this/ }));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'S0' } });
-    await waitFor(() => expect(onReassign).toHaveBeenCalledWith(1, 'S0'));
+    fireEvent.click(screen.getByRole('option', { name: 'Speaker A' }));
+    await waitFor(() =>
+      expect(onReassign).toHaveBeenCalledWith(1, {
+        type: 'speaker',
+        diar: 'S0',
+        name: 'Speaker A',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Speaker B: change who said this/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    await waitFor(() =>
+      expect(onReassign).toHaveBeenLastCalledWith(1, {
+        type: 'person',
+        personId: 'p-parag',
+        name: 'Parag',
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Speaker B: change who said this/ }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'Hetal' } });
+    fireEvent.click(screen.getByRole('option', { name: 'Create “Hetal”' }));
+    await waitFor(() =>
+      expect(onReassign).toHaveBeenLastCalledWith(1, { type: 'new', name: 'Hetal' }),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Speaker B: change who said this/ }));
     fireEvent.click(await screen.findByRole('button', { name: /different person from here on/ }));
     await waitFor(() => expect(onSplit).toHaveBeenCalledWith(1));
@@ -330,7 +391,7 @@ describe('transcript editing', () => {
       .mockRejectedValue(new Error('Could not find the speech of that line.'));
     render(<TranscriptView lines={lines} speakers={speakers} onReassign={onReassign} />);
     fireEvent.click(screen.getByRole('button', { name: /Speaker A: change who said this/ }));
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'S1' } });
+    fireEvent.click(screen.getByRole('option', { name: 'Speaker B' }));
     await screen.findByText(/Could not find the speech/);
   });
 });

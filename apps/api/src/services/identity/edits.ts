@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import type { Line, Turn } from '@meetingid/shared';
+import { foldName, overlappingNames, similarNames } from '@meetingid/pipeline';
 import {
   MeetingDataModel,
   MeetingModel,
@@ -25,6 +26,16 @@ import { enqueue } from '../../pipeline/queue.js';
 
 export class EditError extends Error {}
 
+/** The typed name matches people who already exist. The route answers 409 so the UI can ask. */
+export class SimilarPersonError extends Error {
+  readonly similar: { id: string; name: string }[];
+  constructor(similar: { id: string; name: string }[]) {
+    super('similar_name');
+    this.name = 'SimilarPersonError';
+    this.similar = similar;
+  }
+}
+
 const letters = (i: number): string =>
   i < 26
     ? String.fromCharCode(65 + i)
@@ -34,6 +45,15 @@ const letters = (i: number): string =>
 export function nextLabel(cards: SpeakerCardDoc[]): string {
   const used = new Set(cards.map((c) => c.label));
   for (let i = 0; ; i++) if (!used.has(`Speaker ${letters(i)}`)) return `Speaker ${letters(i)}`;
+}
+
+/** Next synthetic diar id for a voice split off `base` ("S0" → "S0~1"). Never reuses a suffix. */
+function nextSplitDiar(cards: SpeakerCardDoc[], base: string): string {
+  const root = base.replace(/~\d+$/, '');
+  const used = cards
+    .map((c) => (c.diar.startsWith(`${root}~`) ? Number(c.diar.slice(root.length + 1)) : 0))
+    .filter((n) => Number.isFinite(n));
+  return `${root}~${Math.max(0, ...used) + 1}`;
 }
 
 async function load(meetingId: string) {
@@ -166,11 +186,7 @@ export async function splitSpeaker(
   const diar = first.speaker;
   const card = cards.find((c) => c.diar === diar);
   if (!card) throw new EditError('Speaker not found.');
-  const base = diar.replace(/~\d+$/, '');
-  const used = cards
-    .map((c) => (c.diar.startsWith(`${base}~`) ? Number(c.diar.slice(base.length + 1)) : 0))
-    .filter(Number.isFinite);
-  const id = `${base}~${Math.max(0, ...used) + 1}`; // never reuses a suffix, even after merges
+  const id = nextSplitDiar(cards, diar);
   const label = nextLabel(cards);
   let moved = 0;
   for (const t of turns) {
@@ -194,24 +210,167 @@ export async function splitSpeaker(
   return { result: await save(meetingId, turns, cards), label };
 }
 
-/** Give one line to another speaker of the meeting. */
+export interface ReassignTarget {
+  /** Another voice already detected in this meeting. */
+  toDiar?: string;
+  /** A saved person, including one this meeting has not detected. */
+  toPersonId?: string;
+  /** A name to create, or to link when it is already a saved person. */
+  toName?: string;
+  /** Keep `toName` as a new person even when it looks like someone saved. */
+  createNew?: boolean;
+}
+
+type Clip = SpeakerCardDoc['clips'][number];
+
+/** A sample belongs with the speech that was moved when most of the sample sits inside it. */
+function clipFollows(clip: Clip, intervals: { start: number; end: number }[]): boolean {
+  const dur = clip.end - clip.start;
+  if (!(dur > 0)) return false;
+  let covered = 0;
+  for (const iv of intervals) {
+    const overlap = Math.min(clip.end, iv.end) - Math.max(clip.start, iv.start);
+    if (overlap > 0) covered += overlap;
+  }
+  return covered >= dur * 0.5;
+}
+
+/**
+ * Named people the typed name probably already is: the same name, a typo, or the same name with an
+ * extra word ("Parag Bhai" / "Parag"). `exceptPersonId` is the profile being renamed, so extending
+ * that person's own name is not a clash.
+ */
+export async function peopleSimilarTo(
+  workspaceId: string,
+  name: string,
+  exceptPersonId?: string | null,
+): Promise<{ id: string; name: string }[]> {
+  const named = await SpeakerModel.find({
+    workspaceId: new Types.ObjectId(workspaceId),
+    anonymous: false,
+    ...(exceptPersonId && Types.ObjectId.isValid(exceptPersonId)
+      ? { _id: { $ne: new Types.ObjectId(exceptPersonId) } }
+      : {}),
+  }).lean<SpeakerDoc[]>();
+  const names = named.map((p) => p.name);
+  const hit = new Set([...similarNames(name, names), ...overlappingNames(name, names)]);
+  return named.filter((p) => hit.has(p.name)).map((p) => ({ id: String(p._id), name: p.name }));
+}
+
+async function personInWorkspace(workspaceId: string, personId: string): Promise<SpeakerDoc> {
+  if (!Types.ObjectId.isValid(personId)) throw new EditError('Unknown person.');
+  const person = await SpeakerModel.findOne({
+    _id: personId,
+    workspaceId: new Types.ObjectId(workspaceId),
+  }).lean<SpeakerDoc>();
+  if (!person) throw new EditError('Unknown person.');
+  return person;
+}
+
+/**
+ * The card that should receive the line. A saved person who already speaks in this meeting reuses
+ * their card. Someone who does not gets a new card in this meeting only — the group the line left
+ * keeps its name, and no other meeting is rewritten.
+ */
+async function cardForTarget(
+  workspaceId: string,
+  meetingId: string,
+  cards: SpeakerCardDoc[],
+  sampleDiar: string,
+  target: ReassignTarget,
+): Promise<SpeakerCardDoc> {
+  if (target.toDiar) {
+    const card = cards.find((c) => c.diar === target.toDiar);
+    if (!card) throw new EditError('Line or speaker not found.');
+    return card;
+  }
+
+  let personId = target.toPersonId ?? null;
+  const typed = target.toName?.trim().replace(/\s+/g, ' ') ?? '';
+  if (!personId && typed) {
+    if (!target.createNew) {
+      const similar = await peopleSimilarTo(workspaceId, typed);
+      const exact = similar.filter((s) => foldName(s.name) === foldName(typed));
+      if (exact.length === 1 && similar.length === exact.length) personId = exact[0]!.id;
+      else if (similar.length) throw new SimilarPersonError(similar);
+    }
+    if (!personId) {
+      const clash = await SpeakerModel.findOne({
+        workspaceId: new Types.ObjectId(workspaceId),
+        name: typed,
+      }).lean<SpeakerDoc>();
+      if (clash && target.createNew)
+        throw new EditError(
+          'A person with that name already exists. Link this recording to them, or type a different name.',
+        );
+      personId = clash
+        ? String(clash._id)
+        : await createNamedPerson(workspaceId, meetingId, sampleDiar, typed);
+    }
+  }
+  if (!personId) throw new EditError('Choose a speaker, a saved person, or a new name.');
+
+  await personInWorkspace(workspaceId, personId);
+  const existing = cards.find((c) => c.personId === personId);
+  if (existing) return existing;
+  const created: SpeakerCardDoc = {
+    diar: nextSplitDiar(cards, sampleDiar),
+    label: nextLabel(cards),
+    personId,
+    speakerSec: 0,
+    match: null,
+    candidate: null,
+    status: 'manual',
+    clips: [],
+  };
+  cards.push(created);
+  return created;
+}
+
+/**
+ * Give one transcript line to another speaker. That can be a voice in this meeting, any saved
+ * person, or a new name. Only this line's speech moves; the rest of the group, and every other
+ * meeting, stay with the person they already belong to.
+ */
 export async function reassignLine(
   meetingId: string,
+  workspaceId: string,
   lineIndex: number,
-  toDiar: string,
+  target: ReassignTarget,
 ): Promise<ApplyResult | null> {
   const { turns, cards, lines, speakerMap } = await load(meetingId);
   const line = lines[lineIndex];
-  const target = cards.find((c) => c.diar === toDiar);
-  if (!line || !target) throw new EditError('Line or speaker not found.');
+  if (!line) throw new EditError('Line or speaker not found.');
   const mine = turnsOfLine(turns, line, speakerMap);
   if (!mine.length) throw new EditError('Could not find the speech of that line.');
+  const dest = await cardForTarget(workspaceId, meetingId, cards, mine[0]!.speaker, target);
+
+  const movedFrom = new Map<string, { start: number; end: number }[]>();
   for (const t of mine) {
+    if (t.speaker === dest.diar) continue;
     const from = cards.find((c) => c.diar === t.speaker);
     const sec = t.end - t.start;
     if (from) from.speakerSec = Math.max(0, Math.round((from.speakerSec - sec) * 10) / 10);
-    target.speakerSec = Math.round((target.speakerSec + sec) * 10) / 10;
-    t.speaker = toDiar;
+    dest.speakerSec = Math.round((dest.speakerSec + sec) * 10) / 10;
+    const intervals = movedFrom.get(t.speaker) ?? [];
+    intervals.push({ start: t.start, end: t.end });
+    movedFrom.set(t.speaker, intervals);
+    t.speaker = dest.diar;
+  }
+  if (movedFrom.size === 0) return applyNames(meetingId);
+
+  for (const [diar, intervals] of movedFrom) {
+    const from = cards.find((c) => c.diar === diar);
+    if (!from) continue;
+    const go = (from.clips ?? []).filter((clip) => clipFollows(clip, intervals));
+    if (!go.length) continue;
+    const going = new Set(go);
+    from.clips = (from.clips ?? []).filter((clip) => !going.has(clip));
+    const have = new Set((dest.clips ?? []).map((clip) => Math.round(clip.start)));
+    const fresh = go.filter((clip) => !have.has(Math.round(clip.start)));
+    dest.clips = [...(dest.clips ?? []), ...fresh].sort((a, b) => a.start - b.start);
+    if (from.personId && from.personId !== dest.personId)
+      await forgetVoice(from.personId, meetingId, go);
   }
   return save(meetingId, turns, cards);
 }
@@ -219,13 +378,13 @@ export async function reassignLine(
 const sameName = (a: string, b: string): boolean =>
   a.trim().replace(/\s+/g, ' ').toLowerCase() === b.trim().replace(/\s+/g, ' ').toLowerCase();
 
-/** Remove the voiceprints a person got from this card's clips (a match that turned out to be someone else). */
+/** Remove the voiceprints a person got from these clips (speech that turned out to be someone else). */
 async function forgetVoice(
   personId: string,
   meetingId: string,
-  card: SpeakerCardDoc,
+  clips: { start: number }[],
 ): Promise<void> {
-  const starts = new Set((card.clips ?? []).map((c) => Math.round(c.start)));
+  const starts = new Set(clips.map((c) => Math.round(c.start)));
   if (!starts.size) return;
   const person = await SpeakerModel.findById(personId).lean<SpeakerDoc>();
   if (!person) return;
@@ -350,7 +509,7 @@ export async function nameSpeaker(
     // Take this recording's clips off a profile that other meetings still use. A placeholder that
     // existed only here is absorbed below, clips included, because it has no other history.
     if (personId && personId !== usePersonId && heardElsewhere)
-      await forgetVoice(personId, meetingId, card);
+      await forgetVoice(personId, meetingId, card.clips ?? []);
     if (personId && personId !== usePersonId) await absorbLonePlaceholder(personId, usePersonId);
     return finishHere(usePersonId);
   }
@@ -366,7 +525,7 @@ export async function nameSpeaker(
     card.status = 'solid';
     card.confirmed = true;
     await MeetingDataModel.updateOne({ meetingId }, { $set: { speakerCards: cards } });
-    if (personId && heardElsewhere) await forgetVoice(personId, meetingId, card);
+    if (personId && heardElsewhere) await forgetVoice(personId, meetingId, card.clips ?? []);
     if (personId) await absorbLonePlaceholder(personId, createdId);
     return finishHere(createdId);
   }

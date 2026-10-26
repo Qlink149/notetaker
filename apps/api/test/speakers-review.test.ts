@@ -376,6 +376,33 @@ describe('naming a voice', () => {
     expect(merged!.voiceprints).toHaveLength(2);
   });
 
+  it('asks before an extra word creates a second profile for someone already saved', async () => {
+    const parag = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Parag',
+      anonymous: false,
+    });
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 5, 'x')],
+      [card('S0', 'Speaker A', null, { clips: [] })],
+    );
+    const clash = await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Parag Bhai' })
+      .expect(409);
+    expect(clash.body).toMatchObject({
+      error: 'similar_name',
+      similar: [{ id: String(parag._id), name: 'Parag' }],
+    });
+    expect(await SpeakerModel.countDocuments({ name: 'Parag Bhai' })).toBe(0);
+
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Parag', usePersonId: String(parag._id) })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Parag']);
+    expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
+  });
+
   it('creates a person when a voice had none, and keeps a new name when asked', async () => {
     const id = await seedMeeting(
       'Prachar',
@@ -665,9 +692,9 @@ describe('correcting a speaker stays in that recording', () => {
     expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id })).toBe(1);
     const renamed = await SpeakerModel.findById(person._id).lean();
     expect(renamed).toMatchObject({ name: 'Rishabh', anonymous: false });
-    expect(String((await TaskModel.findOne({ title: 'Enable focus stacking' }).lean())!.ownerId)).toBe(
-      String(person._id),
-    );
+    expect(
+      String((await TaskModel.findOne({ title: 'Enable focus stacking' }).lean())!.ownerId),
+    ).toBe(String(person._id));
   });
 
   it('linking the voice to Vikram does not take X’s earlier meetings or tasks', async () => {
@@ -1128,6 +1155,163 @@ describe('merge, split and reassign', () => {
       .expect(200);
     // a | b+c (same speaker, short pause) | d | e
     expect(await lineNames(id)).toEqual(['Speaker A', 'Speaker B', 'Speaker C', 'Speaker A']);
+  });
+
+  it('moves one line to a saved person who is not in this meeting, and leaves the other clips', async () => {
+    const raju = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Raju Dholakia',
+      anonymous: false,
+    });
+    const parag = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Parag',
+      anonymous: false,
+      voiceprints: [{ id: 'parag-own', source: 'meeting', audioUrl: '', voiceprint: 'vp-p' }],
+    });
+    const paragMeeting = await seedMeeting(
+      'Parag elsewhere',
+      [turn('S0', 0, 5, 'parag elsewhere')],
+      [card('S0', 'Speaker A', String(parag._id), { status: 'solid', confirmed: true })],
+    );
+    const rajuMeeting = await seedMeeting(
+      'Raju elsewhere',
+      [turn('S0', 0, 5, 'raju elsewhere')],
+      [card('S0', 'Speaker A', String(raju._id), { status: 'solid', confirmed: true })],
+    );
+    // 1:01:11, 1:27:36 and 1:33:26 — the first clip is the one that is not Raju.
+    const id = await seedMeeting(
+      'This meeting',
+      [
+        turn('S0', 3671, 3680, 'clip one'),
+        turn('S0', 5256, 5264, 'clip two'),
+        turn('S0', 5606, 5616, 'clip three'),
+      ],
+      [
+        card('S0', 'Speaker A', String(raju._id), {
+          status: 'new',
+          speakerSec: 27,
+          clips: [
+            { start: 3671, end: 3680, quality: 80 },
+            { start: 5256, end: 5264, quality: 80 },
+            { start: 5606, end: 5616, quality: 80 },
+          ],
+        }),
+      ],
+    );
+    await SpeakerModel.updateOne(
+      { _id: raju._id },
+      {
+        $set: {
+          voiceprints: [
+            {
+              id: 'misheard',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-wrong',
+              meetingId: new Types.ObjectId(id),
+              clip: { start: 3671, end: 3680 },
+            },
+            {
+              id: 'elsewhere',
+              source: 'meeting',
+              audioUrl: '',
+              voiceprint: 'vp-raju',
+              meetingId: new Types.ObjectId(rajuMeeting),
+              clip: { start: 0, end: 5 },
+            },
+          ],
+        },
+      },
+    );
+    const lines = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.lines;
+    const idx = lines.findIndex((l) => l.textNative === 'clip one');
+
+    const clash = await auth(request(app).post(`/api/v1/meetings/${id}/lines/reassign`))
+      .send({ lineIndex: idx, toName: 'Parag Bhai' })
+      .expect(409);
+    expect(clash.body).toMatchObject({
+      error: 'similar_name',
+      similar: [{ id: String(parag._id), name: 'Parag' }],
+    });
+    expect(await lineNames(id)).toEqual(['Raju Dholakia', 'Raju Dholakia', 'Raju Dholakia']);
+    expect(await SpeakerModel.countDocuments({ name: 'Parag Bhai' })).toBe(0);
+
+    await auth(request(app).post(`/api/v1/meetings/${id}/lines/reassign`))
+      .send({ lineIndex: idx, toPersonId: String(parag._id) })
+      .expect(200);
+
+    expect(await lineNames(id)).toEqual(['Parag', 'Raju Dholakia', 'Raju Dholakia']);
+    expect(await lineNames(paragMeeting)).toEqual(['Parag']);
+    expect(await lineNames(rajuMeeting)).toEqual(['Raju Dholakia']);
+    const data = (await MeetingDataModel.findOne({ meetingId: id }).lean())!;
+    const rajuCard = data.speakerCards!.find((c) => c.personId === String(raju._id))!;
+    const paragCard = data.speakerCards!.find((c) => c.personId === String(parag._id))!;
+    expect(rajuCard.diar).toBe('S0');
+    expect(rajuCard.clips.map((c) => c.start)).toEqual([5256, 5606]);
+    expect(paragCard.diar).not.toBe('S0');
+    expect(paragCard.clips.map((c) => c.start)).toEqual([3671]);
+    expect(data.turns.map((t) => t.speaker)).toEqual([paragCard.diar, 'S0', 'S0']);
+    expect((await SpeakerModel.findById(raju._id).lean())!.voiceprints.map((v) => v.id)).toEqual([
+      'elsewhere',
+    ]);
+    expect((await SpeakerModel.findById(parag._id).lean())!.voiceprints.map((v) => v.id)).toEqual([
+      'parag-own',
+    ]);
+    expect(await SpeakerModel.countDocuments({ workspaceId: workspace._id, name: 'Parag' })).toBe(
+      1,
+    );
+    // Renaming the shared profile still updates every meeting that voice is in.
+    await auth(request(app).post(`/api/v1/meetings/${id}/speakers/S0/name`))
+      .send({ name: 'Raju bhai', renameEverywhere: true })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Parag', 'Raju bhai', 'Raju bhai']);
+    expect(await lineNames(rajuMeeting)).toEqual(['Raju bhai']);
+    expect(await lineNames(paragMeeting)).toEqual(['Parag']);
+    expect(await JobModel.countDocuments({ meetingId: id, stage: 'learnvoice' })).toBe(1);
+  });
+
+  it('reuses a saved person’s card in this meeting, and can create someone who is genuinely new', async () => {
+    const parag = await SpeakerModel.create({
+      workspaceId: workspace._id,
+      name: 'Parag',
+      anonymous: false,
+    });
+    const id = await seedMeeting(
+      'M',
+      [turn('S0', 0, 4, 'raju'), turn('S1', 4, 8, 'parag'), turn('S0', 8, 12, 'raju again')],
+      [
+        card('S0', 'Speaker A', null, { speakerSec: 8, clips: [] }),
+        card('S1', 'Speaker B', String(parag._id), {
+          speakerSec: 4,
+          clips: [],
+          status: 'solid',
+          confirmed: true,
+        }),
+      ],
+    );
+    const lines = (await MeetingDataModel.findOne({ meetingId: id }).lean())!.lines;
+    const again = lines.findIndex((l) => l.textNative === 'raju again');
+    await auth(request(app).post(`/api/v1/meetings/${id}/lines/reassign`))
+      .send({ lineIndex: again, toPersonId: String(parag._id) })
+      .expect(200);
+    const after = (await MeetingDataModel.findOne({ meetingId: id }).lean())!;
+    expect(after.speakerCards).toHaveLength(2);
+    expect(after.turns.map((t) => t.speaker)).toEqual(['S0', 'S1', 'S1']);
+    expect(await lineNames(id)).toEqual(['Speaker A', 'Parag']);
+
+    const first = after.lines.findIndex((l) => l.textNative === 'raju');
+    await auth(request(app).post(`/api/v1/meetings/${id}/lines/reassign`))
+      .send({ lineIndex: first, toName: 'Hetal', createNew: true })
+      .expect(200);
+    expect(await lineNames(id)).toEqual(['Hetal', 'Parag']);
+    expect(await SpeakerModel.countDocuments({ name: 'Hetal' })).toBe(1);
+    const hetalMeeting = await seedMeeting(
+      'Hetal elsewhere',
+      [turn('S0', 0, 4, 'untouched')],
+      [card('S0', 'Speaker A', null, { clips: [] })],
+    );
+    expect(await lineNames(hetalMeeting)).toEqual(['Speaker A']);
   });
 
   it('rejects edits on a meeting without pyannote speakers', async () => {

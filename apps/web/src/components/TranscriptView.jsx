@@ -1,5 +1,23 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { fmtTime, lineText } from '@/lib/format';
+import PersonPicker from '@/components/PersonPicker';
+
+/** The line that contains `t`, or the line that starts nearest to it. */
+export function lineIndexAt(lines, t) {
+  if (!lines?.length || t == null || Number.isNaN(t)) return -1;
+  const inside = lines.findIndex((l) => t >= l.start - 0.35 && t <= l.end + 0.35);
+  if (inside >= 0) return inside;
+  let best = -1;
+  let bestDist = 1.5;
+  for (let i = 0; i < lines.length; i++) {
+    const dist = Math.abs(lines[i].start - t);
+    if (dist < bestDist) {
+      best = i;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
 
 // Height reserved for the sticky player bar.
 const STICKY_OFFSET = 72;
@@ -34,8 +52,10 @@ function activeIndexFor(lines, t) {
 
 /**
  * scriptMode: "roman" | "native" | "both". Lines never exceed 45 s (built server-side).
- * When `onReassign` / `onSplit` are given, clicking a speaker's name opens line actions:
- * `speakers` is [{ diar, displayName }] of the meeting.
+ * When `onReassign` / `onSplit` are given, clicking a speaker's name opens line actions.
+ * `speakers` is [{ diar, displayName, personId }] of the meeting.
+ * `people` is saved people [{ id, name, anonymous }] from any meeting.
+ * `locateRef.current(seconds)` scrolls that moment's line into view.
  */
 export default function TranscriptView({
   lines,
@@ -43,16 +63,19 @@ export default function TranscriptView({
   onSeek,
   scriptMode = 'roman',
   speakers = [],
+  people = [],
   onReassign,
   onSplit,
   follow = false,
   onUserScroll,
   onActiveVisible,
   jumpRef,
+  locateRef,
   parts = [],
 }) {
   const rowRefs = useRef([]);
   const [menu, setMenu] = useState(-1);
+  const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const active = activeIndexFor(lines, currentTime);
@@ -110,6 +133,15 @@ export default function TranscriptView({
   // "Now playing" pill: scroll to the active line once, without turning follow on.
   useEffect(() => {
     if (jumpRef) jumpRef.current = () => centre(rowRefs.current[active]);
+  });
+
+  // A clip in the speaker panel: scroll to the line it was cut from, without turning follow on.
+  useEffect(() => {
+    if (!locateRef) return;
+    locateRef.current = (t) => {
+      const i = lineIndexAt(lines, t);
+      if (i >= 0) centre(rowRefs.current[i]);
+    };
   });
 
   const act = async (fn) => {
@@ -177,6 +209,7 @@ export default function TranscriptView({
                     onClick={(e) => {
                       e.stopPropagation();
                       setMenu(menu === i ? -1 : i);
+                      setDraft('');
                       setError('');
                     }}
                   >
@@ -207,24 +240,22 @@ export default function TranscriptView({
                   onClick={(e) => e.stopPropagation()}
                 >
                   {onReassign && (
-                    <label className="flex items-center gap-1.5">
-                      Move this line to
-                      <select
+                    <div className="flex items-start gap-1.5 min-w-[16rem] flex-1">
+                      <span className="pt-1.5 shrink-0">Move this line to</span>
+                      <PersonPicker
+                        startOpen
+                        value={draft}
+                        onChange={setDraft}
+                        people={people}
+                        speakers={speakers}
+                        excludeName={line.speakerName}
                         disabled={busy}
-                        defaultValue=""
-                        onChange={(e) => e.target.value && act(() => onReassign(i, e.target.value))}
-                        className="h-8 rounded-md border border-input bg-background px-2"
-                      >
-                        <option value="">choose…</option>
-                        {speakers
-                          .filter((s) => s.displayName !== line.speakerName)
-                          .map((s) => (
-                            <option key={s.diar} value={s.diar}>
-                              {s.displayName}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
+                        ariaLabel={`Move ${line.speakerName} line to`}
+                        placeholder="Search people or type a new name"
+                        onCommit={(choice) => onReassign(i, choice)}
+                        onDone={() => setMenu(-1)}
+                      />
+                    </div>
                   )}
                   {onSplit && (
                     <button

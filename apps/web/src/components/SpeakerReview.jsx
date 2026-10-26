@@ -16,7 +16,7 @@ import {
 import { api } from '@/api/client';
 import { fmtTime } from '@/lib/format';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import PersonPicker from '@/components/PersonPicker';
 
 const STATUS = {
   solid: { label: 'Matched by voice', cls: 'bg-emerald-100 text-emerald-700' },
@@ -52,7 +52,16 @@ function fmtSec(s) {
   return m >= 1 ? `${m} min` : `${Math.round(s)} s`;
 }
 
-function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
+function SpeakerCardView({
+  meetingId,
+  card,
+  others,
+  people = [],
+  onPlay,
+  onLocate,
+  onAssignClip,
+  onChanged,
+}) {
   const [name, setName] = useState('');
   const [everywhere, setEverywhere] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,6 +69,8 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
   const [similar, setSimilar] = useState(null);
   const [mergeInto, setMergeInto] = useState('');
   const [note, setNote] = useState('');
+  const [movingClip, setMovingClip] = useState(-1);
+  const [clipDraft, setClipDraft] = useState('');
   const status = statusOf(card);
   const possible =
     !card.match &&
@@ -153,7 +164,8 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
         <div className="rounded-lg bg-amber-50 border border-amber-200 p-2.5 text-xs space-y-2">
           <p className="text-amber-900">
             Possibly <b>{possible.name}</b> (score {possible.score}). Not named automatically
-            because the voice match is not strong enough.
+            because the voice match is not strong enough. Yes names every clip in this group. Move
+            one clip if only that clip is someone else.
           </p>
           <Button
             size="sm"
@@ -204,16 +216,50 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
       )}
 
       {card.clips.length > 0 ? (
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="space-y-1.5">
           {card.clips.map((c, i) => (
-            <button
-              key={i}
-              onClick={() => onPlay(c.start, c.end)}
-              className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-border hover:bg-secondary"
-              aria-label={`Play sample ${i + 1} of ${card.displayName}`}
-            >
-              <Play className="w-3 h-3" /> {fmtTime(c.start)} · {Math.round(c.end - c.start)} s
-            </button>
+            <div key={`${c.start}-${i}`} className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    onPlay(c.start, c.end);
+                    onLocate?.(c.start);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border border-border hover:bg-secondary"
+                  aria-label={`Play sample ${i + 1} of ${card.displayName}`}
+                >
+                  <Play className="w-3 h-3" /> {fmtTime(c.start)} · {Math.round(c.end - c.start)} s
+                </button>
+                {onAssignClip && movingClip !== i && (
+                  <button
+                    type="button"
+                    className="text-xs underline text-muted-foreground hover:text-foreground"
+                    aria-label={`Move clip at ${fmtTime(c.start)}`}
+                    onClick={() => {
+                      setMovingClip(i);
+                      setClipDraft('');
+                    }}
+                  >
+                    Move
+                  </button>
+                )}
+              </div>
+              {onAssignClip && movingClip === i && (
+                <PersonPicker
+                  startOpen
+                  value={clipDraft}
+                  onChange={setClipDraft}
+                  people={people}
+                  speakers={[card, ...others]}
+                  excludeName={card.displayName}
+                  disabled={busy}
+                  ariaLabel={`Move clip at ${fmtTime(c.start)} to`}
+                  placeholder="Search people or type a new name"
+                  onCommit={(choice) => onAssignClip(c, choice)}
+                  onDone={() => setMovingClip(-1)}
+                />
+              )}
+            </div>
           ))}
         </div>
       ) : (
@@ -222,18 +268,27 @@ function SpeakerCardView({ meetingId, card, others, onPlay, onChanged }) {
         </p>
       )}
 
-      <div className="flex gap-2">
-        <Input
+      <div className="flex gap-2 items-start">
+        <PersonPicker
           value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
-          placeholder={
-            card.anonymous
-              ? "Type this person's name"
-              : `Not ${card.displayName}? Type the right name`
-          }
-          className="h-9 text-sm"
-          aria-label={`Name for ${card.displayName}`}
+          onChange={setName}
+          people={people}
+          includeMeetingSpeakers={false}
+          disabled={busy}
+          ariaLabel={`Name for ${card.displayName}`}
+          inputClassName="h-9 text-sm"
+          placeholder="Search saved people, or type a new name"
+          onSubmit={() => save()}
+          onCommit={(choice) => {
+            if (choice.type === 'person')
+              return save({ name: choice.name, usePersonId: choice.personId });
+            if (choice.type === 'new')
+              return save({
+                name: choice.name,
+                ...(choice.createNew ? { createNew: true } : {}),
+              });
+            return save({ name: choice.name });
+          }}
         />
         <Button size="sm" disabled={busy || !name.trim()} onClick={() => save()}>
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -340,7 +395,10 @@ export default function SpeakerReview({
   source,
   cards,
   autoMerged = [],
+  people = [],
   onPlay,
+  onLocate,
+  onAssignClip,
   onChanged,
 }) {
   // Closed until asked for: the speaker list is a working area, not the first thing to read.
@@ -413,7 +471,10 @@ export default function SpeakerReview({
               meetingId={meetingId}
               card={c}
               others={cards.filter((o) => o.diar !== c.diar)}
+              people={people}
               onPlay={onPlay}
+              onLocate={onLocate}
+              onAssignClip={onAssignClip}
               onChanged={onChanged}
             />
           ))}
@@ -421,8 +482,9 @@ export default function SpeakerReview({
             A name saved here applies to this recording. Earlier meetings and their tasks stay with
             the person they already belong to. Rename in every meeting when this voice is that
             person everywhere. Merge combines two identities. Voices you name or confirm are learned
-            for future meetings. Click a speaker's name on a transcript line to move that line or
-            split the speaker from there.
+            for future meetings. Move on a clip, or “Move this line to” on a transcript line, sends
+            that clip to someone in this meeting or any saved person and leaves the rest of the
+            group where it is. Search the list, or type a name to create someone new.
           </p>
         </div>
       )}

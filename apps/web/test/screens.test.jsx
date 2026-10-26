@@ -23,12 +23,17 @@ const api = vi.hoisted(() => ({
     retry: vi.fn(),
     rename: vi.fn(),
     remove: vi.fn(),
+    reassignLine: vi.fn().mockResolvedValue({ lines: 1 }),
   },
+  speakers: { list: vi.fn().mockResolvedValue([]) },
 }));
 const recorder = vi.hoisted(() => ({ instance: null, cb: null, putKeys: [] }));
 const upload = vi.hoisted(() => vi.fn());
 
-vi.mock('@/api/client', () => ({ api, ApiError: class extends Error {} }));
+vi.mock('@/api/client', async () => {
+  const actual = await vi.importActual('@/api/client');
+  return { api, reassignBody: actual.reassignBody, ApiError: class extends Error {} };
+});
 vi.mock('@/lib/AuthContext', () => ({
   useAuth: () => ({ workspace: { settings: { scriptPreference: 'roman' } } }),
 }));
@@ -487,6 +492,89 @@ describe('meeting page with speakers', () => {
     expect(note.textContent).toMatch(/updated with the new name/);
     expect(screen.getByText(/Ghanshyam Dholakia agreed the offer/)).toBeTruthy();
     expect(screen.queryByTestId('summary-outdated')).toBeNull();
+  });
+
+  it('moves one clip to a saved person and scrolls the transcript to that line', async () => {
+    api.speakers.list.mockResolvedValue([{ id: 'p-parag', name: 'Parag', anonymous: false }]);
+    api.meetings.reassignLine.mockResolvedValue({ lines: 2 });
+    const meeting = {
+      id: 'm1',
+      title: 'Raju call',
+      date: '2026-10-20T10:00:00Z',
+      durationSec: 7200,
+      status: 'completed',
+      stage: 'done',
+      progress: { chunksTotal: 1, chunksDone: 1 },
+      audio: { playbackUrl: 'https://x/a.mp3' },
+      summary: 'A long call.',
+      summaryStatus: 'completed',
+      actionItems: [],
+      updatedAt: '2026-10-20T12:00:00Z',
+    };
+    api.meetings.get.mockResolvedValue(meeting);
+    api.meetings.data.mockResolvedValue({
+      lines: [
+        {
+          speakerName: 'Raju Dholakia',
+          start: 3671,
+          end: 3680,
+          textRoman: 'this line is parag',
+          textNative: 'this line is parag',
+        },
+        {
+          speakerName: 'Raju Dholakia',
+          start: 5256,
+          end: 5264,
+          textRoman: 'this line is raju',
+          textNative: 'this line is raju',
+        },
+      ],
+    });
+    api.meetings.speakers.mockResolvedValue({
+      source: 'pyannote',
+      cards: [
+        {
+          diar: 'S0',
+          label: 'Speaker A',
+          displayName: 'Raju Dholakia',
+          personId: 'p-raju',
+          anonymous: false,
+          voiceprints: 0,
+          speakerSec: 20,
+          turns: 2,
+          status: 'new',
+          match: null,
+          candidate: { name: 'Parag', personId: 'p-parag', score: 65, status: 'possible' },
+          clips: [
+            { start: 3671, end: 3680, quality: 80 },
+            { start: 5256, end: 5264, quality: 80 },
+          ],
+          phone: null,
+          appearsIn: [],
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/meetings/m1']}>
+        <Routes>
+          <Route path="/meetings/:id" element={<MeetingDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('this line is parag');
+    fireEvent.click(await screen.findByRole('button', { name: /^Speakers$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Play sample 1 of Raju Dholakia/ }));
+    expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 1:01:11' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    await waitFor(() =>
+      expect(api.meetings.reassignLine).toHaveBeenCalledWith('m1', {
+        lineIndex: 0,
+        toPersonId: 'p-parag',
+      }),
+    );
+    expect(api.meetings.nameSpeaker).not.toHaveBeenCalled();
   });
 });
 

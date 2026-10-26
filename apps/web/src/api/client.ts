@@ -198,6 +198,40 @@ export interface SimilarName {
   name: string;
 }
 
+/** Who a transcript line or a single clip should move to. */
+export type SpeakerChoice =
+  | { type: 'speaker'; diar: string; name: string }
+  | { type: 'person'; personId: string; name: string }
+  | { type: 'new'; name: string; createNew?: boolean };
+
+export function reassignBody(
+  lineIndex: number,
+  choice: SpeakerChoice,
+): {
+  lineIndex: number;
+  toDiar?: string;
+  toPersonId?: string;
+  toName?: string;
+  createNew?: boolean;
+} {
+  switch (choice.type) {
+    case 'speaker':
+      return { lineIndex, toDiar: choice.diar };
+    case 'person':
+      return { lineIndex, toPersonId: choice.personId };
+    case 'new':
+      return {
+        lineIndex,
+        toName: choice.name,
+        ...(choice.createNew ? { createNew: true } : {}),
+      };
+    default: {
+      const unreachable: never = choice;
+      return unreachable;
+    }
+  }
+}
+
 export interface CreateMeetingInput {
   meetingId: string;
   title: string;
@@ -311,8 +345,27 @@ export const api = {
       request<{ lines: number }>('POST', `/meetings/${id}/speakers/merge`, { from, into }),
     splitSpeaker: (id: string, lineIndex: number) =>
       request<{ newSpeaker: string }>('POST', `/meetings/${id}/speakers/split`, { lineIndex }),
-    reassignLine: (id: string, lineIndex: number, toDiar: string) =>
-      request<{ lines: number }>('POST', `/meetings/${id}/lines/reassign`, { lineIndex, toDiar }),
+    /**
+     * Move one transcript line. Resolves with `{similar}` instead of moving when a new name looks
+     * like a person who is already saved.
+     */
+    reassignLine: async (
+      id: string,
+      input: {
+        lineIndex: number;
+        toDiar?: string;
+        toPersonId?: string;
+        toName?: string;
+        createNew?: boolean;
+      },
+    ): Promise<{ lines?: number; similar?: SimilarName[] }> => {
+      try {
+        return await request<{ lines: number }>('POST', `/meetings/${id}/lines/reassign`, input);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409 && e.similar) return { similar: e.similar };
+        throw e;
+      }
+    },
     reidentify: (id: string) =>
       request<{
         changes: { speaker: string; person: string; score: number }[];

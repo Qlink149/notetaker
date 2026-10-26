@@ -14,10 +14,10 @@ import {
   FileText,
   GitMerge,
 } from 'lucide-react';
-import { api } from '@/api/client';
+import { api, reassignBody } from '@/api/client';
 import { useAuth } from '@/lib/AuthContext';
 import { fmtDuration, fmtTime, waitEstimate } from '@/lib/format';
-import TranscriptView from '@/components/TranscriptView';
+import TranscriptView, { lineIndexAt } from '@/components/TranscriptView';
 import SpeakerReview, { TextSpeakersNotice } from '@/components/SpeakerReview';
 import ActionItems from '@/components/ActionItems';
 import MeetingTasks from '@/components/kept/MeetingTasks';
@@ -97,6 +97,7 @@ export default function MeetingDetail() {
   const [scriptMode, setScriptMode] = useState(workspace?.settings?.scriptPreference ?? 'roman');
   const [currentTime, setCurrentTime] = useState(0);
   const [speakers, setSpeakers] = useState(null);
+  const [people, setPeople] = useState([]);
   // set when a speaker edit swapped the new names into the existing summary (no new summary was written)
   const [summaryNote, setSummaryNote] = useState('');
   const meetingRef = useRef(null);
@@ -109,6 +110,7 @@ export default function MeetingDetail() {
   });
   const [activeVisible, setActiveVisible] = useState(true);
   const jumpRef = useRef(null);
+  const locateRef = useRef(null);
   const audioRef = useRef(null);
   const stopAt = useRef(null);
   const dataKey = useRef(null);
@@ -124,6 +126,19 @@ export default function MeetingDetail() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    let gone = false;
+    api.speakers
+      .list()
+      .then((list) => {
+        if (!gone) setPeople(list);
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, []);
 
   // Poll only the small meeting record; the worker does the processing, not this page.
   useEffect(() => {
@@ -171,6 +186,16 @@ export default function MeetingDetail() {
   useEffect(() => {
     meetingRef.current = meeting;
   }, [meeting]);
+
+  const commitReassign = useCallback(
+    async (lineIndex, choice) => {
+      const result = await api.meetings.reassignLine(id, reassignBody(lineIndex, choice));
+      if (result.similar) return result;
+      await afterEdit();
+      return result;
+    },
+    [id, afterEdit],
+  );
 
   const run = async (fn) => {
     setBusy(true);
@@ -634,7 +659,18 @@ export default function MeetingDetail() {
               source={speakers.source}
               cards={speakers.cards}
               autoMerged={speakers.autoMerged}
+              people={people}
               onPlay={playRange}
+              onLocate={(t) => locateRef.current?.(t)}
+              onAssignClip={
+                speakers.source === 'pyannote'
+                  ? async (clip, choice) => {
+                      const i = lineIndexAt(data?.lines, clip.start);
+                      if (i < 0) throw new Error('Could not find that clip in the transcript.');
+                      return commitReassign(i, choice);
+                    }
+                  : undefined
+              }
               onChanged={afterEdit}
             />
           )}
@@ -652,58 +688,57 @@ export default function MeetingDetail() {
               </p>
             ) : (
               <>
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 className="font-semibold">Transcript</h2>
-              <div className="flex items-center gap-2 flex-wrap">
-                {hasTranscript && (
-                  <MeetingExport meeting={meeting} lines={data.lines} scriptMode={scriptMode} />
-                )}
-                <div
-                  className="flex gap-1 bg-secondary rounded-full p-0.5"
-                  role="group"
-                  aria-label="Script"
-                >
-                  {SCRIPT_MODES.map((s) => (
-                    <button
-                      key={s.mode}
-                      onClick={() => setScriptMode(s.mode)}
-                      aria-pressed={scriptMode === s.mode}
-                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                        scriptMode === s.mode
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground'
-                      }`}
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <h2 className="font-semibold">Transcript</h2>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {hasTranscript && (
+                      <MeetingExport meeting={meeting} lines={data.lines} scriptMode={scriptMode} />
+                    )}
+                    <div
+                      className="flex gap-1 bg-secondary rounded-full p-0.5"
+                      role="group"
+                      aria-label="Script"
                     >
-                      {s.label}
-                    </button>
-                  ))}
+                      {SCRIPT_MODES.map((s) => (
+                        <button
+                          key={s.mode}
+                          onClick={() => setScriptMode(s.mode)}
+                          aria-pressed={scriptMode === s.mode}
+                          className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                            scriptMode === s.mode
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            <TranscriptView
-              lines={data?.lines}
-              currentTime={currentTime}
-              onSeek={seekTo}
-              follow={follow}
-              onUserScroll={stopFollowing}
-              onActiveVisible={setActiveVisible}
-              jumpRef={jumpRef}
-              scriptMode={scriptMode}
-              parts={meeting.audio?.parts ?? []}
-              speakers={speakers?.cards ?? []}
-              {...(speakers?.source === 'pyannote' && !processing
-                ? {
-                    onReassign: async (i, toDiar) => {
-                      await api.meetings.reassignLine(id, i, toDiar);
-                      await afterEdit();
-                    },
-                    onSplit: async (i) => {
-                      await api.meetings.splitSpeaker(id, i);
-                      await afterEdit();
-                    },
-                  }
-                : {})}
-            />
+                <TranscriptView
+                  lines={data?.lines}
+                  currentTime={currentTime}
+                  onSeek={seekTo}
+                  follow={follow}
+                  onUserScroll={stopFollowing}
+                  onActiveVisible={setActiveVisible}
+                  jumpRef={jumpRef}
+                  scriptMode={scriptMode}
+                  parts={meeting.audio?.parts ?? []}
+                  speakers={speakers?.cards ?? []}
+                  people={people}
+                  locateRef={locateRef}
+                  {...(speakers?.source === 'pyannote' && !processing
+                    ? {
+                        onReassign: (i, choice) => commitReassign(i, choice),
+                        onSplit: async (i) => {
+                          await api.meetings.splitSpeaker(id, i);
+                          await afterEdit();
+                        },
+                      }
+                    : {})}
+                />
               </>
             )}
           </div>

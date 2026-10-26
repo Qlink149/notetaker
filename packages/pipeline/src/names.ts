@@ -41,3 +41,33 @@ export function similarNames(name: string, existing: string[], maxEdits = 2): st
     return Math.min(f.length, g.length) >= 5 && editDistance(f, g, maxEdits) <= maxEdits;
   });
 }
+
+/** A word long enough to be a person's name on its own, not a stray prefix. */
+const NAME_TOKEN = 4;
+
+function nameTokens(name: string): string[] {
+  return name
+    .toLowerCase()
+    .split(/[\s.\-_,]+/)
+    .map((part) => foldName(part))
+    .filter((part) => part.length >= NAME_TOKEN);
+}
+
+/**
+ * Existing names that share a whole word with `name` ("Parag Bhai" and "Parag").
+ * A shared prefix is not enough, so "Ghanshyambhai" and "Ghanshyam Dholakia" stay apart.
+ * Exact folded matches are left to `similarNames`.
+ */
+export function overlappingNames(name: string, existing: string[]): string[] {
+  const folded = foldName(name);
+  const tokens = nameTokens(name);
+  if (!folded) return [];
+  return existing.filter((other) => {
+    const theirs = foldName(other);
+    if (!theirs || theirs === folded) return false;
+    return (
+      tokens.some((token) => token === theirs) ||
+      nameTokens(other).some((token) => token === folded)
+    );
+  });
+}

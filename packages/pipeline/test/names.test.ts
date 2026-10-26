@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { foldName, pickVoiceprints, similarNames } from '../src/index.js';
+import { foldName, overlappingNames, pickVoiceprints, similarNames } from '../src/index.js';
 
 describe('similarNames', () => {
   const existing = ['Ghanshyam Dholakia', 'Rajesh Patel', 'Kaka'];
@@ -15,6 +15,22 @@ describe('similarNames', () => {
     expect(similarNames('Kaki', existing)).toEqual([]);
     expect(similarNames('Rakesh Shah', existing)).toEqual([]);
     expect(similarNames('', existing)).toEqual([]);
+  });
+});
+
+describe('overlappingNames', () => {
+  const existing = ['Parag', 'Ghanshyam Dholakia', 'Rajesh Patel'];
+
+  it('treats an extra word as the same person', () => {
+    expect(overlappingNames('Parag Bhai', existing)).toEqual(['Parag']);
+    expect(overlappingNames('Parag', ['Parag Bhai'])).toEqual(['Parag Bhai']);
+  });
+
+  it('does not treat a shared prefix, or the same name, as an overlap', () => {
+    expect(overlappingNames('Ghanshyambhai', existing)).toEqual([]);
+    expect(overlappingNames('Parag', existing)).toEqual([]);
+    expect(overlappingNames('Rakesh Shah', existing)).toEqual([]);
+    expect(overlappingNames('', existing)).toEqual([]);
   });
 });
 

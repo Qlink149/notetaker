@@ -1,22 +1,21 @@
 import { Router, type Request } from 'express';
-import { Types } from 'mongoose';
 import { z } from 'zod';
-import { attributeSegments, similarNames } from '@meetingid/pipeline';
+import { attributeSegments } from '@meetingid/pipeline';
 import { ws } from '../lib/auth.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import {
   MeetingDataModel,
   MeetingModel,
-  SpeakerModel,
   type MeetingDoc,
   type SpeakerCardDoc,
-  type SpeakerDoc,
 } from '../models/index.js';
 import { identifyMeeting } from '../services/identity/enroll.js';
 import {
   EditError,
+  SimilarPersonError,
   mergeSpeakers,
   nameSpeaker,
+  peopleSimilarTo,
   reassignLine,
   splitSpeaker,
 } from '../services/identity/edits.js';
@@ -42,7 +41,17 @@ const NameBody = z.object({
 });
 const MergeBody = z.object({ from: z.string(), into: z.string() });
 const SplitBody = z.object({ lineIndex: z.number().int().min(0) });
-const ReassignBody = z.object({ lineIndex: z.number().int().min(0), toDiar: z.string() });
+const ReassignBody = z
+  .object({
+    lineIndex: z.number().int().min(0),
+    toDiar: z.string().min(1).optional(),
+    toPersonId: z.string().min(1).optional(),
+    toName: z.string().trim().min(1).max(100).optional(),
+    createNew: z.boolean().optional(),
+  })
+  .refine((b) => [b.toDiar, b.toPersonId, b.toName].filter(Boolean).length === 1, {
+    message: 'Choose a speaker, a saved person, or a new name.',
+  });
 
 // Speaker review (Phase 2): cards with clips and confidence, name (a correction stays in this meeting;
 // renaming that person in every meeting is explicit), merge, split, reassign one line, re-identify.
@@ -177,23 +186,13 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
     const data = await MeetingDataModel.findOne({ meetingId: m._id }, { speakerCards: 1 }).lean();
     const card = ((data?.speakerCards ?? []) as SpeakerCardDoc[]).find((c) => c.diar === diar);
     if (!card) throw notFound('speaker_not_found');
-    if (!usePersonId && !createNew) {
-      const named = await SpeakerModel.find({
-        workspaceId: ws(req)._id,
-        anonymous: false,
-        ...(card.personId ? { _id: { $ne: new Types.ObjectId(card.personId) } } : {}),
-      }).lean<SpeakerDoc[]>();
-      const similar = similarNames(
-        name,
-        named.map((p) => p.name),
-      );
+    // Typos and an extra word ("Parag Bhai" for "Parag") ask before a second profile is created.
+    // Renaming the profile this card already points at (including everywhere) is the earlier path
+    // and is not a new person, so it is not held back here.
+    if (!usePersonId && !createNew && !renameEverywhere) {
+      const similar = await peopleSimilarTo(String(ws(req)._id), name, card.personId);
       if (similar.length) {
-        res.status(409).json({
-          error: 'similar_name',
-          similar: named
-            .filter((p) => similar.includes(p.name))
-            .map((p) => ({ id: String(p._id), name: p.name })),
-        });
+        res.status(409).json({ error: 'similar_name', similar });
         return;
       }
     }
@@ -225,9 +224,23 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
 
   r.post('/meetings/:id/lines/reassign', async (req, res) => {
     const m = await own(req);
-    const { lineIndex, toDiar } = body(ReassignBody, req);
-    const result = await editing(() => reassignLine(String(m._id), lineIndex, toDiar));
-    res.json({ lines: result?.lines ?? 0 });
+    const { lineIndex, toDiar, toPersonId, toName, createNew } = body(ReassignBody, req);
+    try {
+      const result = await reassignLine(String(m._id), String(ws(req)._id), lineIndex, {
+        toDiar,
+        toPersonId,
+        toName,
+        createNew,
+      });
+      res.json({ lines: result?.lines ?? 0 });
+    } catch (err) {
+      if (err instanceof SimilarPersonError) {
+        res.status(409).json({ error: 'similar_name', similar: err.similar });
+        return;
+      }
+      if (err instanceof EditError) throw new HttpError(400, err.message);
+      throw err;
+    }
   });
 
   /** Runs identify again with today's voiceprints; only confident new matches change anything. */
