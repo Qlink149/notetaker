@@ -8,6 +8,7 @@ import {
   labelSpeakersByTime,
   overlapRanges,
   pickVoiceprints,
+  resistHubPeople,
   resolveNames,
   selectClips,
   carrySpeakers,
@@ -410,7 +411,8 @@ export async function identifyMeeting(
             labelToPerson,
           )
         : {};
-      matrix = { ...segmentLevel, ...speakerLevel.matrix };
+      // Each half can sit under the room-wide cutoff on its own. Judge the meeting once, after the join.
+      matrix = resistHubPeople({ ...segmentLevel, ...speakerLevel.matrix });
       resolutions = resolveNames(order, matrix, { ...thresholds, names });
     } catch (err) {
       if (err instanceof Error && err.message.startsWith('NO_STORED_IDENTIFY')) {
