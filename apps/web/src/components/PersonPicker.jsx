@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -46,6 +46,11 @@ export default function PersonPicker({
   const [error, setError] = useState('');
   const [similar, setSimilar] = useState(null);
   const [pendingName, setPendingName] = useState('');
+  const rootRef = useRef(null);
+  const onDoneRef = useRef(onDone);
+  const busyRef = useRef(false);
+  const closeTimer = useRef(null);
+  onDoneRef.current = onDone;
   const query = value.trim();
 
   const speakerOptions = includeMeetingSpeakers
@@ -65,6 +70,7 @@ export default function PersonPicker({
   const showCreate = allowCreate && Boolean(query) && !exactTaken;
 
   const commit = async (choice) => {
+    busyRef.current = true;
     setBusy(true);
     setError('');
     try {
@@ -81,9 +87,59 @@ export default function PersonPicker({
     } catch (e) {
       setError(e?.message || 'That did not work.');
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
+
+  // Outside click and Esc leave whatever was typed, and never assign a person.
+  // A Move list is the whole control, so closing it removes the field too. Rename and merge keep theirs.
+  const closePicker = useCallback(
+    (deferDone = false) => {
+      if (busyRef.current) return;
+      setOpen(false);
+      setSimilar(null);
+      if (!startOpen) return;
+      const done = onDoneRef.current;
+      if (!done) return;
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+      if (!deferDone) {
+        done();
+        return;
+      }
+      // This click is still being delivered. Removing the field now drops whatever else it landed on
+      // (split from here, or Move on another clip). If the field unmounts first, the timer is cancelled.
+      closeTimer.current = setTimeout(() => {
+        closeTimer.current = null;
+        done();
+      }, 0);
+    },
+    [startOpen],
+  );
+
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
+
+  useEffect(() => {
+    if (!open && !similar) return undefined;
+    const onDocClick = (event) => {
+      const target = event.target;
+      const root = rootRef.current;
+      // Searching and picking happen inside this root. Those clicks must not count as leaving.
+      if (root && target instanceof Node && root.contains(target)) return;
+      closePicker(true);
+    };
+    const onDocKey = (event) => {
+      if (event.key !== 'Escape') return;
+      closePicker();
+    };
+    document.addEventListener('click', onDocClick, true);
+    document.addEventListener('keydown', onDocKey);
+    return () => {
+      document.removeEventListener('click', onDocClick, true);
+      document.removeEventListener('keydown', onDocKey);
+    };
+  }, [open, similar, closePicker]);
 
   // Enter takes a real match before it creates anyone, so "Parag Bhai" lands on Parag.
   const preferred = () => {
@@ -102,8 +158,7 @@ export default function PersonPicker({
 
   const onKeyDown = (e) => {
     if (e.key === 'Escape') {
-      setOpen(false);
-      setSimilar(null);
+      closePicker();
       return;
     }
     if (e.key !== 'Enter') return;
@@ -122,7 +177,7 @@ export default function PersonPicker({
   };
 
   return (
-    <div className="min-w-0 flex-1">
+    <div ref={rootRef} className="min-w-0 flex-1">
       <Input
         role="combobox"
         aria-expanded={open}
