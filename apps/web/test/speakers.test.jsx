@@ -135,10 +135,164 @@ describe('speaker cards', () => {
     );
   });
 
+  it('closes a clip move without reassigning, then still moves to any saved person', async () => {
+    const onAssignClip = vi.fn().mockResolvedValue(undefined);
+    const people = [
+      { id: 'p-parag', name: 'Parag', anonymous: false },
+      { id: 'p-anita', name: 'Anita Shah', anonymous: false },
+    ];
+    renderReview([card()], { onAssignClip, people });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    const input = screen.getByRole('combobox', { name: 'Move clip at 0:12 to' });
+    // Saved people from other meetings stay in the list (not only voices in this recording).
+    expect(screen.getByRole('option', { name: 'Parag' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Anita Shah' })).toBeTruthy();
+
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole('listbox'));
+    fireEvent.click(screen.getByText('Saved people'));
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    expect(onAssignClip).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'Anita' } });
+    fireEvent.click(document.body);
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).toBeNull();
+      expect(screen.queryByRole('combobox', { name: 'Move clip at 0:12 to' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Move clip at 0:12' })).toBeTruthy();
+    });
+    expect(onAssignClip).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.keyDown(screen.getByRole('option', { name: 'Parag' }), { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Move clip at 0:12' })).toBeTruthy();
+    expect(onAssignClip).not.toHaveBeenCalled();
+
+    // Esc with focus outside the field closes it too.
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Move clip at 0:12' })).toBeTruthy();
+    expect(onAssignClip).not.toHaveBeenCalled();
+
+    // Opening a different clip's list closes the one that was open, without moving either.
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 5:00' }));
+    expect(screen.getByRole('combobox', { name: 'Move clip at 5:00 to' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Move clip at 0:12 to' })).toBeNull();
+    expect(onAssignClip).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('option', { name: 'Anita Shah' }));
+    await waitFor(() =>
+      expect(onAssignClip).toHaveBeenCalledWith(expect.objectContaining({ start: 300, end: 312 }), {
+        type: 'person',
+        personId: 'p-anita',
+        name: 'Anita Shah',
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move clip at 0:12 to' }), {
+      target: { value: 'Hetal' },
+    });
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Move clip at 0:12 to' }), {
+      key: 'Enter',
+    });
+    await waitFor(() =>
+      expect(onAssignClip).toHaveBeenLastCalledWith(expect.objectContaining({ start: 12 }), {
+        type: 'new',
+        name: 'Hetal',
+      }),
+    );
+  });
+
+  it('still confirms a similar name from inside the clip move check', async () => {
+    const onAssignClip = vi
+      .fn()
+      .mockResolvedValueOnce({ similar: [{ id: 'p-parag', name: 'Parag' }] })
+      .mockResolvedValueOnce(undefined);
+    renderReview([card()], {
+      onAssignClip,
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move clip at 0:12 to' }), {
+      target: { value: 'Parag S' },
+    });
+    fireEvent.click(screen.getByRole('option', { name: 'Create “Parag S”' }));
+    await screen.findByText(/looks like someone you already have/);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, Parag' }));
+    await waitFor(() =>
+      expect(onAssignClip).toHaveBeenLastCalledWith(expect.objectContaining({ start: 12 }), {
+        type: 'person',
+        personId: 'p-parag',
+        name: 'Parag',
+      }),
+    );
+  });
+
+  it('drops a similar-name check on a clip move without sending another change', async () => {
+    const onAssignClip = vi.fn().mockResolvedValue({ similar: [{ id: 'p-parag', name: 'Parag' }] });
+    renderReview([card()], {
+      onAssignClip,
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Move clip at 0:12' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move clip at 0:12 to' }), {
+      target: { value: 'Parag S' },
+    });
+    fireEvent.click(screen.getByRole('option', { name: 'Create “Parag S”' }));
+    await screen.findByText(/looks like someone you already have/);
+    fireEvent.click(document.body);
+    await waitFor(() => {
+      expect(screen.queryByText(/looks like someone you already have/)).toBeNull();
+      expect(screen.getByRole('button', { name: 'Move clip at 0:12' })).toBeTruthy();
+    });
+    expect(onAssignClip).toHaveBeenCalledTimes(1);
+  });
+
   it('warns plainly when the speaker labels are not voice-based', () => {
     renderReview([card({ match: null, appearsIn: [], phone: null })], { source: 'text-fallback' });
     expect(screen.getByText(/matching text between recording chunks/)).toBeTruthy();
     expect(screen.queryByText('Re-identify speakers')).toBeNull();
+  });
+
+  it('closes the name search without saving, and still names from any saved person', async () => {
+    api.meetings.nameSpeaker.mockResolvedValue({ updatedMeetings: ['m1'] });
+    renderReview([card({ match: null })], {
+      people: [
+        { id: 'p-parag', name: 'Parag', anonymous: false },
+        { id: 'p-anita', name: 'Anita Shah', anonymous: false },
+      ],
+    });
+    const input = screen.getByLabelText('Name for Speaker B');
+    fireEvent.focus(input);
+    expect(screen.getByRole('option', { name: 'Parag' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Anita Shah' })).toBeTruthy();
+
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole('listbox'));
+    expect(input.getAttribute('aria-expanded')).toBe('true');
+    expect(api.meetings.nameSpeaker).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'Anita' } });
+    fireEvent.click(document.body);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(input.value).toBe('Anita');
+    expect(api.meetings.nameSpeaker).not.toHaveBeenCalled();
+
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(input.value).toBe('Anita');
+    expect(input.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.focus(input);
+    fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+    await waitFor(() =>
+      expect(api.meetings.nameSpeaker).toHaveBeenCalledWith('m1', 'SPEAKER_01', { name: 'Anita' }),
+    );
   });
 
   it('names a voice from a saved person instead of typing a second profile', async () => {
@@ -228,6 +382,39 @@ describe('speaker cards', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /^Merge$/ })[0]);
     await waitFor(() =>
       expect(api.meetings.mergeSpeakers).toHaveBeenCalledWith('m1', 'SPEAKER_01', 'SPEAKER_02'),
+    );
+  });
+
+  it('closes the merge search on an outside click or Esc without merging', async () => {
+    api.meetings.mergeSpeakers.mockResolvedValue({ lines: 4 });
+    renderReview([card({ match: null, appearsIn: [], phone: null })], {
+      people: [{ id: 'p-parag', name: 'Parag', anonymous: false }],
+    });
+    const input = screen.getByLabelText('Merge Speaker B with');
+    fireEvent.focus(input);
+    expect(screen.getByRole('option', { name: 'Parag' })).toBeTruthy();
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole('listbox'));
+    expect(screen.getByRole('listbox')).toBeTruthy();
+
+    fireEvent.click(document.body);
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(api.meetings.mergeSpeakers).not.toHaveBeenCalled();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Par' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(input.value).toBe('Par');
+    expect(api.meetings.mergeSpeakers).not.toHaveBeenCalled();
+
+    fireEvent.focus(input);
+    fireEvent.click(screen.getByRole('option', { name: 'Parag' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Merge$/ }));
+    await waitFor(() =>
+      expect(api.meetings.mergeSpeakers).toHaveBeenCalledWith('m1', 'SPEAKER_01', {
+        personId: 'p-parag',
+      }),
     );
   });
 
@@ -401,6 +588,68 @@ describe('transcript editing', () => {
     render(<TranscriptView lines={lines} scriptMode="both" />);
     expect(screen.getByText('aaj hum')).toBeTruthy();
     expect(screen.getByText('आज हम')).toBeTruthy();
+  });
+
+  it('closes “Move this line to” without reassigning, and still moves or splits', async () => {
+    const onReassign = vi.fn().mockResolvedValue(undefined);
+    const onSplit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <TranscriptView
+        lines={lines}
+        speakers={speakers}
+        people={[
+          { id: 'p-parag', name: 'Parag', anonymous: false },
+          { id: 'p-anita', name: 'Anita Shah', anonymous: false },
+        ]}
+        onReassign={onReassign}
+        onSplit={onSplit}
+      />,
+    );
+    const openLine = () =>
+      fireEvent.click(screen.getByRole('button', { name: /Speaker B: change who said this/ }));
+
+    openLine();
+    const input = screen.getByRole('combobox', { name: 'Move Speaker B line to' });
+    expect(screen.getByRole('option', { name: 'Speaker A' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Parag' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Anita Shah' })).toBeTruthy();
+
+    fireEvent.click(input);
+    fireEvent.click(screen.getByRole('listbox'));
+    expect(screen.getByText('Move this line to')).toBeTruthy();
+    expect(onReassign).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'Anita' } });
+    fireEvent.click(document.body);
+    await waitFor(() => expect(screen.queryByText('Move this line to')).toBeNull());
+    expect(onReassign).not.toHaveBeenCalled();
+    expect(onSplit).not.toHaveBeenCalled();
+
+    openLine();
+    fireEvent.keyDown(screen.getByRole('option', { name: 'Speaker A' }), { key: 'Escape' });
+    expect(screen.queryByText('Move this line to')).toBeNull();
+    expect(onReassign).not.toHaveBeenCalled();
+
+    openLine();
+    fireEvent.click(screen.getByRole('button', { name: /different person from here on/ }));
+    await waitFor(() => expect(onSplit).toHaveBeenCalledWith(1));
+    expect(onReassign).not.toHaveBeenCalled();
+
+    openLine();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Move Speaker B line to' }), {
+      target: { value: 'Hetal' },
+    });
+    fireEvent.click(screen.getByRole('option', { name: 'Create “Hetal”' }));
+    await waitFor(() => expect(onReassign).toHaveBeenCalledWith(1, { type: 'new', name: 'Hetal' }));
+    openLine();
+    fireEvent.click(screen.getByRole('option', { name: 'Anita Shah' }));
+    await waitFor(() =>
+      expect(onReassign).toHaveBeenLastCalledWith(1, {
+        type: 'person',
+        personId: 'p-anita',
+        name: 'Anita Shah',
+      }),
+    );
   });
 
   it('shows an error from a failed edit instead of closing silently', async () => {
