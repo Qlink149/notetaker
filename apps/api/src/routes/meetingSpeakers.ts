@@ -160,7 +160,7 @@ export function meetingSpeakersRouter(_deps: ApiDeps): Router {
           personId: c.personId,
           personName: person?.name ?? null,
           anonymous: person ? person.anonymous : true,
-          voiceprints: person?.voiceprints.filter((v) => v.voiceprint).length ?? 0,
+          voiceprints: person?.voiceprints.filter((v) => v.voiceprint && !v.removedAt).length ?? 0,
           speakerSec: c.speakerSec,
           turns: turnCount.get(c.diar) ?? 0,
           phone: phone.get(c.diar) ?? null,

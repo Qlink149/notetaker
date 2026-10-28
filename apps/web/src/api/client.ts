@@ -101,6 +101,12 @@ export interface Speaker {
 /** One voice sample saved for a person, and the recording it was cut from. */
 export interface VoiceSample {
   index: number;
+  /** Names the sample in the remove and restore calls. */
+  key: string;
+  /** Taken off the profile: kept, greyed out, no longer compared with new voices. */
+  removed: boolean;
+  /** A person confirmed a voice of that meeting as this person. */
+  meetingConfirmed: boolean;
   source: 'enrolment' | 'meeting';
   createdAt: string;
   meetingId: string | null;
@@ -459,6 +465,18 @@ export const api = {
       request<{ name: string; samples: VoiceSample[] }>('GET', `/speakers/${id}/samples`).then(
         (r) => r.samples,
       ),
+    removeSample: (id: string, key: string, opts: { ignoreMeeting?: boolean } = {}) =>
+      request<{ name: string; samples: VoiceSample[] }>(
+        'POST',
+        `/speakers/${id}/samples/${key}/remove`,
+        opts,
+      ).then((r) => r.samples),
+    restoreSample: (id: string, key: string) =>
+      request<{ name: string; samples: VoiceSample[] }>(
+        'POST',
+        `/speakers/${id}/samples/${key}/restore`,
+        {},
+      ).then((r) => r.samples),
   },
   sessions: {
     create: (title?: string) => request<SessionView>('POST', '/sessions', { title }),

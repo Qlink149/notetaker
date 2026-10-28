@@ -118,7 +118,10 @@ export async function mergePeople(keepId: string, dropId: string): Promise<strin
     { _id: keepId },
     {
       $push: { voiceprints: { $each: drop.voiceprints } },
-      ...(drop.anonymous ? {} : { $addToSet: { aliases: drop.name } }),
+      $addToSet: {
+        ignoreMeetings: { $each: drop.ignoreMeetings ?? [] },
+        ...(drop.anonymous ? {} : { aliases: drop.name }),
+      },
     },
   );
   const affected = await meetingsOfPerson(dropId);

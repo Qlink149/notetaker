@@ -3,7 +3,14 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
-  speakers: { list: vi.fn(), samples: vi.fn(), enrol: vi.fn(), remove: vi.fn() },
+  speakers: {
+    list: vi.fn(),
+    samples: vi.fn(),
+    removeSample: vi.fn(),
+    restoreSample: vi.fn(),
+    enrol: vi.fn(),
+    remove: vi.fn(),
+  },
 }));
 vi.mock('@/api/client', () => ({ api }));
 vi.mock('@/components/EnrollmentRecorder', () => ({ default: () => null }));
@@ -21,6 +28,9 @@ const harshit = {
 const samples = [
   {
     index: 0,
+    key: 'k0',
+    removed: false,
+    meetingConfirmed: false,
     source: 'meeting',
     createdAt: 'x',
     meetingId: 'm1',
@@ -32,6 +42,9 @@ const samples = [
   },
   {
     index: 1,
+    key: 'k1',
+    removed: false,
+    meetingConfirmed: true,
     source: 'meeting',
     createdAt: 'x',
     meetingId: 'm2',
@@ -115,6 +128,9 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
       ...samples,
       {
         index: 2,
+        key: 'k2',
+        removed: false,
+        meetingConfirmed: false,
         source: 'meeting',
         createdAt: 'x',
         meetingId: null,
@@ -140,5 +156,100 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
     render1();
     fireEvent.click(await screen.findByText(/Listen to voice samples/));
     expect(await screen.findByText(/Could not load the voice samples/)).toBeTruthy();
+  });
+
+  describe('removing a sample', () => {
+    const open = async () => {
+      render1();
+      fireEvent.click(await screen.findByText(/Listen to voice samples/));
+      await screen.findByRole('button', { name: /Remove sample 1 of Harshit/ });
+    };
+
+    it('asks first, naming the clip, and changes nothing until confirmed', async () => {
+      await open();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog.textContent).toContain('AOM Meeting part 1');
+      expect(dialog.textContent).toContain('25 s');
+      expect(dialog.textContent).toContain('Names already on past meetings do not change');
+      expect(dialog.textContent).toContain('You can restore it');
+      expect(api.speakers.removeSample).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+      expect(api.speakers.removeSample).not.toHaveBeenCalled();
+    });
+
+    it('removes that one clip, greys it out with Restore, and refreshes the count', async () => {
+      const after = [{ ...samples[0], removed: true }, samples[1]];
+      api.speakers.removeSample.mockResolvedValue(after);
+      await open();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      await screen.findByRole('alertdialog');
+      const box = screen.getByRole('checkbox');
+      expect(box.checked).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      await waitFor(() =>
+        expect(api.speakers.removeSample).toHaveBeenCalledWith('p1', 'k0', {
+          ignoreMeeting: false,
+        }),
+      );
+      expect(
+        await screen.findByRole('button', { name: /Restore sample 1 of Harshit/ }),
+      ).toBeTruthy();
+      expect(screen.getByText('Removed')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Remove sample 1 of Harshit/ })).toBeNull();
+      // the page list is reloaded so the "(N)" in the heading follows
+      expect(api.speakers.list.mock.calls.length).toBeGreaterThan(1);
+    });
+
+    it('offers to ignore the rest of that meeting, ticked when its voice was confirmed as this person', async () => {
+      api.speakers.removeSample.mockResolvedValue(samples);
+      await open();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 2 of Harshit/ }));
+      await screen.findByRole('alertdialog');
+      expect(screen.getByRole('checkbox').checked).toBe(true);
+      expect(screen.getByRole('alertdialog').textContent).toContain('was confirmed as this person');
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      await waitFor(() =>
+        expect(api.speakers.removeSample).toHaveBeenCalledWith('p1', 'k1', { ignoreMeeting: true }),
+      );
+    });
+
+    it('restores a removed clip', async () => {
+      api.speakers.samples.mockResolvedValue([{ ...samples[0], removed: true }, samples[1]]);
+      api.speakers.restoreSample.mockResolvedValue(samples);
+      render1();
+      fireEvent.click(await screen.findByText(/Listen to voice samples/));
+      fireEvent.click(await screen.findByRole('button', { name: /Restore sample 1 of Harshit/ }));
+      await waitFor(() => expect(api.speakers.restoreSample).toHaveBeenCalledWith('p1', 'k0'));
+      expect(
+        await screen.findByRole('button', { name: /Remove sample 1 of Harshit/ }),
+      ).toBeTruthy();
+    });
+
+    it('warns about the last sample before and after it is removed', async () => {
+      api.speakers.samples.mockResolvedValue([samples[0]]);
+      api.speakers.removeSample.mockResolvedValue([{ ...samples[0], removed: true }]);
+      await open();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      const dialog = await screen.findByRole('alertdialog');
+      expect(dialog.textContent).toContain('will not be recognised until a new voice is learned');
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      await waitFor(() =>
+        expect(
+          screen.getAllByText(/will not be recognised until a new voice is learned/).length,
+        ).toBeGreaterThan(0),
+      );
+    });
+
+    it('says nothing was changed when the call fails', async () => {
+      api.speakers.removeSample.mockRejectedValue(new Error('boom'));
+      await open();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      await screen.findByRole('alertdialog');
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+      expect(await screen.findByText(/Nothing was changed/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ })).toBeTruthy();
+    });
   });
 });

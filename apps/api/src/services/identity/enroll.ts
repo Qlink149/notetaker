@@ -23,6 +23,7 @@ import {
   SpeakerModel,
   type SpeakerCardDoc,
   type SpeakerDoc,
+  type VoiceprintDoc,
 } from '../../models/index.js';
 import { P2IdentityRunModel, P2PyannoteResponseModel } from '../../models/phase2.js';
 import { cutFlac } from '../audio/ffmpeg.js';
@@ -45,6 +46,7 @@ import {
   type JobSpec,
 } from '../pyannote/jobs.js';
 import { pyannoteSegments, shortTitle, speakerSeconds } from './identity.js';
+import { isActiveSample } from './samples.js';
 
 export const IDENTITY_MODEL: PyannoteModel = 'precision-2';
 /**
@@ -163,6 +165,23 @@ async function decidedOf(cards: SpeakerCardDoc[]): Promise<Map<string, SpeakerCa
   return out;
 }
 
+/**
+ * Add one voiceprint to a person unless their voice from this meeting was ignored in the meantime. The check is part
+ * of the write, so a learning job that was already running when a sample was removed cannot add it back. Returns 1
+ * when it was added.
+ */
+export async function pushVoiceprint(
+  personId: string,
+  meetingId: string,
+  entry: Omit<VoiceprintDoc, 'createdAt'>,
+): Promise<number> {
+  const res = await SpeakerModel.updateOne(
+    { _id: personId, ignoreMeetings: { $ne: new Types.ObjectId(meetingId) } },
+    { $push: { voiceprints: entry } },
+  );
+  return res.modifiedCount;
+}
+
 /** Create voiceprints for `clips` of one speaker and store them on the person. Returns how many were added. */
 export async function addVoiceprints(
   meetingId: string,
@@ -174,6 +193,9 @@ export async function addVoiceprints(
   if (!clips.length) return 0;
   const person = await SpeakerModel.findById(personId).lean<SpeakerDoc>();
   if (!person) throw new Error(`person ${personId} not found`);
+  // chosen when a sample was removed: this person's voice is no longer learned from that meeting
+  if ((person.ignoreMeetings ?? []).some((m) => String(m) === meetingId)) return 0;
+  // removed samples count as "already has it", so a removed clip is not learned again
   const have = new Set(
     person.voiceprints
       .filter((v) => String(v.meetingId) === meetingId && v.clip)
@@ -201,24 +223,16 @@ export async function addVoiceprints(
     );
     const voiceprint = (doc.output as { voiceprint?: string } | null)?.voiceprint;
     if (!voiceprint) return 0;
-    await SpeakerModel.updateOne(
-      { _id: personId },
-      {
-        $push: {
-          voiceprints: {
-            id: new Types.ObjectId().toString(),
-            source: 'meeting',
-            audioUrl: '',
-            voiceprint,
-            model: IDENTITY_MODEL,
-            meetingId: new Types.ObjectId(meetingId),
-            clip: { start: clip.start, end: clip.end },
-            quality: clip.quality,
-          },
-        },
-      },
-    );
-    return 1;
+    return pushVoiceprint(personId, meetingId, {
+      id: new Types.ObjectId().toString(),
+      source: 'meeting',
+      audioUrl: '',
+      voiceprint,
+      model: IDENTITY_MODEL,
+      meetingId: new Types.ObjectId(meetingId),
+      clip: { start: clip.start, end: clip.end },
+      quality: clip.quality,
+    });
   });
   return added.reduce<number>((a, b) => a + b, 0);
 }
@@ -254,7 +268,7 @@ export interface IdentityReport {
 }
 
 /** The known people's voiceprints to compare a meeting against (this meeting's own voices are left out). */
-async function knownVoices(
+export async function knownVoices(
   meetingId: string,
   workspaceId: string,
 ): Promise<{
@@ -267,6 +281,9 @@ async function knownVoices(
   }).lean<SpeakerDoc[]>();
   const others = people.filter((p) => String(p.origin?.meetingId) !== meetingId);
   const labelToPerson: Record<string, string> = {};
+  // A sample's label is its place in the person's list, and earlier identify jobs keep those labels. So the place is
+  // counted with the removed samples still in it, and they are dropped only afterwards: removing one never renumbers
+  // the others.
   const items = others.flatMap((p) =>
     p.voiceprints
       .filter((v) => (v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL)
@@ -275,7 +292,9 @@ async function knownVoices(
         quality: v.quality ?? null,
         label: `${p._id}-${n}`,
         voiceprint: v.voiceprint ?? v.id,
-      })),
+        active: isActiveSample(v),
+      }))
+      .filter((v) => v.active),
   );
   const picked = pickVoiceprints(items, 50);
   const refs: VoiceprintRef[] = picked.map((v) => {

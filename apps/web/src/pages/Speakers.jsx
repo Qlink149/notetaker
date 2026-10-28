@@ -194,7 +194,7 @@ export default function Speakers() {
               </div>
               {openSamples === s.id && (
                 <div className="mt-3 pt-3 border-t border-border">
-                  <VoiceSamples personId={s.id} name={s.name} />
+                  <VoiceSamples personId={s.id} name={s.name} onChanged={load} />
                 </div>
               )}
             </div>

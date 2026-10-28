@@ -499,6 +499,12 @@ export interface VoiceprintDoc {
   clip?: { start: number; end: number } | null;
   /** Mean turn confidence (0–100) of the clip. */
   quality?: number | null;
+  /**
+   * Taken off the profile by a person (Speakers page). The sample stays in the list: it is no longer compared with
+   * new voices or counted, but it still keeps the same clip from being learned again and keeps the positions (which
+   * name the labels of earlier identify jobs) where they were. Restoring clears it.
+   */
+  removedAt?: Date | null;
 }
 export interface SpeakerDoc {
   _id: Types.ObjectId;
@@ -511,6 +517,8 @@ export interface SpeakerDoc {
   /** Where the person was first heard. */
   origin: { meetingId: Types.ObjectId; diar: string } | null;
   voiceprints: VoiceprintDoc[];
+  /** Meetings this person's voice is no longer learned from (chosen when a sample is removed). */
+  ignoreMeetings: Types.ObjectId[];
   createdAt: Date;
 }
 const speakerSchema = new Schema<SpeakerDoc>(
@@ -533,12 +541,14 @@ const speakerSchema = new Schema<SpeakerDoc>(
             meetingId: { type: Schema.Types.ObjectId, default: null },
             clip: { type: Schema.Types.Mixed, default: null },
             quality: { type: Number, default: null },
+            removedAt: { type: Date, default: null },
           },
           opts,
         ),
       ],
       default: [],
     },
+    ignoreMeetings: { type: [Schema.Types.ObjectId], default: [] },
   },
   { timestamps: true },
 );
