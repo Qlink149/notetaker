@@ -93,8 +93,22 @@ export interface Speaker {
   /** A voice nobody has named yet ("Speaker B (Meeting AOM)"). */
   anonymous?: boolean;
   hasVoiceprint: boolean;
+  voiceprintCount?: number;
   enrollmentAudioUrl: string | null;
   createdAt: string;
+}
+
+/** One voice sample saved for a person, and the recording it was cut from. */
+export interface VoiceSample {
+  index: number;
+  source: 'enrolment' | 'meeting';
+  createdAt: string;
+  meetingId: string | null;
+  meetingTitle: string | null;
+  start: number;
+  end: number | null;
+  seconds: number | null;
+  audioUrl: string | null;
 }
 
 export interface SpeakerCard {
@@ -441,6 +455,10 @@ export const api = {
       return request<{ speaker: Speaker }>('POST', '/speakers/enrol', form).then((r) => r.speaker);
     },
     remove: (id: string) => request<void>('DELETE', `/speakers/${id}`),
+    samples: (id: string) =>
+      request<{ name: string; samples: VoiceSample[] }>('GET', `/speakers/${id}/samples`).then(
+        (r) => r.samples,
+      ),
   },
   sessions: {
     create: (title?: string) => request<SessionView>('POST', '/sessions', { title }),

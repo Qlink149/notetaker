@@ -10,7 +10,8 @@ import { playableUrl } from '../lib/audioLink.js';
 import { ws } from '../lib/auth.js';
 import { cutFlac, toAnalysisFlac } from '../services/audio/ffmpeg.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
-import { MeetingDataModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
+import { playbackUrlOf } from '../lib/views.js';
+import { MeetingDataModel, MeetingModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
 import type { ApiDeps } from './deps.js';
 
 // Ported from legacy/base44/functions/enrollSpeaker. Phase 1 keeps the Speakers page working;
@@ -46,6 +47,48 @@ export function speakersRouter(deps: ApiDeps): Router {
       .sort({ name: 1 })
       .lean<SpeakerDoc[]>();
     res.json({ speakers: list.map(speakerView) });
+  });
+
+  /**
+   * Every voice sample the app compares new voices with for one person, each with the recording it was cut from
+   * and where, so it can be played. A profile that holds two different people (28 Oct: one name for an internal
+   * Harshit and a Harshit from Google) can only be told apart by listening.
+   */
+  r.get('/speakers/:id/samples', async (req, res) => {
+    const person = await SpeakerModel.findOne({
+      _id: idParam(req),
+      workspaceId: ws(req)._id,
+    }).lean<SpeakerDoc>();
+    if (!person) throw notFound('speaker_not_found');
+    const meetings = await MeetingModel.find({
+      _id: {
+        $in: person.voiceprints
+          .map((v) => v.meetingId)
+          .filter((id): id is NonNullable<typeof id> => !!id),
+      },
+      workspaceId: ws(req)._id,
+    }).lean();
+    const byId = new Map(meetings.map((m) => [String(m._id), m]));
+    res.json({
+      name: person.name,
+      samples: person.voiceprints.map((v, i) => {
+        const meeting = v.meetingId ? byId.get(String(v.meetingId)) : undefined;
+        const clip = v.clip && v.clip.end > v.clip.start ? v.clip : null;
+        // a clip cut from a meeting plays from that meeting's recording; a recorded sample from its own file
+        const url = meeting && clip ? playbackUrlOf(meeting) : playableUrl(v.audioUrl) || null;
+        return {
+          index: i,
+          source: v.source,
+          createdAt: v.createdAt,
+          meetingId: meeting ? String(meeting._id) : null,
+          meetingTitle: meeting?.title ?? null,
+          start: meeting && clip ? clip.start : 0,
+          end: meeting && clip ? clip.end : (clip?.end ?? null),
+          seconds: clip ? Math.round((clip.end - clip.start) * 10) / 10 : null,
+          audioUrl: url,
+        };
+      }),
+    });
   });
 
   /** Multipart (`name` + `audio` file) or JSON (`name` + `audioUrl` | `trim`). */

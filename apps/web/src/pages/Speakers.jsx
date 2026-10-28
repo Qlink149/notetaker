@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import EnrollmentRecorder from '@/components/EnrollmentRecorder';
+import VoiceSamples from '@/components/VoiceSamples';
 import { Trash2, Loader2, Users, X, Volume2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -25,6 +26,7 @@ export default function Speakers() {
   const [error, setError] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
+  const [openSamples, setOpenSamples] = useState(null);
 
   const load = async () => {
     try {
@@ -155,34 +157,46 @@ export default function Speakers() {
       ) : (
         <div className="space-y-2">
           {speakers.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center justify-between rounded-xl border border-border bg-card p-3"
-            >
-              <div>
-                <p className="font-medium">{s.name}</p>
-                {s.hasVoiceprint ? (
-                  <p className="text-xs text-muted-foreground">Voiceprint enrolled</p>
-                ) : (
-                  <p className="text-xs text-amber-600">
-                    No voiceprint — enroll a clip for auto-recognition
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-1">
-                {s.enrollmentAudioUrl && (
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => setPlayingId(playingId === s.id ? null : s.id)}
-                  >
-                    <Volume2 className="w-4 h-4 text-muted-foreground" />
+            <div key={s.id} className="rounded-xl border border-border bg-card p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">{s.name}</p>
+                  {s.hasVoiceprint ? (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline"
+                      aria-expanded={openSamples === s.id}
+                      onClick={() => setOpenSamples(openSamples === s.id ? null : s.id)}
+                    >
+                      {openSamples === s.id ? 'Hide' : 'Listen to'} voice samples
+                      {s.voiceprintCount ? ` (${s.voiceprintCount})` : ''}
+                    </button>
+                  ) : (
+                    <p className="text-xs text-amber-600">
+                      No voiceprint — enroll a clip for auto-recognition
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1">
+                  {s.enrollmentAudioUrl && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setPlayingId(playingId === s.id ? null : s.id)}
+                    >
+                      <Volume2 className="w-4 h-4 text-muted-foreground" />
+                    </Button>
+                  )}
+                  <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(s)}>
+                    <Trash2 className="w-4 h-4 text-muted-foreground" />
                   </Button>
-                )}
-                <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(s)}>
-                  <Trash2 className="w-4 h-4 text-muted-foreground" />
-                </Button>
+                </div>
               </div>
+              {openSamples === s.id && (
+                <div className="mt-3 pt-3 border-t border-border">
+                  <VoiceSamples personId={s.id} name={s.name} />
+                </div>
+              )}
             </div>
           ))}
           {playingId &&
