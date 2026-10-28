@@ -168,8 +168,7 @@ export default function Speakers() {
                       aria-expanded={openSamples === s.id}
                       onClick={() => setOpenSamples(openSamples === s.id ? null : s.id)}
                     >
-                      {openSamples === s.id ? 'Hide' : 'Listen to'} voice samples
-                      {s.voiceprintCount ? ` (${s.voiceprintCount})` : ''}
+                      {openSamples === s.id ? 'Hide' : 'Listen to'} voice
                     </button>
                   ) : (
                     <p className="text-xs text-amber-600">

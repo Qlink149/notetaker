@@ -18,6 +18,8 @@ import {
   type ApplyResult,
 } from './identity.js';
 import { enqueue } from '../../pipeline/queue.js';
+import { isUsableSample } from './enroll.js';
+import { mainSample, meetingsStillThere } from './samples.js';
 
 // Review-screen edits: merge, split, reassign, name. Every edit rewrites this meeting's turns and
 // cards, then calls applyNames so its lines re-merge. Naming or linking a speaker stays in this
@@ -114,9 +116,16 @@ export async function mergePeople(keepId: string, dropId: string): Promise<strin
   if (!keep || !drop) throw new EditError('Person not found.');
   if (String(keep.workspaceId) !== String(drop.workspaceId))
     throw new EditError('Those people belong to different workspaces.');
+  // the surviving person keeps the voice they are compared by; the other's samples join as spares
+  const keepMain = mainSample(
+    keep.voiceprints.filter(isUsableSample),
+    keep.mainSampleId,
+    await meetingsStillThere(keep.voiceprints),
+  );
   await SpeakerModel.updateOne(
     { _id: keepId },
     {
+      ...(keepMain ? { $set: { mainSampleId: keepMain.id } } : {}),
       $push: { voiceprints: { $each: drop.voiceprints } },
       $addToSet: {
         ignoreMeetings: { $each: drop.ignoreMeetings ?? [] },

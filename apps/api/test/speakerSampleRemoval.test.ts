@@ -209,20 +209,14 @@ describe('what a removal changes for identifying later meetings', () => {
   it('does not send a removed sample, and the others keep their labels', async () => {
     const { list, remove, person } = await seed();
     const meetingId = String(new Types.ObjectId());
+    // one voice per person: the first sample, as all three are long enough and can be heard
     const before = await knownVoices(meetingId, String(workspace._id));
-    expect(before.refs.map((r) => r.label)).toEqual([
-      `${person._id}-0`,
-      `${person._id}-1`,
-      `${person._id}-2`,
-    ]);
-    await remove((await list())[1]!.key).expect(200);
+    expect(before.refs.map((r) => r.label)).toEqual([`${person._id}-0`]);
+    await remove((await list())[0]!.key).expect(200);
     const after = await knownVoices(meetingId, String(workspace._id));
-    // position 1 is gone; position 2 is still called 2, so earlier identify results still mean the same sample
-    expect(after.refs.map((r) => r.label)).toEqual([`${person._id}-0`, `${person._id}-2`]);
-    expect(after.refs.map((r) => r.voiceprint)).toEqual([
-      'secret-voiceprint-0',
-      'secret-voiceprint-2',
-    ]);
+    // position 0 is gone; the next sample is still called by its own place, so earlier identify results still mean the same sample
+    expect(after.refs.map((r) => r.label)).toEqual([`${person._id}-1`]);
+    expect(after.refs.map((r) => r.voiceprint)).toEqual(['secret-voiceprint-1']);
   });
 
   it('is not learned again from the same clip, and not at all from an ignored meeting', async () => {

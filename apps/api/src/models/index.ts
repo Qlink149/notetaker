@@ -519,6 +519,11 @@ export interface SpeakerDoc {
   voiceprints: VoiceprintDoc[];
   /** Meetings this person's voice is no longer learned from (chosen when a sample is removed). */
   ignoreMeetings: Types.ObjectId[];
+  /**
+   * The one sample new voices are compared with, chosen on the Speakers page. Unset (or no longer usable): the
+   * default, see `mainSample`.
+   */
+  mainSampleId?: string | null;
   createdAt: Date;
 }
 const speakerSchema = new Schema<SpeakerDoc>(
@@ -549,6 +554,7 @@ const speakerSchema = new Schema<SpeakerDoc>(
       default: [],
     },
     ignoreMeetings: { type: [Schema.Types.ObjectId], default: [] },
+    mainSampleId: { type: String, default: null },
   },
   { timestamps: true },
 );

@@ -46,9 +46,13 @@ import {
   type JobSpec,
 } from '../pyannote/jobs.js';
 import { pyannoteSegments, shortTitle, speakerSeconds } from './identity.js';
-import { isActiveSample } from './samples.js';
+import { mainSample, meetingsStillThere } from './samples.js';
 
 export const IDENTITY_MODEL: PyannoteModel = 'precision-2';
+
+/** pyannote can compare with this sample: it has a voiceprint, made by the pinned model. */
+export const isUsableSample = (v: Pick<VoiceprintDoc, 'voiceprint' | 'id' | 'model'>): boolean =>
+  Boolean(v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL;
 /**
  * A voice is named automatically only at this score. On 16 Oct two different people matched at 62 and 63 while
  * every correct match scored 84 or more, so 60 (the overnight default, DECISIONS #29) named absent people.
@@ -281,21 +285,23 @@ export async function knownVoices(
   }).lean<SpeakerDoc[]>();
   const others = people.filter((p) => String(p.origin?.meetingId) !== meetingId);
   const labelToPerson: Record<string, string> = {};
-  // A sample's label is its place in the person's list, and earlier identify jobs keep those labels. So the place is
-  // counted with the removed samples still in it, and they are dropped only afterwards: removing one never renumbers
-  // the others.
-  const items = others.flatMap((p) =>
-    p.voiceprints
-      .filter((v) => (v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL)
-      .map((v, n) => ({
+  const there = await meetingsStillThere(others.flatMap((p) => p.voiceprints));
+  // One voice per person (28 Oct): their main sample, see `mainSample`; the rest are spares. A sample's label is its
+  // place in the person's list, and earlier identify jobs keep those labels. So the place is counted with the
+  // removed samples still in it, and they are dropped only afterwards: removing one never renumbers the others.
+  const items = others.flatMap((p) => {
+    const usable = p.voiceprints.filter((v) => isUsableSample(v));
+    const main = mainSample(usable, p.mainSampleId, there);
+    if (!main) return [];
+    return [
+      {
         personId: String(p._id),
-        quality: v.quality ?? null,
-        label: `${p._id}-${n}`,
-        voiceprint: v.voiceprint ?? v.id,
-        active: isActiveSample(v),
-      }))
-      .filter((v) => v.active),
-  );
+        quality: main.quality ?? null,
+        label: `${p._id}-${usable.indexOf(main)}`,
+        voiceprint: main.voiceprint ?? main.id,
+      },
+    ];
+  });
   const picked = pickVoiceprints(items, 50);
   const refs: VoiceprintRef[] = picked.map((v) => {
     labelToPerson[v.label] = v.personId;

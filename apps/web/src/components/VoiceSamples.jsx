@@ -15,10 +15,9 @@ import {
 } from '@/components/ui/alert-dialog';
 
 /**
- * Every voice sample saved for one person, each playable from the recording it was cut from. These clips are
- * the only thing a new voice is compared with, so a profile that holds two different people (or someone
- * else's voice) can be heard here, and a wrong clip can be removed. A removed clip stays in the list, greyed
- * out, and can be restored.
+ * The voice a person is recognised by: one clip, playable from the recording it was cut from. The person's other
+ * clips are spares: "Change voice" lists them to listen to and swap in, or to remove (a removed clip stays in the
+ * list, greyed out, and can be restored).
  */
 export default function VoiceSamples({ personId, name, onChanged }) {
   const [samples, setSamples] = useState(null);
@@ -27,6 +26,7 @@ export default function VoiceSamples({ personId, name, onChanged }) {
   const [removing, setRemoving] = useState(null);
   const [ignoreRest, setIgnoreRest] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showSpares, setShowSpares] = useState(false);
   const audio = useRef(null);
   const playingRef = useRef(null);
   playingRef.current = samples?.find((s) => s.index === playing) ?? null;
@@ -101,72 +101,110 @@ export default function VoiceSamples({ personId, name, onChanged }) {
   if (!samples.length)
     return <p className="text-xs text-muted-foreground">No voice samples saved for {name}.</p>;
 
-  const activeCount = samples.filter((s) => !s.removed).length;
+  const main = samples.find((s) => s.main) ?? null;
+  const spares = samples.filter((s) => !s.main);
+
+  const row = (s) => (
+    <div
+      key={s.key}
+      className={`flex items-center gap-2 text-xs flex-wrap ${s.removed ? 'opacity-60' : ''}`}
+    >
+      <button
+        type="button"
+        onClick={() => play(s)}
+        disabled={!s.audioUrl}
+        aria-label={`${playing === s.index ? 'Stop' : 'Play'} sample ${s.index + 1} of ${name}`}
+        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border hover:bg-secondary disabled:opacity-50"
+      >
+        {playing === s.index ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+        {s.seconds != null ? `${Math.round(s.seconds)} s` : 'Play'}
+      </button>
+      <span className="text-muted-foreground">
+        {s.meetingId ? (
+          <>
+            <Link to={`/meetings/${s.meetingId}?t=${Math.floor(s.start)}`} className="underline">
+              {s.meetingTitle}
+            </Link>{' '}
+            at {fmtTime(s.start)}
+          </>
+        ) : s.source === 'enrolment' ? (
+          'Recorded for this person'
+        ) : (
+          'Recording no longer available'
+        )}
+      </span>
+      {s.main ? (
+        <span className="font-medium text-foreground">In use</span>
+      ) : s.removed ? (
+        <>
+          <span className="text-muted-foreground">Removed</span>
+          <button
+            type="button"
+            disabled={busy}
+            className="underline"
+            aria-label={`Restore sample ${s.index + 1} of ${name}`}
+            onClick={() => change(() => api.speakers.restoreSample(personId, s.key))}
+          >
+            Restore
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            disabled={busy || !s.audioUrl}
+            className="underline"
+            aria-label={`Use sample ${s.index + 1} of ${name} as the voice`}
+            onClick={() => {
+              stop();
+              change(() => api.speakers.useSample(personId, s.key));
+            }}
+          >
+            Use this one
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            className="underline text-muted-foreground hover:text-foreground"
+            aria-label={`Remove sample ${s.index + 1} of ${name}`}
+            onClick={() => askToRemove(s)}
+          >
+            Remove
+          </button>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-1.5" data-testid={`samples-${personId}`}>
-      {samples.map((s, i) => (
-        <div
-          key={s.key}
-          className={`flex items-center gap-2 text-xs flex-wrap ${s.removed ? 'opacity-60' : ''}`}
-        >
-          <button
-            type="button"
-            onClick={() => play(s)}
-            disabled={!s.audioUrl}
-            aria-label={`${playing === s.index ? 'Stop' : 'Play'} sample ${i + 1} of ${name}`}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border hover:bg-secondary disabled:opacity-50"
-          >
-            {playing === s.index ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-            {s.seconds != null ? `${Math.round(s.seconds)} s` : 'Play'}
-          </button>
-          <span className="text-muted-foreground">
-            {s.meetingId ? (
-              <>
-                <Link
-                  to={`/meetings/${s.meetingId}?t=${Math.floor(s.start)}`}
-                  className="underline"
-                >
-                  {s.meetingTitle}
-                </Link>{' '}
-                at {fmtTime(s.start)}
-              </>
-            ) : s.source === 'enrolment' ? (
-              'Recorded for this person'
-            ) : (
-              'Recording no longer available'
-            )}
-          </span>
-          {s.removed ? (
-            <>
-              <span className="text-muted-foreground">Removed</span>
-              <button
-                type="button"
-                disabled={busy}
-                className="underline"
-                aria-label={`Restore sample ${i + 1} of ${name}`}
-                onClick={() => change(() => api.speakers.restoreSample(personId, s.key))}
-              >
-                Restore
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              className="underline text-muted-foreground hover:text-foreground"
-              aria-label={`Remove sample ${i + 1} of ${name}`}
-              onClick={() => askToRemove(s)}
-            >
-              Remove
-            </button>
-          )}
-        </div>
-      ))}
-      {activeCount === 0 && (
+      {main ? (
+        row(main)
+      ) : (
         <p className="text-xs text-amber-700">
           {name} will not be recognised until a new voice is learned.
         </p>
+      )}
+      {spares.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="text-xs underline text-muted-foreground"
+            aria-expanded={showSpares}
+            onClick={() => setShowSpares(!showSpares)}
+          >
+            {showSpares ? 'Hide other clips' : `Change voice (${spares.length} other clips)`}
+          </button>
+          {showSpares && (
+            <div className="space-y-1.5 pl-3 border-l border-border">
+              <p className="text-xs text-muted-foreground">
+                Only the clip marked “In use” is used to recognise {name}. Listen, then choose another
+                if it sounds better.
+              </p>
+              {spares.map(row)}
+            </div>
+          )}
+        </>
       )}
       {error && <p className="text-xs text-destructive">{error}</p>}
       <audio ref={audio} onTimeUpdate={onTime} onEnded={() => setPlaying(null)} preload="none" />
@@ -179,12 +217,9 @@ export default function VoiceSamples({ personId, name, onChanged }) {
               {removing?.meetingTitle
                 ? `${removing.meetingTitle} at ${fmtTime(removing.start)}`
                 : 'Recorded sample'}
-              {removing?.seconds != null ? `, ${Math.round(removing.seconds)} s` : ''}. New meetings
-              will no longer be compared with this clip. Names already on past meetings do not
-              change. You can restore it.
-              {removing &&
-                activeCount === 1 &&
-                ` ${name} will not be recognised until a new voice is learned.`}
+              {removing?.seconds != null ? `, ${Math.round(removing.seconds)} s` : ''}. It is taken off
+              the clips you can choose from, and is not learned again. Names already on past
+              meetings do not change. You can restore it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {removing?.meetingId && (

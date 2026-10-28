@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({
   speakers: {
     list: vi.fn(),
     samples: vi.fn(),
+    useSample: vi.fn(),
     removeSample: vi.fn(),
     restoreSample: vi.fn(),
     enrol: vi.fn(),
@@ -21,18 +22,24 @@ const harshit = {
   id: 'p1',
   name: 'Harshit Google DV360',
   hasVoiceprint: true,
-  voiceprintCount: 2,
+  voiceprintCount: 3,
   enrollmentAudioUrl: null,
   createdAt: '2026-10-07T00:00:00Z',
 };
+const base = {
+  removed: false,
+  main: false,
+  meetingConfirmed: false,
+  source: 'meeting',
+  createdAt: 'x',
+};
+// sample 1 is the voice in use; 2 and 3 are spares
 const samples = [
   {
+    ...base,
+    main: true,
     index: 0,
     key: 'k0',
-    removed: false,
-    meetingConfirmed: false,
-    source: 'meeting',
-    createdAt: 'x',
     meetingId: 'm1',
     meetingTitle: 'AOM Meeting part 1',
     start: 109.75,
@@ -41,12 +48,10 @@ const samples = [
     audioUrl: 'https://a.test/aom.mp3',
   },
   {
+    ...base,
+    meetingConfirmed: true,
     index: 1,
     key: 'k1',
-    removed: false,
-    meetingConfirmed: true,
-    source: 'meeting',
-    createdAt: 'x',
     meetingId: 'm2',
     meetingTitle: 'Google DV',
     start: 152.13,
@@ -54,7 +59,19 @@ const samples = [
     seconds: 25,
     audioUrl: 'https://a.test/dv.mp3',
   },
+  {
+    ...base,
+    index: 2,
+    key: 'k2',
+    meetingId: 'm3',
+    meetingTitle: 'NDPF',
+    start: 10,
+    end: 30,
+    seconds: 20,
+    audioUrl: 'https://a.test/ndpf.mp3',
+  },
 ];
+const withMain = (k) => samples.map((s) => ({ ...s, main: s.key === k }));
 
 const render1 = () =>
   render(
@@ -62,6 +79,17 @@ const render1 = () =>
       <Speakers />
     </MemoryRouter>,
   );
+const openVoice = async () => {
+  const view = render1();
+  fireEvent.click(await screen.findByText(/Listen to voice/));
+  await screen.findByRole('button', { name: /Play sample 1 of Harshit/ });
+  return view;
+};
+const openSpares = async () => {
+  const view = await openVoice();
+  fireEvent.click(screen.getByRole('button', { name: /Change voice/ }));
+  return view;
+};
 
 let play;
 let pause;
@@ -81,37 +109,51 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('listening to a person’s voice samples (28 Oct)', () => {
-  it('shows how many samples a person has and nothing for a person without one', async () => {
+describe('the one voice a person is recognised by (28 Oct)', () => {
+  it('offers to listen to the voice of a person who has one, and nothing for a person without', async () => {
     render1();
-    expect(await screen.findByText(/Listen to voice samples \(2\)/)).toBeTruthy();
-    expect(screen.getAllByText(/voice samples/i)).toHaveLength(1);
+    expect(await screen.findByText(/Listen to voice/)).toBeTruthy();
+    expect(screen.getAllByText(/Listen to voice/)).toHaveLength(1);
     expect(api.speakers.samples).not.toHaveBeenCalled();
   });
 
-  it('lists every sample with its meeting and place, and links to that moment', async () => {
-    render1();
-    fireEvent.click(await screen.findByText(/Listen to voice samples/));
-    expect(await screen.findByRole('button', { name: /Play sample 1 of Harshit/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Play sample 2 of Harshit/ })).toBeTruthy();
-    const link = screen.getByRole('link', { name: 'Google DV' });
-    expect(link.getAttribute('href')).toBe('/meetings/m2?t=152');
-    // 24.9 s and 25 s both show as 25 s
-    expect(screen.getAllByText('25 s')).toHaveLength(2);
+  it('shows the one voice in use, and keeps the other clips out of sight', async () => {
+    await openVoice();
+    expect(screen.getByText('In use')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Play sample 2 of Harshit/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Change voice (2 other clips)' })).toBeTruthy();
+    // the voice in use cannot be removed or swapped for itself
+    expect(screen.queryByRole('button', { name: /Remove sample 1 of Harshit/ })).toBeNull();
     expect(api.speakers.samples).toHaveBeenCalledWith('p1');
   });
 
-  it('plays a sample from its own start in that meeting’s recording and stops at its end', async () => {
-    const { container } = render1();
-    fireEvent.click(await screen.findByText(/Listen to voice samples/));
-    fireEvent.click(await screen.findByRole('button', { name: /Play sample 2 of Harshit/ }));
+  it('shows no change button for a person with only one clip', async () => {
+    api.speakers.samples.mockResolvedValue([samples[0]]);
+    await openVoice();
+    expect(screen.queryByRole('button', { name: /Change voice/ })).toBeNull();
+  });
+
+  it('lists the other clips with their meeting and place, and links to that moment', async () => {
+    await openSpares();
+    expect(screen.getByRole('button', { name: /Play sample 2 of Harshit/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Play sample 3 of Harshit/ })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Google DV' }).getAttribute('href')).toBe(
+      '/meetings/m2?t=152',
+    );
+    // the clip in use (24.9 s) and the spare (25 s) both show as 25 s
+    expect(screen.getAllByText('25 s')).toHaveLength(2);
+    expect(screen.getByText(/Only the clip marked/)).toBeTruthy();
+  });
+
+  it('plays a clip from its own start in that meeting’s recording and stops at its end', async () => {
+    const { container } = await openSpares();
+    fireEvent.click(screen.getByRole('button', { name: /Play sample 2 of Harshit/ }));
     const el = container.querySelector('audio');
     expect(el.getAttribute('src')).toBe('https://a.test/dv.mp3');
     fireEvent(el, new Event('loadedmetadata'));
     expect(el.currentTime).toBeCloseTo(152.13);
     expect(play).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: /Stop sample 2/ })).toBeTruthy();
-    // before the end it keeps playing, at the end it stops
     el.currentTime = 170;
     fireEvent.timeUpdate(el);
     expect(pause).not.toHaveBeenCalled();
@@ -123,16 +165,13 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
     );
   });
 
-  it('switches to another sample’s recording and says when a recording is gone', async () => {
+  it('says when a recording is gone, and does not let that clip be chosen unheard', async () => {
     api.speakers.samples.mockResolvedValue([
-      ...samples,
+      samples[0],
       {
-        index: 2,
-        key: 'k2',
-        removed: false,
-        meetingConfirmed: false,
-        source: 'meeting',
-        createdAt: 'x',
+        ...base,
+        index: 1,
+        key: 'k1',
         meetingId: null,
         meetingTitle: null,
         start: 0,
@@ -141,36 +180,50 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
         audioUrl: null,
       },
     ]);
-    const { container } = render1();
-    fireEvent.click(await screen.findByText(/Listen to voice samples/));
-    fireEvent.click(await screen.findByRole('button', { name: /Play sample 1 of Harshit/ }));
-    expect(container.querySelector('audio').getAttribute('src')).toBe('https://a.test/aom.mp3');
-    fireEvent.click(screen.getByRole('button', { name: /Play sample 2 of Harshit/ }));
-    expect(container.querySelector('audio').getAttribute('src')).toBe('https://a.test/dv.mp3');
+    await openSpares();
     expect(screen.getByText('Recording no longer available')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Play sample 3 of Harshit/ }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: /Play sample 2 of Harshit/ }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: /Use sample 2 of Harshit/ }).disabled).toBe(true);
   });
 
-  it('says so when the samples cannot be loaded', async () => {
+  it('says so when the clips cannot be loaded', async () => {
     api.speakers.samples.mockRejectedValue(new Error('boom'));
     render1();
-    fireEvent.click(await screen.findByText(/Listen to voice samples/));
+    fireEvent.click(await screen.findByText(/Listen to voice/));
     expect(await screen.findByText(/Could not load the voice samples/)).toBeTruthy();
   });
 
-  describe('removing a sample', () => {
-    const open = async () => {
-      render1();
-      fireEvent.click(await screen.findByText(/Listen to voice samples/));
-      await screen.findByRole('button', { name: /Remove sample 1 of Harshit/ });
-    };
+  describe('changing the voice', () => {
+    it('makes the chosen clip the voice in use and refreshes the page list', async () => {
+      api.speakers.useSample.mockResolvedValue(withMain('k2'));
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Use sample 3 of Harshit/ }));
+      await waitFor(() => expect(api.speakers.useSample).toHaveBeenCalledWith('p1', 'k2'));
+      // the clip now in use is the one on top, and the old one is a spare
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /Use sample 1 of Harshit/ })).toBeTruthy(),
+      );
+      expect(screen.queryByRole('button', { name: /Use sample 3 of Harshit/ })).toBeNull();
+      expect(screen.getByText('In use')).toBeTruthy();
+      expect(api.speakers.list.mock.calls.length).toBeGreaterThan(1);
+    });
 
+    it('says nothing was changed when the call fails', async () => {
+      api.speakers.useSample.mockRejectedValue(new Error('boom'));
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Use sample 2 of Harshit/ }));
+      expect(await screen.findByText(/Nothing was changed/)).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Use sample 2 of Harshit/ })).toBeTruthy();
+    });
+  });
+
+  describe('removing a spare clip', () => {
     it('asks first, naming the clip, and changes nothing until confirmed', async () => {
-      await open();
-      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 3 of Harshit/ }));
       const dialog = await screen.findByRole('alertdialog');
-      expect(dialog.textContent).toContain('AOM Meeting part 1');
-      expect(dialog.textContent).toContain('25 s');
+      expect(dialog.textContent).toContain('NDPF');
+      expect(dialog.textContent).toContain('20 s');
       expect(dialog.textContent).toContain('Names already on past meetings do not change');
       expect(dialog.textContent).toContain('You can restore it');
       expect(api.speakers.removeSample).not.toHaveBeenCalled();
@@ -179,32 +232,32 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
       expect(api.speakers.removeSample).not.toHaveBeenCalled();
     });
 
-    it('removes that one clip, greys it out with Restore, and refreshes the count', async () => {
-      const after = [{ ...samples[0], removed: true }, samples[1]];
-      api.speakers.removeSample.mockResolvedValue(after);
-      await open();
-      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+    it('removes only that clip and greys it out with Restore', async () => {
+      api.speakers.removeSample.mockResolvedValue([
+        samples[0],
+        samples[1],
+        { ...samples[2], removed: true },
+      ]);
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 3 of Harshit/ }));
       await screen.findByRole('alertdialog');
-      const box = screen.getByRole('checkbox');
-      expect(box.checked).toBe(false);
+      expect(screen.getByRole('checkbox').checked).toBe(false);
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
       await waitFor(() =>
-        expect(api.speakers.removeSample).toHaveBeenCalledWith('p1', 'k0', {
+        expect(api.speakers.removeSample).toHaveBeenCalledWith('p1', 'k2', {
           ignoreMeeting: false,
         }),
       );
       expect(
-        await screen.findByRole('button', { name: /Restore sample 1 of Harshit/ }),
+        await screen.findByRole('button', { name: /Restore sample 3 of Harshit/ }),
       ).toBeTruthy();
       expect(screen.getByText('Removed')).toBeTruthy();
-      expect(screen.queryByRole('button', { name: /Remove sample 1 of Harshit/ })).toBeNull();
-      // the page list is reloaded so the "(N)" in the heading follows
-      expect(api.speakers.list.mock.calls.length).toBeGreaterThan(1);
+      expect(screen.queryByRole('button', { name: /Use sample 3 of Harshit/ })).toBeNull();
     });
 
     it('offers to ignore the rest of that meeting, ticked when its voice was confirmed as this person', async () => {
       api.speakers.removeSample.mockResolvedValue(samples);
-      await open();
+      await openSpares();
       fireEvent.click(screen.getByRole('button', { name: /Remove sample 2 of Harshit/ }));
       await screen.findByRole('alertdialog');
       expect(screen.getByRole('checkbox').checked).toBe(true);
@@ -216,40 +269,37 @@ describe('listening to a person’s voice samples (28 Oct)', () => {
     });
 
     it('restores a removed clip', async () => {
-      api.speakers.samples.mockResolvedValue([{ ...samples[0], removed: true }, samples[1]]);
+      api.speakers.samples.mockResolvedValue([
+        samples[0],
+        samples[1],
+        { ...samples[2], removed: true },
+      ]);
       api.speakers.restoreSample.mockResolvedValue(samples);
-      render1();
-      fireEvent.click(await screen.findByText(/Listen to voice samples/));
-      fireEvent.click(await screen.findByRole('button', { name: /Restore sample 1 of Harshit/ }));
-      await waitFor(() => expect(api.speakers.restoreSample).toHaveBeenCalledWith('p1', 'k0'));
-      expect(
-        await screen.findByRole('button', { name: /Remove sample 1 of Harshit/ }),
-      ).toBeTruthy();
-    });
-
-    it('warns about the last sample before and after it is removed', async () => {
-      api.speakers.samples.mockResolvedValue([samples[0]]);
-      api.speakers.removeSample.mockResolvedValue([{ ...samples[0], removed: true }]);
-      await open();
-      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
-      const dialog = await screen.findByRole('alertdialog');
-      expect(dialog.textContent).toContain('will not be recognised until a new voice is learned');
-      fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-      await waitFor(() =>
-        expect(
-          screen.getAllByText(/will not be recognised until a new voice is learned/).length,
-        ).toBeGreaterThan(0),
-      );
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Restore sample 3 of Harshit/ }));
+      await waitFor(() => expect(api.speakers.restoreSample).toHaveBeenCalledWith('p1', 'k2'));
+      expect(await screen.findByRole('button', { name: /Remove sample 3 of Harshit/ })).toBeTruthy();
     });
 
     it('says nothing was changed when the call fails', async () => {
       api.speakers.removeSample.mockRejectedValue(new Error('boom'));
-      await open();
-      fireEvent.click(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ }));
+      await openSpares();
+      fireEvent.click(screen.getByRole('button', { name: /Remove sample 3 of Harshit/ }));
       await screen.findByRole('alertdialog');
       fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
       expect(await screen.findByText(/Nothing was changed/)).toBeTruthy();
-      expect(screen.getByRole('button', { name: /Remove sample 1 of Harshit/ })).toBeTruthy();
+      expect(screen.getByRole('button', { name: /Remove sample 3 of Harshit/ })).toBeTruthy();
     });
+  });
+
+  it('says the person will not be recognised when no clip is in use', async () => {
+    api.speakers.samples.mockResolvedValue(
+      samples.map((s) => ({ ...s, main: false, removed: true })),
+    );
+    render1();
+    fireEvent.click(await screen.findByText(/Listen to voice/));
+    expect(
+      await screen.findByText(/will not be recognised until a new voice is learned/),
+    ).toBeTruthy();
   });
 });

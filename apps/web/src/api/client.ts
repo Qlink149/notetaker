@@ -105,6 +105,8 @@ export interface VoiceSample {
   key: string;
   /** Taken off the profile: kept, greyed out, no longer compared with new voices. */
   removed: boolean;
+  /** The one sample new voices are compared with; the others are spares. */
+  main: boolean;
   /** A person confirmed a voice of that meeting as this person. */
   meetingConfirmed: boolean;
   source: 'enrolment' | 'meeting';
@@ -470,6 +472,12 @@ export const api = {
         'POST',
         `/speakers/${id}/samples/${key}/remove`,
         opts,
+      ).then((r) => r.samples),
+    useSample: (id: string, key: string) =>
+      request<{ name: string; samples: VoiceSample[] }>(
+        'POST',
+        `/speakers/${id}/samples/${key}/main`,
+        {},
       ).then((r) => r.samples),
     restoreSample: (id: string, key: string) =>
       request<{ name: string; samples: VoiceSample[] }>(

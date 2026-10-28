@@ -13,7 +13,8 @@ import { HttpError, body, idParam, notFound } from '../lib/http.js';
 import { logger } from '../lib/logger.js';
 import { playbackUrlOf } from '../lib/views.js';
 import { MeetingDataModel, MeetingModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
-import { isActiveSample, sampleKey } from '../services/identity/samples.js';
+import { isUsableSample } from '../services/identity/enroll.js';
+import { isActiveSample, mainSample, sampleKey } from '../services/identity/samples.js';
 import type { ApiDeps } from './deps.js';
 
 // Ported from legacy/base44/functions/enrollSpeaker. Phase 1 keeps the Speakers page working;
@@ -78,6 +79,11 @@ async function samplesOf(person: SpeakerDoc, workspaceId: SpeakerDoc['workspaceI
       )
       .map((d) => String(d.meetingId)),
   );
+  const main = mainSample(
+    person.voiceprints.filter(isUsableSample),
+    person.mainSampleId,
+    new Set(byId.keys()),
+  );
   return person.voiceprints.map((v, i) => {
     const meeting = v.meetingId ? byId.get(String(v.meetingId)) : undefined;
     const clip = v.clip && v.clip.end > v.clip.start ? v.clip : null;
@@ -87,6 +93,7 @@ async function samplesOf(person: SpeakerDoc, workspaceId: SpeakerDoc['workspaceI
       index: i,
       key: sampleKey(v),
       removed: !isActiveSample(v),
+      main: v === main,
       source: v.source,
       createdAt: v.createdAt,
       meetingId: meeting ? String(meeting._id) : null,
@@ -160,6 +167,25 @@ export function speakersRouter(deps: ApiDeps): Router {
         wide,
       },
       'voice sample removed',
+    );
+    const fresh = await personOf(req);
+    res.json({ name: fresh.name, samples: await samplesOf(fresh, ws(req)._id) });
+  });
+
+  /**
+   * Make this the one sample new voices are compared with (28 Oct). The others stay as spares. Not for a removed
+   * sample, nor for one pyannote cannot compare with.
+   */
+  r.post('/speakers/:id/samples/:key/main', async (req, res) => {
+    const person = await personOf(req);
+    const sample = person.voiceprints.find((v) => sampleKey(v) === String(req.params.key));
+    if (!sample) throw notFound('sample_not_found');
+    if (!isActiveSample(sample) || !isUsableSample(sample))
+      throw new HttpError(409, 'That sample cannot be used: restore it first.');
+    await SpeakerModel.updateOne({ _id: person._id }, { $set: { mainSampleId: sample.id } });
+    logger.info(
+      { person: String(person._id), meeting: String(sample.meetingId), clipStart: sample.clip?.start },
+      'main voice sample changed',
     );
     const fresh = await personOf(req);
     res.json({ name: fresh.name, samples: await samplesOf(fresh, ws(req)._id) });
