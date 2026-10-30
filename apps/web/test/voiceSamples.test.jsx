@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   speakers: {
-    list: vi.fn(),
+    page: vi.fn(),
     samples: vi.fn(),
     useSample: vi.fn(),
     removeSample: vi.fn(),
@@ -94,10 +94,14 @@ const openSpares = async () => {
 let play;
 let pause;
 beforeEach(() => {
-  api.speakers.list.mockResolvedValue([
-    harshit,
-    { ...harshit, id: 'p2', name: 'No Voice', hasVoiceprint: false, voiceprintCount: 0 },
-  ]);
+  api.speakers.page.mockResolvedValue({
+    speakers: [
+      harshit,
+      { ...harshit, id: 'p2', name: 'No Voice', hasVoiceprint: false, voiceprintCount: 0 },
+    ],
+    canAssignSpeakers: false,
+    undos: [],
+  });
   api.speakers.samples.mockResolvedValue(samples);
   play = vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
   pause = vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
@@ -205,7 +209,7 @@ describe('the one voice a person is recognised by (28 Oct)', () => {
       );
       expect(screen.queryByRole('button', { name: /Use sample 3 of Harshit/ })).toBeNull();
       expect(screen.getByText('In use')).toBeTruthy();
-      expect(api.speakers.list.mock.calls.length).toBeGreaterThan(1);
+      expect(api.speakers.page.mock.calls.length).toBeGreaterThan(1);
     });
 
     it('says nothing was changed when the call fails', async () => {

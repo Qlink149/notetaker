@@ -110,6 +110,27 @@ const EnvSchema = z.object({
    * switch the merge off without a deploy of new code.
    */
   SPEAKER_AUTOMERGE: z.preprocess((v) => !(v === 'false' || v === '0'), z.boolean()).default(true),
+  /**
+   * Who may assign voices on the Speakers page. Comma-separated speaker names (case-insensitive;
+   * "Heet" also matches "Heet Dholakia") or speaker ids. Phase 1 has no user accounts: this is
+   * checked against the person chosen as "This is me" (`mePersonId`). Default: Heet.
+   */
+  SPEAKER_ADMINS: z
+    .string()
+    .default('Heet')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  /**
+   * The assign, mark-as-left and undo controls of the Speakers page. Default: OFF, so deploying the code changes
+   * nothing a client can see; set `true` to switch them on, and back to `false` to take them away again.
+   */
+  SPEAKER_ASSIGN: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
+  /** How long a global voice merge or rename can be undone, in minutes. Default: 10. */
+  SPEAKER_UNDO_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),
   WORKER_HTTP: z.preprocess((v) => v === 'true' || v === '1', z.boolean()).default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
   /**

@@ -10,11 +10,31 @@ import { playableUrl } from '../lib/audioLink.js';
 import { ws } from '../lib/auth.js';
 import { cutFlac, toAnalysisFlac } from '../services/audio/ffmpeg.js';
 import { HttpError, body, idParam, notFound } from '../lib/http.js';
+import { assertSpeakerAdmin, speakerAdmin } from '../lib/speakerAccess.js';
 import { logger } from '../lib/logger.js';
 import { playbackUrlOf } from '../lib/views.js';
-import { MeetingDataModel, MeetingModel, SpeakerModel, type SpeakerDoc } from '../models/index.js';
+import {
+  MeetingDataModel,
+  MeetingModel,
+  SpeakerModel,
+  SpeakerUndoModel,
+  type SpeakerDoc,
+} from '../models/index.js';
 import { isUsableSample } from '../services/identity/enroll.js';
 import { isActiveSample, mainSample, sampleKey } from '../services/identity/samples.js';
+import {
+  BusyError,
+  EditError,
+  NameExistsError,
+  UndoError,
+  assertNothingProcessing,
+  assignVoice,
+  listOpenUndos,
+  markPersonBack,
+  markPersonLeft,
+  undoAssign,
+} from '../services/identity/assign.js';
+import { applyNames, meetingsOfPerson } from '../services/identity/identity.js';
 import type { ApiDeps } from './deps.js';
 
 // Ported from legacy/base44/functions/enrollSpeaker. Phase 1 keeps the Speakers page working;
@@ -43,6 +63,9 @@ const speakerView = (s: SpeakerDoc) => ({
   hasVoiceprint: active(s).length > 0,
   voiceprintCount: active(s).length,
   anonymous: s.anonymous ?? false,
+  email: s.email ?? null,
+  role: s.role ?? null,
+  leftAt: s.leftAt ? new Date(s.leftAt).toISOString() : null,
   enrollmentAudioUrl: playableUrl(active(s).at(-1)?.audioUrl) ?? null,
   createdAt: s.createdAt,
 });
@@ -107,6 +130,19 @@ async function samplesOf(person: SpeakerDoc, workspaceId: SpeakerDoc['workspaceI
   });
 }
 
+const AssignBody = z.object({
+  personId: z.string().optional(),
+  name: z.string().max(200).optional(),
+  confirm: z.boolean().optional(),
+});
+
+function asHttp(err: unknown): never {
+  if (err instanceof EditError) throw new HttpError(400, err.message);
+  if (err instanceof BusyError) throw new HttpError(409, err.message);
+  if (err instanceof UndoError) throw new HttpError(err.status, err.message);
+  throw err;
+}
+
 export function speakersRouter(deps: ApiDeps): Router {
   const r = Router();
 
@@ -120,10 +156,71 @@ export function speakersRouter(deps: ApiDeps): Router {
   };
 
   r.get('/speakers', async (req, res) => {
-    const list = await SpeakerModel.find({ workspaceId: ws(req)._id })
+    const workspace = ws(req);
+    const { allowed } = await speakerAdmin(workspace);
+    const list = await SpeakerModel.find({ workspaceId: workspace._id })
       .sort({ name: 1 })
       .lean<SpeakerDoc[]>();
-    res.json({ speakers: list.map(speakerView) });
+    res.json({
+      speakers: list.map(speakerView),
+      canAssignSpeakers: allowed,
+      undos: allowed ? await listOpenUndos(String(workspace._id)) : [],
+    });
+  });
+
+  /**
+   * Merge this voice into a person (`personId`) or give it a new name (`name`).
+   * Writes only when `confirm` is true. A name that already exists answers 409 with those people
+   * so the caller can merge into one of them instead. Admin allowlist only.
+   */
+  r.post('/speakers/:id/assign', async (req, res) => {
+    await assertSpeakerAdmin(ws(req));
+    const input = body(AssignBody, req);
+    try {
+      const result = await assignVoice(String(ws(req)._id), String(idParam(req)), input);
+      res.json(result);
+    } catch (err) {
+      if (err instanceof NameExistsError) {
+        res.status(409).json({ error: 'name_exists', matches: err.matches });
+        return;
+      }
+      asHttp(err);
+    }
+  });
+
+  /** Keep this person's name on past meetings, and stop matching their voice in new ones. */
+  r.post('/speakers/:id/leave', async (req, res) => {
+    await assertSpeakerAdmin(ws(req));
+    try {
+      const leftAt = await markPersonLeft(String(ws(req)._id), String(idParam(req)));
+      res.json({ leftAt: leftAt.toISOString() });
+    } catch (err) {
+      asHttp(err);
+    }
+  });
+
+  /** The person is back: their voice is matched in new meetings again. */
+  r.post('/speakers/:id/return', async (req, res) => {
+    await assertSpeakerAdmin(ws(req));
+    try {
+      await markPersonBack(String(ws(req)._id), String(idParam(req)));
+      res.json({ leftAt: null });
+    } catch (err) {
+      asHttp(err);
+    }
+  });
+
+  /** Undo a merge or rename from the last SPEAKER_UNDO_MINUTES. */
+  r.post('/speakers/undo/:undoId', async (req, res) => {
+    await assertSpeakerAdmin(ws(req));
+    const undoId = req.params.undoId;
+    if (typeof undoId !== 'string') throw notFound('undo_not_found');
+    try {
+      await undoAssign(String(ws(req)._id), undoId);
+      res.json({ restored: true });
+    } catch (err) {
+      asHttp(err);
+    }
   });
 
   /** Every voice sample saved for a person, playable (28 Oct: a profile that holds two people can only be heard). */
@@ -298,14 +395,33 @@ export function speakersRouter(deps: ApiDeps): Router {
 
   r.delete('/speakers/:id', async (req, res) => {
     const id = idParam(req);
-    const result = await SpeakerModel.deleteOne({ _id: id, workspaceId: ws(req)._id });
-    if (!result.deletedCount) throw notFound('speaker_not_found');
-    // no meeting card may keep pointing at a person who no longer exists
+    const person = await SpeakerModel.findOne({ _id: id, workspaceId: ws(req)._id }).lean();
+    if (!person) throw notFound('speaker_not_found');
+    try {
+      await assertNothingProcessing();
+    } catch (err) {
+      asHttp(err);
+    }
+    const meetings = await meetingsOfPerson(String(id));
+    // The card must not keep a dangling person. voiceDeleted makes old lines say "Unknown speaker".
     await MeetingDataModel.updateMany(
       { 'speakerCards.personId': String(id) },
-      { $set: { 'speakerCards.$[c].personId': null, 'speakerCards.$[c].match': null } },
+      {
+        $set: {
+          'speakerCards.$[c].personId': null,
+          'speakerCards.$[c].match': null,
+          'speakerCards.$[c].voiceDeleted': true,
+        },
+      },
       { arrayFilters: [{ 'c.personId': String(id) }] },
     );
+    await SpeakerModel.deleteOne({ _id: id });
+    // an open undo would bring the deleted voice back, and keeps a copy of its voiceprints: both go with it
+    await SpeakerUndoModel.deleteMany({
+      workspaceId: ws(req)._id,
+      $or: [{ sourceId: person._id }, { targetId: person._id }],
+    });
+    for (const meetingId of meetings) await applyNames(meetingId);
     res.status(204).end();
   });
 

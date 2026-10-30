@@ -352,6 +352,11 @@ export interface SpeakerCardDoc {
   status: 'solid' | 'review' | 'new' | 'manual';
   /** A person named or confirmed this voice (only then are its clips learned into the person's profile). */
   confirmed?: boolean;
+  /**
+   * The voice profile this card pointed at was deleted. With no person left on the card, the
+   * transcript shows "Unknown speaker". Naming the card again shows that person's name.
+   */
+  voiceDeleted?: boolean;
   /** Playable samples in the meeting audio. */
   clips: { start: number; end: number; quality: number | null }[];
 }
@@ -524,6 +529,15 @@ export interface SpeakerDoc {
    * default, see `mainSample`.
    */
   mainSampleId?: string | null;
+  /** Shown in the assign picker so two people who share a name stay distinct. Optional. */
+  email?: string | null;
+  /** Job or team label, shown in the picker when there is no email. Optional. */
+  role?: string | null;
+  /**
+   * Set when this person has left the team. Past meetings keep `name`. New meetings do not
+   * auto-match their voice (see `knownVoices`). Distinct from deleting the profile.
+   */
+  leftAt?: Date | null;
   createdAt: Date;
 }
 const speakerSchema = new Schema<SpeakerDoc>(
@@ -533,6 +547,9 @@ const speakerSchema = new Schema<SpeakerDoc>(
     aliases: { type: [String], default: [] },
     anonymous: { type: Boolean, default: false },
     origin: { type: Schema.Types.Mixed, default: null },
+    email: { type: String, default: null },
+    role: { type: String, default: null },
+    leftAt: { type: Date, default: null },
     voiceprints: {
       type: [
         new Schema(
@@ -558,8 +575,84 @@ const speakerSchema = new Schema<SpeakerDoc>(
   },
   { timestamps: true },
 );
+// Unique, as on the live database. (An earlier draft of the assign feature made it non-unique; declaring a different
+// option on an existing index makes startup fail with IndexKeySpecsConflict, so the index is left alone.)
 speakerSchema.index({ workspaceId: 1, name: 1 }, { unique: true });
 export const SpeakerModel = mongoose.model<SpeakerDoc>('Speaker', speakerSchema);
+
+/** A global merge or rename that can still be undone. Kept after expiry so a late click can say why. */
+export interface SpeakerUndoMeetingSnap {
+  meetingId: Types.ObjectId;
+  summary: string | null;
+  actionItems: ActionItem[];
+  summaryNames: Record<string, string> | null;
+  summaryOutdated: boolean;
+  summaryAt: Date | null;
+}
+export interface SpeakerUndoDoc {
+  _id: Types.ObjectId;
+  workspaceId: Types.ObjectId;
+  kind: 'merge' | 'rename';
+  expiresAt: Date;
+  undoneAt: Date | null;
+  sourceId: Types.ObjectId;
+  /** The dropped profile, restored with the same id. Merge only. */
+  source: SpeakerDoc | null;
+  targetId: Types.ObjectId | null;
+  /**
+   * What the merge added to the survivor. An undo takes exactly these away again (by id) and leaves everything
+   * else on the survivor as it is now, so a voice learned or a name changed since is not lost.
+   */
+  addedVoiceprintIds: string[];
+  addedIgnoreMeetings: Types.ObjectId[];
+  addedAlias: string | null;
+  /** The survivor's chosen voice before the merge, and the one the merge pinned for it (see `mergePeople`). */
+  mainBefore: string | null;
+  mainPinned: string | null;
+  previousName: string | null;
+  previousAnonymous: boolean | null;
+  /** Rename only: the name given, so an undo is refused if the name has been changed again since. */
+  newName: string | null;
+  cards: { meetingId: Types.ObjectId; diar: string }[];
+  taskIds: { owner: Types.ObjectId[]; buddy: Types.ObjectId[]; createdBy: Types.ObjectId[] };
+  /** The tasks of every affected meeting as they were: a name change moves or drops tasks with the summary. */
+  meetingTasks: Record<string, unknown>[];
+  meMoved: boolean;
+  meetings: SpeakerUndoMeetingSnap[];
+  /** One line for the undo banner. */
+  label: string;
+  createdAt: Date;
+}
+const speakerUndoSchema = new Schema<SpeakerUndoDoc>(
+  {
+    workspaceId: { type: Schema.Types.ObjectId, required: true, index: true },
+    kind: { type: String, enum: ['merge', 'rename'], required: true },
+    expiresAt: { type: Date, required: true },
+    undoneAt: { type: Date, default: null },
+    sourceId: { type: Schema.Types.ObjectId, required: true },
+    source: { type: Schema.Types.Mixed, default: null },
+    targetId: { type: Schema.Types.ObjectId, default: null },
+    addedVoiceprintIds: { type: [String], default: [] },
+    addedIgnoreMeetings: { type: [Schema.Types.ObjectId], default: [] },
+    addedAlias: { type: String, default: null },
+    mainBefore: { type: String, default: null },
+    mainPinned: { type: String, default: null },
+    previousName: { type: String, default: null },
+    previousAnonymous: { type: Boolean, default: null },
+    newName: { type: String, default: null },
+    cards: { type: Schema.Types.Mixed, default: [] },
+    meetingTasks: { type: Schema.Types.Mixed, default: [] },
+    taskIds: { type: Schema.Types.Mixed, default: () => ({ owner: [], buddy: [], createdBy: [] }) },
+    meMoved: { type: Boolean, default: false },
+    meetings: { type: Schema.Types.Mixed, default: [] },
+    label: { type: String, required: true },
+  },
+  { timestamps: true },
+);
+// A record is kept for a day after it expires so a late click can say why; then it goes, and with it the copy of
+// the merged voice (voiceprints are not kept longer than the profile they belonged to).
+speakerUndoSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 24 * 60 * 60 });
+export const SpeakerUndoModel = mongoose.model<SpeakerUndoDoc>('SpeakerUndo', speakerUndoSchema);
 
 // ---------- Benchmark ----------
 export interface EvalSetDoc {
@@ -814,6 +907,7 @@ export const allModels: Model<never>[] = [
   JobModel,
   HeartbeatModel,
   SpeakerModel,
+  SpeakerUndoModel,
   EvalSetModel,
   EvalRunModel,
   QuotaModel,

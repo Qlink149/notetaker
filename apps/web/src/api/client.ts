@@ -27,6 +27,7 @@ export class ApiError extends Error {
     readonly status: number,
     message: string,
     readonly similar?: SimilarName[],
+    readonly matches?: PersonChoice[],
   ) {
     super(message);
   }
@@ -72,9 +73,18 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 401 && !path.startsWith('/auth/login'))
     unauthorizedListeners.forEach((fn) => fn());
   if (res.status === 204) return undefined as T;
-  const json = (await res.json().catch(() => ({}))) as { error?: string; similar?: SimilarName[] };
+  const json = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    similar?: SimilarName[];
+    matches?: PersonChoice[];
+  };
   if (!res.ok)
-    throw new ApiError(res.status, json.error ?? `Request failed (${res.status})`, json.similar);
+    throw new ApiError(
+      res.status,
+      json.error ?? `Request failed (${res.status})`,
+      json.similar,
+      json.matches,
+    );
   return json as T;
 }
 
@@ -94,6 +104,11 @@ export interface Speaker {
   anonymous?: boolean;
   hasVoiceprint: boolean;
   voiceprintCount?: number;
+  /** Set when known, so two people with the same name stay distinct in the assign picker. */
+  email?: string | null;
+  role?: string | null;
+  /** ISO time once this person has left. Past meetings keep the name. */
+  leftAt?: string | null;
   enrollmentAudioUrl: string | null;
   createdAt: string;
 }
@@ -117,6 +132,41 @@ export interface VoiceSample {
   end: number | null;
   seconds: number | null;
   audioUrl: string | null;
+}
+
+/** A saved person, identified by id. Email or role is what the picker shows beside the name. */
+export interface PersonChoice {
+  id: string;
+  name: string;
+  email: string | null;
+  role: string | null;
+}
+
+export interface SpeakerUndo {
+  id: string;
+  expiresAt: string;
+  label: string;
+  kind: 'merge' | 'rename';
+}
+
+export interface AssignPreview {
+  needsConfirmation: true;
+  action: 'merge' | 'rename';
+  undoMinutes: number;
+  meetings: number;
+  source: { id: string; name: string };
+  target?: PersonChoice;
+  name?: string;
+}
+
+export interface AssignDone {
+  needsConfirmation: false;
+  action: 'merge' | 'rename';
+  undoId: string;
+  expiresAt: string;
+  undoMinutes: number;
+  meetings: string[];
+  label: string;
 }
 
 export interface SpeakerCard {
@@ -456,6 +506,32 @@ export const api = {
     ),
   speakers: {
     list: () => request<{ speakers: Speaker[] }>('GET', '/speakers').then((r) => r.speakers),
+    /** The Speakers page: the directory, whether this person may assign voices, and open undos. */
+    page: () =>
+      request<{ speakers: Speaker[]; canAssignSpeakers: boolean; undos: SpeakerUndo[] }>(
+        'GET',
+        '/speakers',
+      ),
+    /**
+     * Merge this voice into `personId`, or name it `name`. Without `confirm` the server only
+     * describes the change. A name that already exists resolves to `{ matches }` instead of saving.
+     */
+    assign: async (
+      id: string,
+      input: { personId?: string; name?: string; confirm?: boolean },
+    ): Promise<AssignPreview | AssignDone | { matches: PersonChoice[] }> => {
+      try {
+        return await request<AssignPreview | AssignDone>('POST', `/speakers/${id}/assign`, input);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409 && e.matches) return { matches: e.matches };
+        throw e;
+      }
+    },
+    leave: (id: string) =>
+      request<{ leftAt: string }>('POST', `/speakers/${id}/leave`, {}).then((r) => r.leftAt),
+    /** The person is back: their voice is matched in new meetings again. */
+    comeBack: (id: string) => request<{ leftAt: null }>('POST', `/speakers/${id}/return`, {}),
+    undo: (undoId: string) => request<{ restored: boolean }>('POST', `/speakers/undo/${undoId}`, {}),
     enrol: (name: string, audio: File) => {
       const form = new FormData();
       form.append('name', name);

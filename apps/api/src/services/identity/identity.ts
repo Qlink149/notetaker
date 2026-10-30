@@ -19,7 +19,7 @@ import {
 import { P2JoinModel, P2PyannoteResponseModel } from '../../models/phase2.js';
 import { env } from '../../config/env.js';
 import { applyMeetingTaskFollow } from '../tasks/reconcile.js';
-import { displayName, peopleOf } from './display.js';
+import { displayName, isUnknownName, peopleOf } from './display.js';
 
 export { displayName, peopleOf } from './display.js';
 
@@ -188,8 +188,8 @@ export async function applyNames(meetingId: string): Promise<ApplyResult | null>
     {
       $set: {
         coverage,
-        participants: names.filter((n) => n !== 'Unknown'),
-        unknownCount: names.filter((n) => n === 'Unknown').length,
+        participants: names.filter((n) => !isUnknownName(n)),
+        unknownCount: names.filter(isUnknownName).length,
       },
     },
   );

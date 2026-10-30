@@ -290,6 +290,8 @@ export async function knownVoices(
   // place in the person's list, and earlier identify jobs keep those labels. So the place is counted with the
   // removed samples still in it, and they are dropped only afterwards: removing one never renumbers the others.
   const items = others.flatMap((p) => {
+    // Someone who has left keeps their name on old meetings, but new meetings are not matched to them.
+    if (p.leftAt) return [];
     const usable = p.voiceprints.filter((v) => isUsableSample(v));
     const main = mainSample(usable, p.mainSampleId, there);
     if (!main) return [];

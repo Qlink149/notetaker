@@ -657,8 +657,8 @@ describe('meeting page with a partly readable recording', () => {
     const first = open();
     await screen.findByText('iPhone recording');
     expect(screen.queryByTestId('summary-outdated')).toBeNull();
-    // a new summary stays available, as an option
-    expect(screen.getByRole('button', { name: 'New summary' })).toBeTruthy();
+    // regenerating the summary stays available, and it asks before replacing the one written
+    expect(screen.getByRole('button', { name: 'Regenerate summary' })).toBeTruthy();
     first.unmount();
 
     api.meetings.get.mockResolvedValue({ ...base, summaryOutdated: true });
@@ -667,6 +667,23 @@ describe('meeting page with a partly readable recording', () => {
     expect(banner.textContent).toMatch(/needs a new summary/);
     expect(banner.textContent).toMatch(/action items already show the new ones/);
     expect(screen.getByRole('button', { name: /Refresh summary/ })).toBeTruthy();
+  });
+
+  it('asks before regenerating a summary, and does not replace it until confirmed', async () => {
+    api.meetings.data.mockResolvedValue({ lines: [] });
+    api.meetings.speakers.mockResolvedValue({ source: 'pyannote', cards: [] });
+    api.meetings.get.mockResolvedValue({ ...base, summaryOutdated: false });
+    api.meetings.summarise.mockResolvedValue({ ...base, summary: 'Fresh.' });
+    open();
+    await screen.findByText('iPhone recording');
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate summary' }));
+    expect(api.meetings.summarise).not.toHaveBeenCalled();
+    expect(await screen.findByText(/replaces the existing summary/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(api.meetings.summarise).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Regenerate summary' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Replace summary' }));
+    await waitFor(() => expect(api.meetings.summarise).toHaveBeenCalledWith('m8', true));
   });
 });
 
