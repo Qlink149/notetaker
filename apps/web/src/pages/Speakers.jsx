@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { api } from '@/api/client';
 import EnrollmentRecorder from '@/components/EnrollmentRecorder';
 import VoiceSamples from '@/components/VoiceSamples';
-import { Trash2, Loader2, Users, X, Volume2 } from 'lucide-react';
+import { Trash2, Loader2, Users, X, Volume2, Pencil } from 'lucide-react';
+import AssignPicker from '@/components/AssignPicker';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -53,10 +55,10 @@ export default function Speakers() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [playingId, setPlayingId] = useState(null);
   const [openSamples, setOpenSamples] = useState(null);
-  const [assignId, setAssignId] = useState(null);
-  const [choice, setChoice] = useState('');
-  const [newName, setNewName] = useState('');
+  // the person whose pencil is open, and a refusal to show under that person (or under the list when no one)
+  const [pickerId, setPickerId] = useState(null);
   const [assignError, setAssignError] = useState('');
+  const [assignErrorId, setAssignErrorId] = useState(null);
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState(null);
 
@@ -107,36 +109,37 @@ export default function Speakers() {
     load();
   };
 
-  const startAssign = (id) => {
-    setAssignId(id);
-    setChoice('');
-    setNewName('');
+  const fail = (id, e, fallback) => {
+    setAssignError(reasonFor(e, fallback));
+    setAssignErrorId(id);
+  };
+  const clearError = () => {
     setAssignError('');
+    setAssignErrorId(null);
   };
 
-  const requestAssign = async (speakerId) => {
-    setAssignError('');
-    const body = choice === '__new__' ? { name: newName } : { personId: choice };
+  /** Describe the change (nothing is written yet) for a chosen person, or for a new name. */
+  const requestAssign = async (speakerId, body) => {
+    clearError();
     if (body.name !== undefined && !body.name.trim()) {
       setAssignError('Enter a name.');
-      return;
-    }
-    if (!body.personId && body.name === undefined) {
-      setAssignError('Choose a person.');
+      setAssignErrorId(speakerId);
       return;
     }
     setBusy(true);
     try {
       const result = await api.speakers.assign(speakerId, body);
       if (result.matches) {
-        setAsk({ type: 'matches', speakerId, name: newName.trim(), matches: result.matches });
+        setPickerId(null);
+        setAsk({ type: 'matches', speakerId, name: body.name.trim(), matches: result.matches });
         return;
       }
       if (result.needsConfirmation) {
+        setPickerId(null);
         setAsk({ type: 'preview', speakerId, body, preview: result });
       }
     } catch (e) {
-      setAssignError(reasonFor(e, 'Could not assign that voice.'));
+      fail(speakerId, e, 'Could not assign that voice.');
     } finally {
       setBusy(false);
     }
@@ -144,16 +147,14 @@ export default function Speakers() {
 
   const confirmAssign = async (speakerId, body) => {
     setBusy(true);
-    setAssignError('');
+    clearError();
     try {
       await api.speakers.assign(speakerId, { ...body, confirm: true });
       setAsk(null);
-      setAssignId(null);
-      setChoice('');
-      setNewName('');
+      setPickerId(null);
       await load();
     } catch (e) {
-      setAssignError(reasonFor(e, 'Could not assign that voice.'));
+      fail(speakerId, e, 'Could not assign that voice.');
       setAsk(null);
     } finally {
       setBusy(false);
@@ -167,7 +168,7 @@ export default function Speakers() {
       setAsk(null);
       await load();
     } catch (e) {
-      setAssignError(reasonFor(e, 'Could not update that person.'));
+      fail(null, e, 'Could not update that person.');
       setAsk(null);
     } finally {
       setBusy(false);
@@ -181,7 +182,7 @@ export default function Speakers() {
       setAsk(null);
       await load();
     } catch (e) {
-      setAssignError(reasonFor(e, 'Could not update that person.'));
+      fail(null, e, 'Could not update that person.');
       setAsk(null);
     } finally {
       setBusy(false);
@@ -195,7 +196,7 @@ export default function Speakers() {
       setAsk(null);
       await load();
     } catch (e) {
-      setAssignError(reasonFor(e, 'That undo is no longer available.'));
+      fail(null, e, 'That undo is no longer available.');
       setAsk(null);
     } finally {
       setBusy(false);
@@ -318,10 +319,40 @@ export default function Speakers() {
             <div key={s.id} className="rounded-xl border border-border bg-card p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <p className="font-medium">
-                    {s.name}
+                  <p className="font-medium flex items-center gap-1.5">
+                    <span>{s.name}</span>
                     {s.leftAt && (
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">Left</span>
+                      <span className="text-xs font-normal text-muted-foreground">Left</span>
+                    )}
+                    {canAssign && (
+                      <Popover
+                        open={pickerId === s.id}
+                        onOpenChange={(open) => {
+                          setPickerId(open ? s.id : null);
+                          clearError();
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={`Assign ${s.name} to a person`}
+                            title="Assign this voice to a person"
+                            className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-80 p-3">
+                          <AssignPicker
+                            people={speakers.filter((p) => p.id !== s.id)}
+                            name={s.name}
+                            busy={busy}
+                            error={assignErrorId === s.id ? assignError : ''}
+                            onPick={(p) => requestAssign(s.id, { personId: p.id })}
+                            onAddNew={(name) => requestAssign(s.id, { name })}
+                          />
+                        </PopoverContent>
+                      </Popover>
                     )}
                   </p>
                   {s.hasVoiceprint ? (
@@ -362,92 +393,30 @@ export default function Speakers() {
                   <VoiceSamples personId={s.id} name={s.name} onChanged={load} />
                 </div>
               )}
-              {canAssign && (
-                <div className="mt-3 pt-3 border-t border-border space-y-2">
-                  {assignId === s.id ? (
-                    <>
-                      <label className="block text-xs text-muted-foreground" htmlFor={`assign-${s.id}`}>
-                        Assign to
-                      </label>
-                      <select
-                        id={`assign-${s.id}`}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        aria-label={`Assign ${s.name} to`}
-                        value={choice}
-                        onChange={(e) => {
-                          setChoice(e.target.value);
-                          setAssignError('');
-                        }}
-                      >
-                        <option value="">Choose a person…</option>
-                        {speakers
-                          .filter((p) => p.id !== s.id)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {optionLabel(p)}
-                            </option>
-                          ))}
-                        <option value="__new__">Add new</option>
-                      </select>
-                      {choice === '__new__' && (
-                        <Input
-                          value={newName}
-                          aria-label={`New name for ${s.name}`}
-                          placeholder="New person"
-                          onChange={(e) => setNewName(e.target.value)}
-                        />
-                      )}
-                      {assignError && <p className="text-sm text-destructive">{assignError}</p>}
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          className="rounded-full"
-                          disabled={busy}
-                          onClick={() => requestAssign(s.id)}
-                        >
-                          Assign
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => setAssignId(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="rounded-full"
-                        onClick={() => startAssign(s.id)}
-                      >
-                        Assign to
-                      </Button>
-                      {!s.anonymous && !s.leftAt && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAsk({ type: 'leave', speaker: s })}
-                        >
-                          Mark as left
-                        </Button>
-                      )}
-                      {s.leftAt && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setAsk({ type: 'back', speaker: s })}
-                        >
-                          Mark as back
-                        </Button>
-                      )}
-                    </div>
+              {canAssign && (s.leftAt || !s.anonymous) && (
+                <div className="mt-3 pt-3 border-t border-border flex flex-wrap gap-2">
+                  {!s.anonymous && !s.leftAt && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setAsk({ type: 'leave', speaker: s })}
+                    >
+                      Mark as left
+                    </Button>
+                  )}
+                  {s.leftAt && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setAsk({ type: 'back', speaker: s })}
+                    >
+                      Mark as back
+                    </Button>
                   )}
                 </div>
+              )}
+              {assignError && assignErrorId === s.id && pickerId !== s.id && (
+                <p className="text-sm text-destructive mt-2">{assignError}</p>
               )}
             </div>
           ))}
@@ -467,7 +436,9 @@ export default function Speakers() {
         </div>
       )}
 
-      {assignError && !assignId && <p className="text-sm text-destructive mt-3">{assignError}</p>}
+      {assignError && assignErrorId === null && (
+        <p className="text-sm text-destructive mt-3">{assignError}</p>
+      )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
