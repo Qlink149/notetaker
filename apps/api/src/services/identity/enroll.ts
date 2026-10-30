@@ -254,7 +254,7 @@ export interface IdentityReport {
 }
 
 /** The known people's voiceprints to compare a meeting against (this meeting's own voices are left out). */
-async function knownVoices(
+export async function knownVoices(
   meetingId: string,
   workspaceId: string,
 ): Promise<{
@@ -267,16 +267,18 @@ async function knownVoices(
   }).lean<SpeakerDoc[]>();
   const others = people.filter((p) => String(p.origin?.meetingId) !== meetingId);
   const labelToPerson: Record<string, string> = {};
-  const items = others.flatMap((p) =>
-    p.voiceprints
+  const items = others.flatMap((p) => {
+    // Someone who has left keeps their name on old meetings, but new meetings are not matched to them.
+    if (p.leftAt) return [];
+    return p.voiceprints
       .filter((v) => (v.voiceprint ?? v.id) && (v.model ?? IDENTITY_MODEL) === IDENTITY_MODEL)
       .map((v, n) => ({
         personId: String(p._id),
         quality: v.quality ?? null,
         label: `${p._id}-${n}`,
         voiceprint: v.voiceprint ?? v.id,
-      })),
-  );
+      }));
+  });
   const picked = pickVoiceprints(items, 50);
   const refs: VoiceprintRef[] = picked.map((v) => {
     labelToPerson[v.label] = v.personId;

@@ -1,10 +1,18 @@
 import { Types } from 'mongoose';
 import { SpeakerModel, type SpeakerCardDoc, type SpeakerDoc } from '../../models/index.js';
 
-/** Name shown for a card: the person's real name once a human has typed it, else the meeting's label. */
+/** Shown when a voice profile was deleted and the card no longer points at a person. */
+export const UNKNOWN_SPEAKER = 'Unknown speaker';
+
+/**
+ * Name shown for a card. A real name (including someone who has left) wins. A deleted voice, or a
+ * card whose person no longer exists, is "Unknown speaker". Anything else keeps the meeting label.
+ */
 export function displayName(card: SpeakerCardDoc, people: Map<string, SpeakerDoc>): string {
   const person = card.personId ? people.get(card.personId) : undefined;
-  return person && !person.anonymous ? person.name : card.label;
+  if (person && !person.anonymous) return person.name;
+  if (card.voiceDeleted || (card.personId && !person)) return UNKNOWN_SPEAKER;
+  return card.label;
 }
 
 export async function peopleOf(personIds: (string | null)[]): Promise<Map<string, SpeakerDoc>> {

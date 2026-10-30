@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   AlertDialog,
+  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -100,6 +101,7 @@ export default function MeetingDetail() {
   const [people, setPeople] = useState([]);
   // set when a speaker edit swapped the new names into the existing summary (no new summary was written)
   const [summaryNote, setSummaryNote] = useState('');
+  const [confirmSummary, setConfirmSummary] = useState(false);
   // Bumped after a speaker edit so this meeting's task list reloads (owners may have moved).
   const [taskTick, setTaskTick] = useState(0);
   const meetingRef = useRef(null);
@@ -569,9 +571,9 @@ export default function MeetingDetail() {
                     className="ml-auto text-xs text-muted-foreground underline hover:text-foreground disabled:opacity-50"
                     disabled={busy}
                     title="Writes a new summary from the transcript (uses AI credits)"
-                    onClick={summariseAnyway}
+                    onClick={() => setConfirmSummary(true)}
                   >
-                    New summary
+                    Regenerate summary
                   </button>
                 )}
               </div>
@@ -645,10 +647,7 @@ export default function MeetingDetail() {
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                onClick={() => {
-                  setSummaryNote('');
-                  summariseAnyway();
-                }}
+                onClick={() => setConfirmSummary(true)}
               >
                 <Sparkles className="w-4 h-4 mr-1" /> Refresh summary
               </Button>
@@ -758,6 +757,29 @@ export default function MeetingDetail() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={confirmSummary} onOpenChange={setConfirmSummary}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate summary?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This replaces the existing summary with a new one written from the transcript. The
+              summary you have now will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmSummary(false);
+                summariseAnyway();
+              }}
+            >
+              Replace summary
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="mt-8 pt-6 border-t border-border space-y-3 lg:space-y-0 lg:flex lg:gap-3 lg:items-start lg:[&>*]:flex-1">
         {!processing && (
