@@ -195,11 +195,11 @@ describe('undo puts back what the change added, and nothing else', () => {
   it('takes away the alias, and the ignored meetings, that the merge added', async () => {
     await asHeet();
     const m1 = new Types.ObjectId();
-    const from = await person('Ghanshyambhai', { voiceprints: [vp('vp-g')], ignoreMeetings: [m1] });
-    const into = await person('Ghanshyam Dholakia', { voiceprints: [vp('vp-gd')] });
+    const from = await person('Parag Bhai', { voiceprints: [vp('vp-g')], ignoreMeetings: [m1] });
+    const into = await person('Parag Shah', { voiceprints: [vp('vp-gd')] });
     const done = await merge(from._id, into._id).expect(200);
     const merged = (await fresh(into._id))!;
-    expect(merged.aliases).toContain('Ghanshyambhai');
+    expect(merged.aliases).toContain('Parag Bhai');
     expect(merged.ignoreMeetings.map(String)).toEqual([String(m1)]);
     await undo(done.body.undoId).expect(200);
     const back = (await fresh(into._id))!;
@@ -207,7 +207,7 @@ describe('undo puts back what the change added, and nothing else', () => {
     expect(back.ignoreMeetings).toEqual([]);
     expect(back.voiceprints.map((v) => v.id)).toEqual(['vp-gd']);
     const source = (await fresh(from._id))!;
-    expect(source.name).toBe('Ghanshyambhai');
+    expect(source.name).toBe('Parag Bhai');
     expect(source.ignoreMeetings.map(String)).toEqual([String(m1)]);
   });
 
